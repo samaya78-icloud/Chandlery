@@ -240,8 +240,8 @@ else
     }
 
     @* Approval *@
-    <ApprovalPanel Slots="_approvals.Select(ApprovalSlotView.From).ToList()" CanDecide="_canDecide" Noun="purchase order"
-                   TotalText="@Money.Format(_po.Total, _po.Currency)" Busy="_busy" Error="_error" OnDecide="Decide" />
+    <ApprovalPanel Slots="_approvals.Select(a => ApprovalSlotView.From(a, _levelNames)).ToList()" CanDecide="_canDecide" Noun="purchase order"
+                   TotalText="@Money.Format(_po.Total, _po.Currency)" Busy="_busy" Error="@_error" OnDecide="Decide" />
 
     <div class="mt-6 flex gap-3 print:hidden">
         <button onclick="window.print()" class="btn btn-secondary">Print</button>
@@ -268,6 +268,7 @@ else
     private string? _error;
     private int _auditVersion;
 
+    private ApprovalLevelNames _levelNames = new(new string?[3]);
     private string _vesselName = "";
     private string _portName = "";
 
@@ -393,6 +394,7 @@ else
 
     private async Task LoadApprovals()
     {
+        _levelNames = await Approvals.GetLevelNamesAsync(_companyId);
         _approvals = await Approvals.GetApprovalsAsync(_companyId, PoId);
         var current = ApprovalService.CurrentLevel(_approvals.Select(a => a.Approval));
         _canDecide = _po!.Status == PoStatus.PendingApproval && current is not null && _actor.UserId is { } uid

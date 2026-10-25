@@ -177,6 +177,18 @@ namespace Chandlery.Migrations
                     b.Property<string>("Address")
                         .HasColumnType("text");
 
+                    b.Property<string>("ApprovalLevel1Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ApprovalLevel2Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ApprovalLevel3Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("ContactEmail")
                         .IsRequired()
                         .HasColumnType("text");

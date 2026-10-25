@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject InvoiceService InvoiceSvc
+@inject ApprovalService ApprovalSvc
 @inject ToastService Toasts
 
 <PageTitle>@(_detail?.Invoice.InvoiceNumber ?? "Invoice") · Chandlery</PageTitle>
@@ -99,7 +100,7 @@ else
 
     <InvoiceSummary Detail="_detail" />
 
-    <ApprovalPanel Slots="_detail.Approvals.Select(ApprovalSlotView.From).ToList()" CanDecide="_canDecide" Noun="invoice"
+    <ApprovalPanel Slots="_detail.Approvals.Select(a => ApprovalSlotView.From(a, _levelNames)).ToList()" CanDecide="_canDecide" Noun="invoice"
                    TotalText="@Money.Format(inv.TotalExclTax, inv.Currency)" Busy="_busy" Error="@(inv.Status == InvoiceStatus.Submitted ? null : _error)" OnDecide="Decide" />
 
     <div class="mt-6">
@@ -120,6 +121,7 @@ else
     private string? _error;
     private int _auditVersion;
     private InvoiceInfo? _detail;
+    private ApprovalLevelNames _levelNames = new(new string?[3]);
     private List<TaxCode> _taxCodes = new();
     private int _taxCodeId;
     private string _variance = "";
@@ -132,6 +134,7 @@ else
         _actor = Actor.From(authState.User);
         _isAdmin = authState.User.IsInRole("CompanyAdmin");
         _taxCodes = await InvoiceSvc.GetTaxCodesAsync(_companyId);
+        _levelNames = await ApprovalSvc.GetLevelNamesAsync(_companyId);
         await Reload();
         _loaded = true;
     }

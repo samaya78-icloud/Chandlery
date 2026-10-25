@@ -6,7 +6,7 @@
         @foreach (var level in Slots.GroupBy(a => a.Level).OrderBy(g => g.Key))
         {
             <div class="mb-3 flex flex-wrap items-center gap-3 text-sm">
-                <span class="w-16 text-xs font-semibold uppercase text-muted">Level @level.Key</span>
+                <span class="min-w-44 text-xs font-semibold uppercase tracking-wide text-muted">@level.First().LevelName</span>
                 @foreach (var a in level)
                 {
                     <span class="@(DecisionClasses(a.Decision) + " rounded-lg px-3 py-1.5")">

@@ -197,7 +197,7 @@ public static class PoPdf
                             c.Item().Text(t =>
                             {
                                 t.Span(a.Name).Bold();
-                                t.Span($"  level {a.Level}" + (a.At.HasValue ? $" · {a.At.Value:dd MMM yyyy HH:mm} UTC" : "")).FontColor(Muted);
+                                t.Span($"  {a.LevelName}" + (a.At.HasValue ? $" · {a.At.Value:dd MMM yyyy HH:mm} UTC" : "")).FontColor(Muted);
                             });
                     });
                     row.ConstantItem(12);

@@ -79,10 +79,11 @@ public static class ApprovalEngine
             });
         }
 
+        var levelNames = await ApprovalLevelNames.LoadAsync(db, po.CompanyId);
         var userIds = chain.Select(r => r.ApproverUserId).Distinct().ToList();
         var names = await db.Users.Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName);
         var levels = chain.GroupBy(r => r.Level).OrderBy(g => g.Key)
-            .Select(g => $"level {g.Key}: {string.Join(" or ", g.Select(r => names.GetValueOrDefault(r.ApproverUserId) ?? "?"))}");
+            .Select(g => $"{levelNames.Name(g.Key)}: {string.Join(" or ", g.Select(r => names.GetValueOrDefault(r.ApproverUserId) ?? "?"))}");
         AuditLog.Add(db, po.CompanyId, AuditEntityTypes.PurchaseOrder, po.Id, actor,
             $"SENT for approval ({string.Join("; ", levels)})");
     }
@@ -167,6 +168,33 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         return source.Count;
     }
 
+    // ---- Step names ----
+
+    public async Task<ApprovalLevelNames> GetLevelNamesAsync(int companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        return await ApprovalLevelNames.LoadAsync(db, companyId);
+    }
+
+    /// <summary>Saves the names of approval steps 1 to 3. A blank name goes back to the default wording.</summary>
+    public async Task SetLevelNamesAsync(int companyId, string[] names)
+    {
+        if (names.Length != 3) throw new InvalidOperationException("Give a name for each of the three steps.");
+        var cleaned = names.Select(n => (n ?? "").Trim()).ToArray();
+        if (cleaned.Any(n => n.Length > ApprovalLevelNames.MaxLength))
+            throw new InvalidOperationException($"Names can be at most {ApprovalLevelNames.MaxLength} characters.");
+        var filled = cleaned.Where(n => n != "").ToList();
+        if (filled.Count != filled.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+            throw new InvalidOperationException("Each step needs a different name.");
+
+        await using var db = await factory.CreateDbContextAsync();
+        var company = await db.Companies.FirstAsync(c => c.Id == companyId);
+        company.ApprovalLevel1Name = cleaned[0];
+        company.ApprovalLevel2Name = cleaned[1];
+        company.ApprovalLevel3Name = cleaned[2];
+        await db.SaveChangesAsync();
+    }
+
     // ---- Approvals on a PO ----
 
     public async Task<List<PoApprovalRow>> GetApprovalsAsync(int companyId, int poId)
@@ -235,6 +263,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         if (po.Status != PoStatus.PendingApproval)
             throw new InvalidOperationException("This purchase order is no longer waiting for approval.");
 
+        var levelNames = await ApprovalLevelNames.LoadAsync(db, companyId);
         var approvals = await db.PoApprovals.Where(a => a.PurchaseOrderId == poId).ToListAsync();
         var current = CurrentLevel(approvals) ?? throw new InvalidOperationException("Nothing is waiting for approval.");
         var mine = approvals.FirstOrDefault(a => a.Level == current && a.ApproverUserId == userId && a.Decision == ApprovalDecision.Pending)
@@ -249,18 +278,18 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         if (!approve)
         {
             po.Status = PoStatus.Rejected;
-            AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, $"REJECTED at level {current}{commentText}");
+            AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, $"REJECTED ({levelNames.Name(current)}){commentText}");
         }
         else if (CurrentLevel(approvals) is null)
         {
             po.Status = PoStatus.Approved;
-            AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, $"APPROVED at level {current}{commentText}");
+            AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, $"APPROVED ({levelNames.Name(current)}){commentText}");
             AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, "APPROVED purchase order fully approved and released to the supplier");
         }
         else
         {
             AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor,
-                $"APPROVED at level {current}{commentText}; now waiting for level {CurrentLevel(approvals)}");
+                $"APPROVED ({levelNames.Name(current)}){commentText}; now waiting for {levelNames.Name(CurrentLevel(approvals)!.Value)}");
         }
 
         await db.SaveChangesAsync();
@@ -268,11 +297,11 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 }
 
 /// <summary>One approver's slot as the shared ApprovalPanel shows it (built from a PoApproval or an InvoiceApproval).</summary>
-public record ApprovalSlotView(int Level, string ApproverName, ApprovalDecision Decision, string DecidedByName, DateTime? DecidedAt, string Comment)
+public record ApprovalSlotView(int Level, string LevelName, string ApproverName, ApprovalDecision Decision, string DecidedByName, DateTime? DecidedAt, string Comment)
 {
-    public static ApprovalSlotView From(PoApprovalRow r) =>
-        new(r.Approval.Level, r.ApproverName, r.Approval.Decision, r.DecidedByName, r.Approval.DecidedAt, r.Approval.Comment);
+    public static ApprovalSlotView From(PoApprovalRow r, ApprovalLevelNames names) =>
+        new(r.Approval.Level, names.Name(r.Approval.Level), r.ApproverName, r.Approval.Decision, r.DecidedByName, r.Approval.DecidedAt, r.Approval.Comment);
 
-    public static ApprovalSlotView From(InvoiceApprovalRow r) =>
-        new(r.Approval.Level, r.ApproverName, r.Approval.Decision, r.DecidedByName, r.Approval.DecidedAt, r.Approval.Comment);
+    public static ApprovalSlotView From(InvoiceApprovalRow r, ApprovalLevelNames names) =>
+        new(r.Approval.Level, names.Name(r.Approval.Level), r.ApproverName, r.Approval.Decision, r.DecidedByName, r.Approval.DecidedAt, r.Approval.Comment);
 }

@@ -154,7 +154,7 @@
             {
                 @foreach (var a in Doc.Approvers)
                 {
-                    <p><span class="po-strong">@a.Name</span> <span class="po-muted">&middot; level @a.Level@(a.At.HasValue ? " · " + a.At.Value.ToString("dd MMM yyyy HH:mm") + " UTC" : "")</span></p>
+                    <p><span class="po-strong">@a.Name</span> <span class="po-muted">&middot; @a.LevelName@(a.At.HasValue ? " · " + a.At.Value.ToString("dd MMM yyyy HH:mm") + " UTC" : "")</span></p>
                 }
             }
         </div>

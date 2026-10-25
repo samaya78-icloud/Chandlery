@@ -35,7 +35,10 @@ public static class DbSeeder
         {
             Name = "Nimbus Marine Co.",
             ContactEmail = "priya@chandlery.example.com",
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            ApprovalLevel1Name = "Superintendent review",
+            ApprovalLevel2Name = "Fleet manager approval",
+            ApprovalLevel3Name = "Management approval"
         };
         db.Companies.Add(company);
         await db.SaveChangesAsync();

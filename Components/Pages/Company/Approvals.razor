@@ -31,7 +31,7 @@ else
         </GridColumn>
         <GridColumn Title="Department" Text="r => r.Department" />
         <GridColumn Title="Raised" Date="r => r.Raised" />
-        <GridColumn Title="Your level" Text="r => r.Level.ToString()" Filter="GridFilter.Select" />
+        <GridColumn Title="Your step" Text="r => r.Step" Filter="GridFilter.Select" />
         <GridColumn Title="Total" Text="r => Money.Format(r.Total, r.Currency)" CellClass="font-semibold text-ink" SortBy="r => r.Total" />
         <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Review &rarr;</span></GridColumn>
     </DataGrid>
@@ -41,7 +41,7 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     /// <summary>One waiting item, whether it is a purchase order or an invoice.</summary>
-    private record InboxRow(DocKind Kind, int Id, string Number, int SupplierId, string Supplier, string Department, DateTime Raised, int Level, decimal Total, string Currency);
+    private record InboxRow(DocKind Kind, int Id, string Number, int SupplierId, string Supplier, string Department, DateTime Raised, string Step, decimal Total, string Currency);
 
     private List<InboxRow> _rows = new();
     private bool _loaded;
@@ -53,10 +53,11 @@ else
         var actor = Actor.From(authState.User);
         if (actor.UserId is { } userId)
         {
+            var names = await ApprovalSvc.GetLevelNamesAsync(companyId);
             var pos = await ApprovalSvc.GetPendingForUserAsync(companyId, userId);
             var invoices = await InvoiceSvc.GetPendingForUserAsync(companyId, userId);
-            _rows = pos.Select(p => new InboxRow(DocKind.PurchaseOrder, p.Po.Id, p.Po.PoNumber, p.Po.SupplierId, p.Supplier, p.Department, p.Po.CreatedDate, p.Level, p.Total, p.Po.Currency))
-                .Concat(invoices.Select(i => new InboxRow(DocKind.Invoice, i.Inv.Id, i.Inv.InvoiceNumber, i.Inv.SupplierId, i.Supplier, "", i.Inv.SubmittedAt, i.Level, i.Inv.TotalExclTax, i.Inv.Currency)))
+            _rows = pos.Select(p => new InboxRow(DocKind.PurchaseOrder, p.Po.Id, p.Po.PoNumber, p.Po.SupplierId, p.Supplier, p.Department, p.Po.CreatedDate, names.Name(p.Level), p.Total, p.Po.Currency))
+                .Concat(invoices.Select(i => new InboxRow(DocKind.Invoice, i.Inv.Id, i.Inv.InvoiceNumber, i.Inv.SupplierId, i.Supplier, "", i.Inv.SubmittedAt, names.Name(i.Level), i.Inv.TotalExclTax, i.Inv.Currency)))
                 .OrderBy(r => r.Raised).ToList();
         }
         _loaded = true;

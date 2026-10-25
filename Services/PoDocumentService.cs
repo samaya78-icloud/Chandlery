@@ -6,7 +6,7 @@ namespace Chandlery.Services;
 
 public record PoDocLine(int Number, string Code, string Name, string Uom, decimal Quantity, decimal UnitPrice, decimal DiscountPct, decimal Amount);
 
-public record PoApproverStamp(int Level, string Name, DateTime? At);
+public record PoApproverStamp(int Level, string LevelName, string Name, DateTime? At);
 
 /// <summary>Everything the formal purchase order document shows, gathered in one place.</summary>
 public record PoDocument(
@@ -79,8 +79,9 @@ public class PoDocumentService(IDbContextFactory<ChandleryDbContext> factory)
             .Where(a => a.PurchaseOrderId == po.Id && a.Decision == ApprovalDecision.Approved).ToListAsync();
         var userIds = approvals.Select(a => a.DecidedByUserId ?? a.ApproverUserId).Distinct().ToList();
         var names = await db.Users.IgnoreQueryFilters().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName);
+        var levelNames = await ApprovalLevelNames.LoadAsync(db, po.CompanyId);
         var stamps = approvals.OrderBy(a => a.Level)
-            .Select(a => new PoApproverStamp(a.Level, names.GetValueOrDefault(a.DecidedByUserId ?? a.ApproverUserId) ?? "", a.DecidedAt))
+            .Select(a => new PoApproverStamp(a.Level, levelNames.Name(a.Level), names.GetValueOrDefault(a.DecidedByUserId ?? a.ApproverUserId) ?? "", a.DecidedAt))
             .ToList();
 
         return new PoDocument(company, supplier, po, rfq?.RfqNumber, requisitionNumber,

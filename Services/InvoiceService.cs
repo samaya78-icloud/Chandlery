@@ -466,10 +466,11 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         foreach (var rule in chain)
             db.InvoiceApprovals.Add(new InvoiceApproval { CompanyId = invoice.CompanyId, InvoiceId = invoice.Id, Level = rule.Level, ApproverUserId = rule.ApproverUserId });
 
+        var levelNames = await ApprovalLevelNames.LoadAsync(db, invoice.CompanyId);
         var userIds = chain.Select(r => r.ApproverUserId).Distinct().ToList();
         var names = await db.Users.Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName);
         var levels = chain.GroupBy(r => r.Level).OrderBy(g => g.Key)
-            .Select(g => $"level {g.Key}: {string.Join(" or ", g.Select(r => names.GetValueOrDefault(r.ApproverUserId) ?? "?"))}");
+            .Select(g => $"{levelNames.Name(g.Key)}: {string.Join(" or ", g.Select(r => names.GetValueOrDefault(r.ApproverUserId) ?? "?"))}");
         AuditLog.Add(db, invoice.CompanyId, AuditEntityTypes.Invoice, invoice.Id, actor, $"SENT for approval ({string.Join("; ", levels)})");
     }
 
@@ -504,6 +505,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
             ?? throw new InvalidOperationException("Invoice not found.");
         if (invoice.Status != InvoiceStatus.PendingApproval) throw new InvalidOperationException("This invoice is no longer waiting for approval.");
 
+        var levelNames = await ApprovalLevelNames.LoadAsync(db, companyId);
         var slots = await db.InvoiceApprovals.Where(a => a.InvoiceId == invoiceId).ToListAsync();
         var current = ApprovalEngine.CurrentLevel(slots.Select(a => (a.Level, a.Decision))) ?? throw new InvalidOperationException("Nothing is waiting for approval.");
         var mine = slots.FirstOrDefault(a => a.Level == current && a.ApproverUserId == userId && a.Decision == ApprovalDecision.Pending)
@@ -520,17 +522,17 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
             invoice.Status = InvoiceStatus.Rejected;
             invoice.RejectionReason = comment;
             await ReleaseDeliveriesAsync(db, invoice.Id);
-            AuditLog.Add(db, companyId, AuditEntityTypes.Invoice, invoice.Id, actor, $"REJECTED at level {current}{commentText}");
+            AuditLog.Add(db, companyId, AuditEntityTypes.Invoice, invoice.Id, actor, $"REJECTED ({levelNames.Name(current)}){commentText}");
         }
         else if (ApprovalEngine.CurrentLevel(slots.Select(a => (a.Level, a.Decision))) is null)
         {
             invoice.Status = InvoiceStatus.Approved;
-            AuditLog.Add(db, companyId, AuditEntityTypes.Invoice, invoice.Id, actor, $"APPROVED at level {current}{commentText}; fully approved, ready to finalize");
+            AuditLog.Add(db, companyId, AuditEntityTypes.Invoice, invoice.Id, actor, $"APPROVED ({levelNames.Name(current)}){commentText}; fully approved, ready to finalize");
         }
         else
         {
             AuditLog.Add(db, companyId, AuditEntityTypes.Invoice, invoice.Id, actor,
-                $"APPROVED at level {current}{commentText}; now waiting for level {ApprovalEngine.CurrentLevel(slots.Select(a => (a.Level, a.Decision)))}");
+                $"APPROVED ({levelNames.Name(current)}){commentText}; now waiting for {levelNames.Name(ApprovalEngine.CurrentLevel(slots.Select(a => (a.Level, a.Decision)))!.Value)}");
         }
         await db.SaveChangesAsync();
     }
