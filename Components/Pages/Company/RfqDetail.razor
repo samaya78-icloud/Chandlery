@@ -209,10 +209,24 @@ else
     }
 
     <div class="mt-6 flex items-center gap-3 print:hidden">
-        <button @onclick="RaisePurchaseOrders" disabled="@(!_rfq.Lines.Any(l => l.WinningSupplierId.HasValue))"
-                class="btn btn-primary">
-            Raise Purchase Order(s)
-        </button>
+        @if (_rfq.Lines.Any(l => l.WinningSupplierId.HasValue && !_poItemIds.Contains(l.ItemId)))
+        {
+            <button @onclick="RaisePurchaseOrders" class="btn btn-primary">Raise Purchase Order(s)</button>
+            <span class="text-sm text-muted">Creates one PO per winning supplier for the awarded lines that have no PO yet.</span>
+        }
+        else if (_poItemIds.Count > 0)
+        {
+            <span class="text-sm text-muted">
+                @(_rfq.Lines.All(l => _poItemIds.Contains(l.ItemId))
+                    ? "Every line of this RFQ now has a purchase order."
+                    : "Purchase orders have been raised for every awarded line so far. Award the remaining lines above to raise more.")
+            </span>
+        }
+        else
+        {
+            <button disabled class="btn btn-primary">Raise Purchase Order(s)</button>
+            <span class="text-sm text-muted">Select a winner on at least one line first.</span>
+        }
     </div>
 
     @if (_rfq.Status != RfqStatus.Awarded && _uninvited.Count > 0)
