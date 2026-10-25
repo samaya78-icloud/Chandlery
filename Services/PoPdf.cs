@@ -91,7 +91,7 @@ public static class PoPdf
 
                 if (po.IsDummy)
                     col.Item().Background("#fffbeb").Border(1).BorderColor("#fde68a").Padding(6)
-                        .Text("This is a nil-value order. It records goods supplied under an arrangement made outside this system, so no prices are shown.")
+                        .Text("This is a record-only order. It records goods supplied under an arrangement made outside this system, so no prices are shown.")
                         .FontColor("#92400e");
 
                 // Lines

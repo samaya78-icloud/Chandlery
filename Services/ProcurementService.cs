@@ -1051,7 +1051,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return newPos;
     }
 
-    /// <summary>Raises a PO directly with a supplier (no RFQ). Priced lines are required unless it is a dummy PO.</summary>
+    /// <summary>Raises a PO directly with a supplier (no RFQ). Priced lines are required unless it is a record-only PO.</summary>
     public async Task<PurchaseOrder> CreateSpotPoAsync(int companyId, NewSpotPo request, Actor? actor = null)
     {
         actor ??= Actor.System;
@@ -1079,7 +1079,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (request.Lines.GroupBy(l => l.ItemId).Any(g => g.Count() > 1))
             throw new InvalidOperationException("An item can only appear once on a purchase order.");
         if (!request.IsDummy && request.Lines.Any(l => l.UnitPrice <= 0))
-            throw new InvalidOperationException("Every line needs a unit price above zero (or mark the order as a dummy PO).");
+            throw new InvalidOperationException("Every line needs a unit price above zero (or mark the order as a record-only PO).");
         if (request.Lines.Any(l => l.DiscountPct is < 0 or > 100) || request.DiscountPct is < 0 or > 100)
             throw new InvalidOperationException("Discounts must be between 0 and 100 percent.");
         if (request.AdditionalCharges < 0)
@@ -1124,13 +1124,13 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync(); // gives the PO its id
 
         AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor,
-            $"CREATED {(po.IsDummy ? "dummy " : "")}spot PO {po.PoNumber} for {supplier.Name} on {vessel.Name}: {po.Lines.Count} lines" +
+            $"CREATED {(po.IsDummy ? "record-only " : "")}spot PO {po.PoNumber} for {supplier.Name} on {vessel.Name}: {po.Lines.Count} lines" +
             (po.IsDummy ? "" : $", total {Money.Format(po.Total, po.Currency)}"));
         if (po.IsDummy)
         {
             po.Status = PoStatus.Approved;
             AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor,
-                "APPROVED automatically: a dummy PO has no value, so it skips the approval matrix");
+                "APPROVED automatically: a record-only PO has no value, so it skips the approval matrix");
         }
         else
         {

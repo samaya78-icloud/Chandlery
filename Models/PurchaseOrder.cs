@@ -27,7 +27,7 @@ public class PurchaseOrder
 
     public bool IsSpot { get; set; }
 
-    /// <summary>A spot PO with no value, used only so deliveries and invoices have something to attach to.</summary>
+    /// <summary>A "record-only" spot PO (the field keeps its old name): no value, used only so deliveries and invoices have something to attach to.</summary>
     public bool IsDummy { get; set; }
     public string SupplierRef { get; set; } = "";
     public int? VesselId { get; set; }

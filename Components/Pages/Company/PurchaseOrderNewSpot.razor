@@ -74,8 +74,8 @@
         <label class="mt-4 flex items-start gap-2 text-sm text-ink">
             <input type="checkbox" class="mt-0.5" checked="@_po.IsDummy" @onchange="e => _po.IsDummy = (bool)e.Value!" />
             <span>
-                <span class="font-medium">Dummy PO</span>
-                <span class="block text-xs text-muted">No value and no approval. It only exists so deliveries and invoices can be recorded against an order that was placed outside Chandlery.</span>
+                <span class="font-medium">Record-only PO</span>
+                <span class="block text-xs text-muted">Order placed outside Chandlery (phone, email, port agent). No prices and no approval. Use it so deliveries and invoices can be linked to it.</span>
             </span>
         </label>
     </div>
@@ -183,7 +183,7 @@
             var unpriced = _po.Lines.Count(l => l.UnitPrice <= 0);
             if (unpriced > 0)
             {
-                _error = $"{unpriced} line(s) have no unit price. Price every line, or tick Dummy PO if this order has no value.";
+                _error = $"{unpriced} line(s) have no unit price. Price every line, or tick Record-only PO if this order has no value.";
                 return;
             }
         }

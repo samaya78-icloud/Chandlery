@@ -19,7 +19,7 @@ else
             <StatusChip Value="_po.Status" />
             <StatusChip Value="_po.DeliveryStatus" />
             @if (_po.IsSpot) { <StatusChip Label="Spot PO" Tone="accent" /> }
-            @if (_po.IsDummy) { <StatusChip Label="Dummy" Tone="neutral" /> }
+            @if (_po.IsDummy) { <StatusChip Label="Record-only" Tone="neutral" /> }
         </Badges>
         <Facts>
             @if (_supplier is not null)
