@@ -27,9 +27,9 @@
                 </select>
             </div>
             <div>
-                <label class="label">Department</label>
+                <label class="label">Department @if (_departments.Count > 0) { <span class="text-rose-500">*</span> }</label>
                 <select @bind="_departmentId" class="select">
-                    <option value="0">No department</option>
+                    <option value="0">@(_departments.Count > 0 ? "Select department…" : "No department")</option>
                     @foreach (var d in _departments)
                     {
                         <option value="@d.Id">@d.Name</option>
@@ -80,7 +80,8 @@
         </label>
     </div>
 
-    <ItemLinePicker CompanyId="_companyId" Lines="_po.Lines" ShowPrice="@(!_po.IsDummy)" OnChanged="StateHasChanged" />
+    <ItemLinePicker CompanyId="_companyId" Lines="_po.Lines" ShowPrice="@(!_po.IsDummy)" OnChanged="StateHasChanged"
+                    DepartmentId="@(_departmentId == 0 ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)" />
 
     @if (!_po.IsDummy)
     {
@@ -170,6 +171,7 @@
 
         if (_vesselId == 0) { _error = "Choose the vessel this order is for."; return; }
         if (_supplierId == 0) { _error = "Choose a supplier."; return; }
+        if (_departments.Count > 0 && _departmentId == 0) { _error = "Choose a department."; return; }
         if (_po.Lines.Count == 0) { _error = "Add at least one line item."; return; }
 
         var zeroQty = _po.Lines.Count(l => l.Quantity <= 0);

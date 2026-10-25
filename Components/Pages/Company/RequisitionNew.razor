@@ -44,14 +44,18 @@
                 }
             </div>
             <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">Department</label>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Department @if (_departments.Count > 0) { <span class="text-rose-500">*</span> }</label>
                 <select @bind="_departmentId" class="@InputClass">
-                    <option value="0">Not specified</option>
+                    <option value="0">@(_departments.Count > 0 ? "Select department…" : "Not specified")</option>
                     @foreach (var d in _departments)
                     {
                         <option value="@d.Id">@d.Name</option>
                     }
                 </select>
+                @if (_departments.Count > 0)
+                {
+                    <p class="mt-1 text-xs text-slate-400">The department decides which categories and items you can add.</p>
+                }
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Urgency</label>
@@ -97,6 +101,7 @@
     </div>
 
     <ItemLinePicker CompanyId="_companyId" Lines="_reqn.Lines" ShowDrawingNo="@(_reqn.Type == RfqType.Spares)"
+                    DepartmentId="@(_departmentId == 0 ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)"
                     CopySourceLabel="requisition" CopySources="_copySources" OnChanged="StateHasChanged" />
 
     @if (_error is not null)

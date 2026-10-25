@@ -5,7 +5,7 @@
 
 <PageTitle>Departments · Chandlery</PageTitle>
 
-<PageHeader Eyebrow="Master data" Title="Departments" Subtitle="@($"{_departments.Count:N0} departments — used on requisitions and by the approval matrix.")">
+<PageHeader Eyebrow="Master data" Title="Departments" Subtitle="@($"{_departments.Count:N0} departments — each picks items only from the categories linked to it, and has its own approval rules.")">
     <Actions>
         <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add Department</button>
     </Actions>
@@ -32,6 +32,16 @@
     <GridColumn Title="Name" Text="d => d.Name" Context="d">
         <DocLink Kind="DocKind.Department" Id="d.Id" Text="@d.Name" />
     </GridColumn>
+    <GridColumn Title="Categories" Text="d => LinkText(d)" Filter="GridFilter.None" SortBy="d => _links.GetValueOrDefault(d.Id)" Context="d">
+        @if (_links.GetValueOrDefault(d.Id) == 0)
+        {
+            <span class="chip chip-plain" data-tone="warning">None linked: set up</span>
+        }
+        else
+        {
+            <span class="text-muted">@LinkText(d)</span>
+        }
+    </GridColumn>
     <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
 </DataGrid>
 
@@ -40,6 +50,9 @@
 
     private int _companyId;
     private List<Department> _departments = new();
+    private Dictionary<int, int> _links = new();
+
+    private string LinkText(Department d) => _links.GetValueOrDefault(d.Id) == 0 ? "None" : $"{_links[d.Id]} linked";
     private bool _showForm;
     private string _name = "";
     private string? _error;
@@ -49,6 +62,7 @@
         var authState = await AuthStateTask!;
         _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _departments = await Procurement.GetDepartmentsAsync(_companyId);
+        _links = await Procurement.GetDepartmentLinkCountsAsync(_companyId);
     }
 
     private async Task Add()
@@ -70,6 +84,7 @@
         }
 
         _departments = await Procurement.GetDepartmentsAsync(_companyId);
+        _links = await Procurement.GetDepartmentLinkCountsAsync(_companyId);
         _name = "";
         _error = null;
         _showForm = false;

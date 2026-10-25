@@ -53,6 +53,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory)
         var items = await db.Items.Where(i => i.CompanyId == companyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id);
         if (items.Count != itemIds.Count)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
+        await ProcurementService.EnsureItemsAllowedAsync(db, companyId, request.DepartmentId, itemIds);
 
         var isSpares = request.Type == RfqType.Spares;
         var nextSeq = 1001 + await db.Requisitions.IgnoreQueryFilters().CountAsync();

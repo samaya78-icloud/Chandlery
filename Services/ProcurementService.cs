@@ -69,6 +69,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         var company = new Company { Name = companyName, ContactEmail = email, CreatedAt = DateTime.UtcNow };
         db.Companies.Add(company);
         await db.SaveChangesAsync();
+        await StarterCategories.CreateAsync(db, company.Id);
 
         var admin = new AppUser
         {
@@ -131,15 +132,89 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     public async Task<Item> AddItemAsync(int companyId, string code, string name, int categoryId, string uom)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var item = new Item { CompanyId = companyId, Code = code, Name = name, CategoryId = categoryId, UnitOfMeasure = uom };
+        db.CurrentCompanyId = companyId;
+        code = (code ?? "").Trim();
+        name = (name ?? "").Trim();
+        if (code == "" || name == "") throw new InvalidOperationException("Code and name are required.");
+        await EnsureCategoryUsableAsync(db, companyId, categoryId);
+        if (await db.Items.AnyAsync(i => i.CompanyId == companyId && i.Code.ToLower() == code.ToLower()))
+            throw new InvalidOperationException($"An item with code {code} already exists.");
+
+        var item = new Item { CompanyId = companyId, Code = code, Name = name, CategoryId = categoryId, UnitOfMeasure = (uom ?? "").Trim() };
         db.Items.Add(item);
         await db.SaveChangesAsync();
         return item;
     }
 
+    private static async Task EnsureCategoryUsableAsync(ChandleryDbContext db, int companyId, int categoryId)
+    {
+        var all = await db.Categories.Where(c => c.CompanyId == companyId).ToListAsync();
+        if (!all.Any(c => c.Id == categoryId)) throw new InvalidOperationException("Choose a category from your tree.");
+        if (!Category.ActiveIds(all).Contains(categoryId)) throw new InvalidOperationException("That category is disabled, so items cannot be added to it.");
+    }
+
+    public async Task<Item> UpdateItemAsync(int companyId, int itemId, string code, string name, int categoryId, string uom)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var item = await db.Items.FirstOrDefaultAsync(i => i.Id == itemId && i.CompanyId == companyId)
+            ?? throw new InvalidOperationException("Item not found.");
+        code = (code ?? "").Trim();
+        name = (name ?? "").Trim();
+        if (code == "" || name == "") throw new InvalidOperationException("Code and name are required.");
+        if (categoryId != item.CategoryId) await EnsureCategoryUsableAsync(db, companyId, categoryId);
+        if (await db.Items.AnyAsync(i => i.CompanyId == companyId && i.Id != itemId && i.Code.ToLower() == code.ToLower()))
+            throw new InvalidOperationException($"Another item already uses the code {code}.");
+
+        item.Code = code;
+        item.Name = name;
+        item.CategoryId = categoryId;
+        item.UnitOfMeasure = (uom ?? "").Trim();
+        await db.SaveChangesAsync();
+        return item;
+    }
+
+    /// <summary>Which of these items appear on any requisition, RFQ, purchase order or delivery (so they can be disabled but not deleted).</summary>
+    public async Task<HashSet<int>> GetUsedItemIdsAsync(int companyId, IReadOnlyCollection<int> itemIds)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var ids = itemIds.ToList();
+        var used = new HashSet<int>();
+        used.UnionWith(await db.Requisitions.Where(r => r.CompanyId == companyId).SelectMany(r => r.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
+        used.UnionWith(await db.Rfqs.Where(r => r.CompanyId == companyId).SelectMany(r => r.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
+        used.UnionWith(await db.PurchaseOrders.Where(p => p.CompanyId == companyId).SelectMany(p => p.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
+        used.UnionWith(await db.DeliveryOrders.Where(d => d.CompanyId == companyId).SelectMany(d => d.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
+        return used;
+    }
+
+    public async Task DeleteItemAsync(int companyId, int itemId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var item = await db.Items.FirstOrDefaultAsync(i => i.Id == itemId && i.CompanyId == companyId)
+            ?? throw new InvalidOperationException("Item not found.");
+        if ((await GetUsedItemIdsAsync(companyId, new[] { itemId })).Contains(itemId))
+            throw new InvalidOperationException($"{item.Code} is on requisitions, RFQs or purchase orders, so it cannot be deleted. Disable it instead.");
+        db.Items.Remove(item);
+        await db.SaveChangesAsync();
+    }
+
+    public async Task SetItemActiveAsync(int companyId, int itemId, bool active)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var item = await db.Items.FirstOrDefaultAsync(i => i.Id == itemId && i.CompanyId == companyId)
+            ?? throw new InvalidOperationException("Item not found.");
+        if (active && !item.IsActive)
+            await EnsureCategoryUsableAsync(db, companyId, item.CategoryId); // cannot re-enable an item inside a disabled category
+        item.IsActive = active;
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>
-    /// Bulk-load catalog items. Missing categories along each path are created (the tree is shared, so they
-    /// become visible to every company), items whose code already exists for this company are skipped.
+    /// Bulk-load catalog items. Missing categories along each path are created in the company's own tree,
+    /// items whose code already exists for this company are skipped.
     /// </summary>
     public async Task<ItemImportResult> ImportItemsAsync(int companyId, List<ItemImportRow> rows)
     {
@@ -164,7 +239,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
                 var key = (parentId ?? 0, segment.ToLowerInvariant());
                 if (!byKey.TryGetValue(key, out var category))
                 {
-                    category = new Category { Name = segment, ParentCategoryId = parentId, CreatedAt = DateTime.UtcNow };
+                    category = new Category { CompanyId = companyId, Name = segment, ParentCategoryId = parentId, CreatedAt = DateTime.UtcNow };
                     db.Categories.Add(category);
                     await db.SaveChangesAsync(); // children need the parent's generated Id
                     byKey[key] = category;
@@ -268,21 +343,187 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return port;
     }
 
-    // ---- Categories (global) ----
+    // ---- Categories (company-owned) ----
 
-    public async Task<List<Category>> GetCategoriesAsync()
+    /// <summary>The company's categories. With <paramref name="activeOnly"/>, disabled ones and everything beneath them are left out.</summary>
+    public async Task<List<Category>> GetCategoriesAsync(int companyId, bool activeOnly = false)
     {
         await using var db = await factory.CreateDbContextAsync();
-        return await db.Categories.OrderBy(c => c.Name).ToListAsync();
+        db.CurrentCompanyId = companyId;
+        var all = await db.Categories.Where(c => c.CompanyId == companyId).OrderBy(c => c.Name).ToListAsync();
+        if (!activeOnly) return all;
+        var ok = Category.ActiveIds(all);
+        return all.Where(c => ok.Contains(c.Id)).ToList();
     }
 
-    public async Task<Category> AddCategoryAsync(string name, int? parentCategoryId)
+    private static string CleanCategoryName(string? name)
+    {
+        name = (name ?? "").Trim();
+        if (name == "") throw new InvalidOperationException("Enter a category name.");
+        if (name.Length > 80) throw new InvalidOperationException("A category name can be at most 80 characters.");
+        return name;
+    }
+
+    public async Task<Category> AddCategoryAsync(int companyId, string name, int? parentCategoryId)
     {
         await using var db = await factory.CreateDbContextAsync();
-        var category = new Category { Name = name, ParentCategoryId = parentCategoryId, CreatedAt = DateTime.UtcNow };
+        db.CurrentCompanyId = companyId;
+        name = CleanCategoryName(name);
+        if (parentCategoryId.HasValue && !await db.Categories.AnyAsync(c => c.Id == parentCategoryId.Value && c.CompanyId == companyId))
+            throw new InvalidOperationException("Parent category not found.");
+        if (await db.Categories.AnyAsync(c => c.CompanyId == companyId && c.ParentCategoryId == parentCategoryId && c.Name.ToLower() == name.ToLower()))
+            throw new InvalidOperationException($"{name} already exists at that level.");
+
+        var category = new Category { CompanyId = companyId, Name = name, ParentCategoryId = parentCategoryId, CreatedAt = DateTime.UtcNow };
         db.Categories.Add(category);
         await db.SaveChangesAsync();
         return category;
+    }
+
+    /// <summary>Renames a category and/or moves it under another one (never under itself or one of its own sub-categories).</summary>
+    public async Task UpdateCategoryAsync(int companyId, int categoryId, string name, int? parentCategoryId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var all = await db.Categories.Where(c => c.CompanyId == companyId).ToListAsync();
+        var category = all.FirstOrDefault(c => c.Id == categoryId) ?? throw new InvalidOperationException("Category not found.");
+        name = CleanCategoryName(name);
+
+        if (parentCategoryId.HasValue)
+        {
+            if (!all.Any(c => c.Id == parentCategoryId.Value)) throw new InvalidOperationException("Parent category not found.");
+            if (CategoryIds.Descendants(all, categoryId).Contains(parentCategoryId.Value))
+                throw new InvalidOperationException("A category cannot be moved under itself or one of its own sub-categories.");
+        }
+        if (all.Any(c => c.Id != categoryId && c.ParentCategoryId == parentCategoryId && c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException($"{name} already exists at that level.");
+
+        category.Name = name;
+        category.ParentCategoryId = parentCategoryId;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>How many items (any status) and sub-categories each category has, so the page knows whether it can be deleted.</summary>
+    public async Task<Dictionary<int, (int Items, int Children)>> GetCategoryUsageAsync(int companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var items = await db.Items.Where(i => i.CompanyId == companyId).GroupBy(i => i.CategoryId).Select(g => new { Id = g.Key, N = g.Count() }).ToListAsync();
+        var children = await db.Categories.Where(c => c.CompanyId == companyId && c.ParentCategoryId != null)
+            .GroupBy(c => c.ParentCategoryId!.Value).Select(g => new { Id = g.Key, N = g.Count() }).ToListAsync();
+        var map = new Dictionary<int, (int, int)>();
+        foreach (var i in items) map[i.Id] = (i.N, map.GetValueOrDefault(i.Id).Item2);
+        foreach (var c in children) map[c.Id] = (map.GetValueOrDefault(c.Id).Item1, c.N);
+        return map;
+    }
+
+    /// <summary>A category can only be deleted when it holds no items and no sub-categories; otherwise it can be disabled.</summary>
+    public async Task DeleteCategoryAsync(int companyId, int categoryId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var category = await db.Categories.FirstOrDefaultAsync(c => c.Id == categoryId && c.CompanyId == companyId)
+            ?? throw new InvalidOperationException("Category not found.");
+        if (await db.Categories.AnyAsync(c => c.ParentCategoryId == categoryId))
+            throw new InvalidOperationException($"{category.Name} has sub-categories. Delete or move them first, or disable it.");
+        if (await db.Items.AnyAsync(i => i.CategoryId == categoryId))
+            throw new InvalidOperationException($"{category.Name} still has items. Delete or move them first, or disable it.");
+
+        db.DepartmentCategories.RemoveRange(await db.DepartmentCategories.Where(x => x.CategoryId == categoryId).ToListAsync());
+        db.Categories.Remove(category);
+        await db.SaveChangesAsync();
+    }
+
+    public async Task SetCategoryActiveAsync(int companyId, int categoryId, bool active)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var category = await db.Categories.FirstOrDefaultAsync(c => c.Id == categoryId && c.CompanyId == companyId)
+            ?? throw new InvalidOperationException("Category not found.");
+        category.IsActive = active;
+        await db.SaveChangesAsync();
+    }
+
+    // ---- Department <-> category links ----
+
+    /// <summary>The categories ticked for a department (not expanded to their sub-categories).</summary>
+    public async Task<HashSet<int>> GetDepartmentCategoryIdsAsync(int companyId, int departmentId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return (await db.DepartmentCategories.Where(x => x.CompanyId == companyId && x.DepartmentId == departmentId)
+            .Select(x => x.CategoryId).ToListAsync()).ToHashSet();
+    }
+
+    public async Task<Dictionary<int, int>> GetDepartmentLinkCountsAsync(int companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.DepartmentCategories.Where(x => x.CompanyId == companyId)
+            .GroupBy(x => x.DepartmentId).ToDictionaryAsync(g => g.Key, g => g.Count());
+    }
+
+    /// <summary>Replaces the department's linked categories. Linking a category also covers everything beneath it.</summary>
+    public async Task SetDepartmentCategoriesAsync(int companyId, int departmentId, IEnumerable<int> categoryIds)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (!await db.Departments.AnyAsync(d => d.Id == departmentId && d.CompanyId == companyId))
+            throw new InvalidOperationException("Department not found.");
+
+        var wanted = categoryIds.Distinct().ToList();
+        var valid = (await db.Categories.Where(c => c.CompanyId == companyId && wanted.Contains(c.Id)).Select(c => c.Id).ToListAsync()).ToHashSet();
+        if (valid.Count != wanted.Count) throw new InvalidOperationException("One of the categories was not found.");
+
+        var existing = await db.DepartmentCategories.Where(x => x.DepartmentId == departmentId).ToListAsync();
+        db.DepartmentCategories.RemoveRange(existing.Where(x => !valid.Contains(x.CategoryId)));
+        foreach (var id in valid.Where(id => existing.All(x => x.CategoryId != id)))
+            db.DepartmentCategories.Add(new DepartmentCategory { CompanyId = companyId, DepartmentId = departmentId, CategoryId = id });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// The category ids that may be used for a department: its linked categories and everything beneath them, minus disabled ones.
+    /// With no department (a company that has not set any up) every enabled category may be used.
+    /// A department with no links gets an empty set, so nothing can be chosen until it is set up.
+    /// </summary>
+    public async Task<HashSet<int>> GetPickableCategoryIdsAsync(int companyId, int? departmentId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await PickableCategoryIdsAsync(db, companyId, departmentId);
+    }
+
+    internal static async Task<HashSet<int>> PickableCategoryIdsAsync(ChandleryDbContext db, int companyId, int? departmentId)
+    {
+        var all = await db.Categories.Where(c => c.CompanyId == companyId).ToListAsync();
+        var active = Category.ActiveIds(all);
+        if (departmentId is null) return active;
+
+        var linked = await db.DepartmentCategories.Where(x => x.CompanyId == companyId && x.DepartmentId == departmentId)
+            .Select(x => x.CategoryId).ToListAsync();
+        var allowed = new HashSet<int>();
+        foreach (var id in linked) allowed.UnionWith(CategoryIds.Descendants(all, id));
+        allowed.IntersectWith(active);
+        return allowed;
+    }
+
+    /// <summary>
+    /// Server-side guard for requisitions and purchase orders: the department is required when the company has any,
+    /// and every item must be enabled and sit in a category the department may use.
+    /// </summary>
+    internal static async Task EnsureItemsAllowedAsync(ChandleryDbContext db, int companyId, int? departmentId, IEnumerable<int> itemIds)
+    {
+        if (departmentId is null && await db.Departments.AnyAsync(d => d.CompanyId == companyId))
+            throw new InvalidOperationException("Choose a department.");
+
+        var pickable = await PickableCategoryIdsAsync(db, companyId, departmentId);
+        var ids = itemIds.Distinct().ToList();
+        var bad = await db.Items.Where(i => i.CompanyId == companyId && ids.Contains(i.Id) && (!i.IsActive || !pickable.Contains(i.CategoryId)))
+            .Select(i => i.Code).Take(5).ToListAsync();
+        if (bad.Count > 0)
+            throw new InvalidOperationException(
+                $"These items cannot be used for this department (disabled, or not in its categories): {string.Join(", ", bad)}.");
     }
 
     // ---- Suppliers (global) & CompanySupplier links ----
@@ -766,6 +1007,8 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (req.Like("code") is { } codeLike) q = q.Where(i => EF.Functions.ILike(i.Code, codeLike));
         if (req.Like("name") is { } nameLike) q = q.Where(i => EF.Functions.ILike(i.Name, nameLike));
         if (req.Select("uom") is { Length: > 0 } uom) q = q.Where(i => i.UnitOfMeasure == uom);
+        if (req.Select("status") == "Active") q = q.Where(i => i.IsActive);
+        else if (req.Select("status") == "Disabled") q = q.Where(i => !i.IsActive);
 
         var total = await q.CountAsync();
         var desc = req.SortDesc;
@@ -774,15 +1017,17 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             "name" => GridSort.By(q, i => i.Name, desc),
             "uom" => GridSort.By(q, i => i.UnitOfMeasure, desc),
             "code" => GridSort.By(q, i => i.Code, desc),
+            "status" => GridSort.By(q, i => i.IsActive, desc),
             _ => q.OrderBy(i => i.Code)
         };
         var rows = await ordered.ThenBy(i => i.Id).Skip(req.Skip).Take(req.PageSize).ToListAsync();
         return new GridResult<Item>(rows, total);
     }
 
-    private static IQueryable<Item> ItemSearchQuery(ChandleryDbContext db, int companyId, string? term, IReadOnlyCollection<int>? categoryIds)
+    private static IQueryable<Item> ItemSearchQuery(ChandleryDbContext db, int companyId, string? term, IReadOnlyCollection<int>? categoryIds, IReadOnlyCollection<int> pickableCategoryIds)
     {
-        var q = db.Items.Where(i => i.CompanyId == companyId);
+        var pickable = pickableCategoryIds.ToList();
+        var q = db.Items.Where(i => i.CompanyId == companyId && i.IsActive && pickable.Contains(i.CategoryId));
         if (categoryIds is not null)
         {
             var ids = categoryIds.ToList();
@@ -796,23 +1041,23 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return q;
     }
 
-    /// <summary>One page of items matching a code/name search (and optionally a set of categories) — used by the item pickers.</summary>
-    public async Task<(List<Item> Rows, int Total)> SearchItemsAsync(int companyId, string? term, IReadOnlyCollection<int>? categoryIds, int skip, int take)
+    /// <summary>One page of enabled items in the allowed categories matching a code/name search (and optionally a narrower category set), for the item pickers.</summary>
+    public async Task<(List<Item> Rows, int Total)> SearchItemsAsync(int companyId, string? term, IReadOnlyCollection<int>? categoryIds, IReadOnlyCollection<int> pickableCategoryIds, int skip, int take)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        var q = ItemSearchQuery(db, companyId, term, categoryIds);
+        var q = ItemSearchQuery(db, companyId, term, categoryIds, pickableCategoryIds);
         var total = await q.CountAsync();
         var rows = await q.OrderBy(i => i.Code).ThenBy(i => i.Id).Skip(skip).Take(take).ToListAsync();
         return (rows, total);
     }
 
     /// <summary>Every item matching the search, for "add all matching".</summary>
-    public async Task<List<Item>> FindItemsAsync(int companyId, string? term, IReadOnlyCollection<int>? categoryIds)
+    public async Task<List<Item>> FindItemsAsync(int companyId, string? term, IReadOnlyCollection<int>? categoryIds, IReadOnlyCollection<int> pickableCategoryIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        return await ItemSearchQuery(db, companyId, term, categoryIds).OrderBy(i => i.Code).ThenBy(i => i.Id).ToListAsync();
+        return await ItemSearchQuery(db, companyId, term, categoryIds, pickableCategoryIds).OrderBy(i => i.Code).ThenBy(i => i.Id).ToListAsync();
     }
 
     /// <summary>Looks items up by code (case-insensitive) for "paste from Excel".</summary>
@@ -1091,6 +1336,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         var itemCount = await db.Items.CountAsync(i => i.CompanyId == companyId && itemIds.Contains(i.Id));
         if (itemCount != itemIds.Count)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
+        await EnsureItemsAllowedAsync(db, companyId, request.DepartmentId, itemIds);
 
         var nextSeq = 5001 + await db.PurchaseOrders.IgnoreQueryFilters().CountAsync();
         var po = new PurchaseOrder

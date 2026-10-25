@@ -36,6 +36,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<InvoiceDocument> InvoiceDocuments => Set<InvoiceDocument>();
     public DbSet<SupplierBankAccount> SupplierBankAccounts => Set<SupplierBankAccount>();
     public DbSet<TaxCode> TaxCodes => Set<TaxCode>();
+    public DbSet<DepartmentCategory> DepartmentCategories => Set<DepartmentCategory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -60,7 +61,10 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
 
         modelBuilder.Entity<Category>(b =>
         {
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Category>().WithMany().HasForeignKey(c => c.ParentCategoryId).OnDelete(DeleteBehavior.Restrict);
+            b.Property(c => c.IsActive).HasDefaultValue(true);
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<Port>(b =>
@@ -86,6 +90,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
         {
             b.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
             b.HasOne<Category>().WithMany().HasForeignKey(i => i.CategoryId).OnDelete(DeleteBehavior.Restrict);
+            b.Property(i => i.IsActive).HasDefaultValue(true);
             b.HasQueryFilter(i => CurrentCompanyId == null || i.CompanyId == CurrentCompanyId);
         });
 
@@ -195,6 +200,15 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
                 lb.Property(l => l.Quantity).HasPrecision(18, 3);
             });
             b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<DepartmentCategory>(b =>
+        {
+            b.HasKey(x => new { x.DepartmentId, x.CategoryId });
+            b.HasOne<Company>().WithMany().HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Department>().WithMany().HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Category>().WithMany().HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(x => CurrentCompanyId == null || x.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<SupplierBankAccount>(b =>

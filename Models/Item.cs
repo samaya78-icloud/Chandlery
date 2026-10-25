@@ -8,4 +8,7 @@ public class Item
     public string Name { get; set; } = "";
     public int CategoryId { get; set; }
     public string UnitOfMeasure { get; set; } = "";
+
+    /// <summary>A disabled item stays on old documents but cannot be added to new ones.</summary>
+    public bool IsActive { get; set; } = true;
 }

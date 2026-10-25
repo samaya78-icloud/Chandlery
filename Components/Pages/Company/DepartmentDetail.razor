@@ -3,6 +3,8 @@
 @rendermode InteractiveServer
 @inject HubService Hub
 @inject ApprovalService ApprovalSvc
+@inject ProcurementService Procurement
+@inject ToastService Toasts
 
 <PageTitle>@(_hub?.Department.Name ?? "Department") · Chandlery</PageTitle>
 
@@ -24,6 +26,37 @@ else
         <StatCard Label="Approval rules" Value="@_hub.Rules.Count.ToString("N0")" Hint="@(_hub.Rules.Count == 0 ? "Uses the 'All departments' rules" : "Specific to this department")" Tone="info" Href="/company/approval-matrix" />
     </div>
 
+    <div class="card mb-8 p-6">
+        <div class="mb-1 flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-display text-lg font-bold text-ink">Categories this department may use</h2>
+            <button @onclick="SaveLinks" disabled="@_saving" class="btn btn-primary btn-sm">Save categories</button>
+        </div>
+        <p class="mb-4 text-sm text-muted">
+            Requisitions and orders for this department can only include items from the categories ticked here. Ticking a category covers everything beneath it.
+            @if (_linked.Count == 0) { <span class="font-semibold text-amber-600">None are linked yet, so this department cannot add any items.</span> }
+        </p>
+        @if (_tree.Count == 0)
+        {
+            <p class="text-sm text-muted">There are no categories yet. <a href="/company/categories" class="link">Add some first</a>.</p>
+        }
+        else
+        {
+            <ul class="max-h-96 divide-y divide-line overflow-y-auto rounded-xl border border-line">
+                @foreach (var (category, _, depth) in _tree)
+                {
+                    var c = category;
+                    var inherited = !_linked.Contains(c.Id) && _tree.Any(t => _linked.Contains(t.Category.Id) && CategoryIds.Descendants(_categories, t.Category.Id).Contains(c.Id));
+                    <li class="flex items-center gap-2 px-3 py-1.5 text-sm" style="padding-left: @(12 + depth * 22)px">
+                        <input type="checkbox" checked="@(_linked.Contains(c.Id))" @onchange="e => ToggleLink(c.Id, (bool)e.Value!)" />
+                        <span class="@(c.IsActive ? "text-ink" : "text-muted line-through")">@c.Name</span>
+                        @if (!c.IsActive) { <span class="chip chip-plain" data-tone="neutral">Disabled</span> }
+                        @if (inherited) { <span class="text-xs text-muted">included through a category above</span> }
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
     <h2 class="mb-3 font-display text-lg font-bold text-ink">Requisitions</h2>
     <div class="mb-8"><ReqnTable Requisitions="_hub.Requisitions" ShowDepartment="false" ExportName="@(_hub.Department.Name + "-requisitions")" /></div>
 
@@ -39,7 +72,7 @@ else
     {
         <DataGrid TItem="ApprovalRuleRow" Items="_hub.Rules" ItemName="rules" SyncUrl="false" EmptyText="No rules.">
             <GridColumn Title="Up to amount" Text="r => UpTo(r)" Filter="GridFilter.None" SortBy="r => r.Rule.UpToAmount ?? decimal.MaxValue" />
-            <GridColumn Title="Level" Text="r => r.Rule.Level.ToString()" Filter="GridFilter.Select" />
+            <GridColumn Title="Step" Text="r => _levelNames.Name(r.Rule.Level)" Filter="GridFilter.Select" />
             <GridColumn Title="Approver" Text="r => r.Approver" Filter="GridFilter.Select" />
         </DataGrid>
     }
@@ -50,6 +83,12 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private DepartmentHub? _hub;
+    private int _companyId;
+    private bool _saving;
+    private ApprovalLevelNames _levelNames = new(new string?[3]);
+    private List<Category> _categories = new();
+    private List<(Category Category, string Path, int Depth)> _tree = new();
+    private HashSet<int> _linked = new();
     private bool _loaded;
 
     private static string UpTo(ApprovalRuleRow row) => row.Rule.UpToAmount.HasValue ? row.Rule.UpToAmount.Value.ToString("N2") : "No limit";
@@ -58,7 +97,35 @@ else
     {
         var authState = await AuthStateTask!;
         var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = companyId;
         _hub = await Hub.GetDepartmentAsync(companyId, DepartmentId, ApprovalSvc);
+        _levelNames = await ApprovalSvc.GetLevelNamesAsync(companyId);
+        _categories = await Procurement.GetCategoriesAsync(companyId);
+        _tree = Category.BuildTree(_categories);
+        _linked = await Procurement.GetDepartmentCategoryIdsAsync(companyId, DepartmentId);
         _loaded = true;
+    }
+
+    private void ToggleLink(int categoryId, bool on)
+    {
+        if (on) _linked.Add(categoryId); else _linked.Remove(categoryId);
+    }
+
+    private async Task SaveLinks()
+    {
+        _saving = true;
+        try
+        {
+            await Procurement.SetDepartmentCategoriesAsync(_companyId, DepartmentId, _linked);
+            await Toasts.Success("Categories saved for this department");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toasts.Error(ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 }

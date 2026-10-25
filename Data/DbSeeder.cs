@@ -63,33 +63,18 @@ public static class DbSeeder
 
         db.Users.AddRange(companyAdmin, oceanGearUser, poseidonUser);
 
-        // Illustrative example tree only — NOT the real IMPA Marine Stores Guide (a licensed
-        // commercial catalog). Structure loosely mirrors IMPA's known section groupings so the
-        // multi-level hierarchy feature has something realistic to demonstrate.
-        var store = new Category { Name = "Store", CreatedAt = DateTime.UtcNow };
-        var spare = new Category { Name = "Spare", CreatedAt = DateTime.UtcNow };
-        db.Categories.AddRange(store, spare);
-        await db.SaveChangesAsync();
-
-        var centralStores = new Category { Name = "Central Stores", ParentCategoryId = store.Id, CreatedAt = DateTime.UtcNow };
-        db.Categories.Add(centralStores);
-        await db.SaveChangesAsync();
-
-        var impa = new Category { Name = "IMPA", ParentCategoryId = centralStores.Id, CreatedAt = DateTime.UtcNow };
-        db.Categories.Add(impa);
-        await db.SaveChangesAsync();
-
-        var ropesRigging = new Category { Name = "Ropes, Rigging & Lashing", ParentCategoryId = impa.Id, CreatedAt = DateTime.UtcNow };
-        var deckEquipment = new Category { Name = "Deck Equipment & Machinery", ParentCategoryId = impa.Id, CreatedAt = DateTime.UtcNow };
-        var safetyEquipment = new Category { Name = "Safety & Life-Saving Equipment", ParentCategoryId = impa.Id, CreatedAt = DateTime.UtcNow };
-        var paintsChemicals = new Category { Name = "Paints, Chemicals & Cleaning", ParentCategoryId = impa.Id, CreatedAt = DateTime.UtcNow };
-        var lubricantsOils = new Category { Name = "Lubricants & Oils", ParentCategoryId = impa.Id, CreatedAt = DateTime.UtcNow };
-        var cateringStores = new Category { Name = "Cabin, Galley & Catering Stores", ParentCategoryId = impa.Id, CreatedAt = DateTime.UtcNow };
-        var engineSpares = new Category { Name = "Engine Room Spares", ParentCategoryId = spare.Id, CreatedAt = DateTime.UtcNow };
-        var deckSpares = new Category { Name = "Deck Machinery Spares", ParentCategoryId = spare.Id, CreatedAt = DateTime.UtcNow };
-        var electricalSpares = new Category { Name = "Electrical & Electronics Spares", ParentCategoryId = spare.Id, CreatedAt = DateTime.UtcNow };
-        db.Categories.AddRange(ropesRigging, deckEquipment, safetyEquipment, paintsChemicals, lubricantsOils, cateringStores, engineSpares, deckSpares, electricalSpares);
-        await db.SaveChangesAsync();
+        // Each company owns its category tree; this is the same illustrative starter tree a newly registered company gets
+        // (NOT the real IMPA Marine Stores Guide, which is a licensed commercial catalogue).
+        var cats = await StarterCategories.CreateAsync(db, company.Id);
+        var ropesRigging = cats["Ropes, Rigging & Lashing"];
+        var deckEquipment = cats["Deck Equipment & Machinery"];
+        var safetyEquipment = cats["Safety & Life-Saving Equipment"];
+        var paintsChemicals = cats["Paints, Chemicals & Cleaning"];
+        var lubricantsOils = cats["Lubricants & Oils"];
+        var cateringStores = cats["Cabin, Galley & Catering Stores"];
+        var engineSpares = cats["Engine Room Spares"];
+        var deckSpares = cats["Deck Machinery Spares"];
+        var electricalSpares = cats["Electrical & Electronics Spares"];
 
         var items = new[]
         {
@@ -115,6 +100,20 @@ public static class DbSeeder
             new Department { CompanyId = company.Id, Name = "Electrical" },
             new Department { CompanyId = company.Id, Name = "Catering" },
             new Department { CompanyId = company.Id, Name = "Safety" });
+        await db.SaveChangesAsync();
+
+        // Which categories each department may use (a linked category covers everything beneath it).
+        var deptIds = await db.Departments.Where(d => d.CompanyId == company.Id).ToDictionaryAsync(d => d.Name, d => d.Id);
+        void Link(string department, params Category[] categories)
+        {
+            foreach (var c in categories)
+                db.DepartmentCategories.Add(new DepartmentCategory { CompanyId = company.Id, DepartmentId = deptIds[department], CategoryId = c.Id });
+        }
+        Link("Deck", ropesRigging, deckEquipment, safetyEquipment, paintsChemicals, deckSpares);
+        Link("Engine", lubricantsOils, paintsChemicals, engineSpares);
+        Link("Electrical", electricalSpares);
+        Link("Catering", cateringStores);
+        Link("Safety", safetyEquipment);
         await db.SaveChangesAsync();
 
         var singapore = await db.Ports.FirstAsync(p => p.Name == "Singapore");

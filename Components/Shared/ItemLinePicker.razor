@@ -10,14 +10,32 @@
             Line items <span class="ml-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium normal-case text-indigo-600">@Lines.Count</span>
         </h2>
         <div class="inline-flex rounded-lg border border-slate-200 bg-surface p-1 text-sm">
-            <button type="button" @onclick="() => TogglePanel(Panel.Catalog)" class="@PanelButtonClass(Panel.Catalog)">Add from catalog</button>
-            <button type="button" @onclick="() => TogglePanel(Panel.Paste)" class="@PanelButtonClass(Panel.Paste)">Paste from Excel</button>
+            <button type="button" disabled="@Locked" @onclick="() => TogglePanel(Panel.Catalog)" class="@PanelButtonClass(Panel.Catalog)">Add from catalog</button>
+            <button type="button" disabled="@Locked" @onclick="() => TogglePanel(Panel.Paste)" class="@PanelButtonClass(Panel.Paste)">Paste from Excel</button>
             @if (CopySources.Count > 0)
             {
-                <button type="button" @onclick="() => TogglePanel(Panel.Copy)" class="@PanelButtonClass(Panel.Copy)">Copy from previous @CopySourceLabel</button>
+                <button type="button" disabled="@Locked" @onclick="() => TogglePanel(Panel.Copy)" class="@PanelButtonClass(Panel.Copy)">Copy from previous @CopySourceLabel</button>
             }
         </div>
     </div>
+
+    @if (Locked)
+    {
+        <div class="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">Choose the department first. Items are limited to the categories that department may use.</div>
+    }
+    else if (_loaded && _pickable.Count == 0 && _catalogCount > 0)
+    {
+        <div class="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            @if (DepartmentId.HasValue)
+            {
+                <span>This department has no categories it may use yet, so no items can be added. <a href="/company/departments/@DepartmentId" class="link">Link categories to the department</a> first.</span>
+            }
+            else
+            {
+                <span>There are no enabled categories, so no items can be added.</span>
+            }
+        </div>
+    }
 
     @if (_catalogCount == 0)
     {
@@ -233,6 +251,18 @@
 
     [Parameter] public EventCallback OnChanged { get; set; }
 
+    /// <summary>The document's department: only items in the categories it may use can be added.</summary>
+    [Parameter] public int? DepartmentId { get; set; }
+
+    /// <summary>True when the company has departments, so a department must be chosen before any item can be added.</summary>
+    [Parameter] public bool RequireDepartment { get; set; }
+
+    private bool Locked => RequireDepartment && DepartmentId is null;
+
+    private HashSet<int> _pickable = new();
+    private bool _pickableLoaded;
+    private int? _pickableFor;
+
     private readonly Dictionary<int, Item> _itemsById = new();
     private readonly Dictionary<int, decimal> _pickQty = new();
     private List<(Category Category, string Path, int Depth)> _tree = new();
@@ -276,12 +306,37 @@
         if (!_loaded)
         {
             _loaded = true;
-            _categories = await Procurement.GetCategoriesAsync();
-            _tree = Category.BuildTree(_categories);
+            _categories = await Procurement.GetCategoriesAsync(CompanyId);
             _categoryNames = _categories.ToDictionary(c => c.Id, c => c.Name);
             _catalogCount = await Procurement.GetItemCountAsync(CompanyId);
         }
+
+        var departmentChanged = !_pickableLoaded || _pickableFor != DepartmentId;
+        if (departmentChanged)
+        {
+            _pickable = Locked ? new HashSet<int>() : await Procurement.GetPickableCategoryIdsAsync(CompanyId, DepartmentId);
+            _pickableLoaded = true;
+            _pickableFor = DepartmentId;
+            _tree = Category.BuildTree(_categories).Where(t => _pickable.Contains(t.Category.Id)).ToList();
+            _pickCategoryId = 0;
+            _pickPage = 1;
+            if (_panel == Panel.Catalog) await LoadPickAsync();
+        }
+
         await EnsureLineItemsAsync();
+        if (departmentChanged) await DropDisallowedLinesAsync();
+    }
+
+    private bool IsAllowed(Item item) => item.IsActive && _pickable.Contains(item.CategoryId);
+
+    /// <summary>When the department changes, lines whose item the new department may not use are removed (with a note).</summary>
+    private async Task DropDisallowedLinesAsync()
+    {
+        var remove = Lines.Where(l => _itemsById.TryGetValue(l.ItemId, out var item) && !IsAllowed(item)).ToList();
+        if (remove.Count == 0) return;
+        foreach (var line in remove) Lines.Remove(line);
+        _toolMessage = $"{remove.Count} line(s) were removed because this department may not use those items.";
+        await OnChanged.InvokeAsync();
     }
 
     /// <summary>Loads the item details for any lines we have not seen yet (code, name and UOM for the grid and its filter).</summary>
@@ -313,7 +368,7 @@
 
     private async Task LoadPickAsync()
     {
-        var (rows, total) = await Procurement.SearchItemsAsync(CompanyId, _pickSearch, PickCategoryIds, (_pickPage - 1) * PickPageSize, PickPageSize);
+        var (rows, total) = await Procurement.SearchItemsAsync(CompanyId, _pickSearch, PickCategoryIds, _pickable, (_pickPage - 1) * PickPageSize, PickPageSize);
         _pickRows = rows;
         _pickTotal = total;
     }
@@ -352,7 +407,7 @@
         _busy = true;
         try
         {
-            var matches = await Procurement.FindItemsAsync(CompanyId, _pickSearch, PickCategoryIds);
+            var matches = await Procurement.FindItemsAsync(CompanyId, _pickSearch, PickCategoryIds, _pickable);
             var added = AddedIds;
             var toAdd = matches.Where(i => !added.Contains(i.Id)).ToList();
             foreach (var item in toAdd)
@@ -399,12 +454,19 @@
             var updated = 0;
             var unknown = new List<string>();
             var badQty = new List<string>();
+            var notAllowed = new List<string>();
 
             foreach (var (code, qtyToken, priceToken) in rows)
             {
                 if (!byCode.TryGetValue(code, out var item))
                 {
                     unknown.Add(code);
+                    continue;
+                }
+
+                if (!IsAllowed(item))
+                {
+                    notAllowed.Add(code);
                     continue;
                 }
 
@@ -438,11 +500,13 @@
             var parts = new List<string> { $"Added {added} lines, updated {updated}." };
             if (unknown.Count > 0)
                 parts.Add($"{unknown.Count} unknown code(s) skipped: {string.Join(", ", unknown.Distinct().Take(10))}{(unknown.Distinct().Count() > 10 ? "…" : "")}.");
+            if (notAllowed.Count > 0)
+                parts.Add($"{notAllowed.Count} item(s) skipped because they are disabled or not in this department's categories: {string.Join(", ", notAllowed.Distinct().Take(10))}{(notAllowed.Distinct().Count() > 10 ? "…" : "")}.");
             if (badQty.Count > 0)
                 parts.Add($"{badQty.Count} row(s) with an invalid quantity skipped: {string.Join(", ", badQty.Take(10))}{(badQty.Count > 10 ? "…" : "")}.");
             _toolMessage = string.Join(" ", parts);
 
-            if (unknown.Count == 0 && badQty.Count == 0)
+            if (unknown.Count == 0 && badQty.Count == 0 && notAllowed.Count == 0)
                 _paste = "";
         }
         finally
@@ -469,7 +533,7 @@
             var copied = 0;
             foreach (var line in source.Lines)
             {
-                if (!known.TryGetValue(line.ItemId, out var item) || !added.Add(line.ItemId)) continue;
+                if (!known.TryGetValue(line.ItemId, out var item) || !IsAllowed(item) || !added.Add(line.ItemId)) continue;
                 _itemsById[item.Id] = item;
                 Lines.Add(new NewRfqLine
                 {
@@ -484,7 +548,7 @@
             }
 
             var skipped = source.Lines.Count - copied;
-            _toolMessage = $"Copied {copied} lines from {source.Label.Split('·')[0].Trim()}" + (skipped > 0 ? $" ({skipped} already added or no longer in your catalog)." : ".");
+            _toolMessage = $"Copied {copied} lines from {source.Label.Split('·')[0].Trim()}" + (skipped > 0 ? $" ({skipped} already added, disabled, or not allowed for this department)." : ".");
         }
         finally
         {
