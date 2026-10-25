@@ -1,0 +1,42 @@
+@inject NavigationManager Navigation
+
+@* The invoice list for both sides: server-side filtering, sorting and paging. *@
+<DataGrid TItem="InvoiceListRow" ItemsProvider="Provider" ItemName="invoices" ExportName="invoices" PageSize="25" EmptyText="No invoices match these filters." OnRowClick="Open">
+    <GridColumn Title="Invoice #" Key="invoice" Text="r => r.Inv.InvoiceNumber" Context="row">
+        <DocLink Kind="DocKind.Invoice" Id="row.Inv.Id" Text="@row.Inv.InvoiceNumber" SupplierPortal="SupplierView" />
+    </GridColumn>
+    <GridColumn Title="@(SupplierView ? "Your invoice no." : "Supplier ref")" Key="ref" Text="r => r.Inv.SupplierInvoiceRef" />
+    @if (!SupplierView)
+    {
+        <GridColumn Title="Supplier" Key="supplier" Text="r => r.SupplierName" Context="row">
+            <DocLink Kind="DocKind.Supplier" Id="row.Inv.SupplierId" Text="@row.SupplierName" Plain="true" />
+        </GridColumn>
+    }
+    <GridColumn Title="Type" Key="kind" Text="r => r.Inv.Kind.ToString()" Filter="GridFilter.Select" Options="KindOptions" Context="row">
+        <StatusChip Value="row.Inv.Kind" />
+    </GridColumn>
+    <GridColumn Title="PO" Key="po" Text="r => r.PoNumber" Context="row">
+        @if (row.Inv.PurchaseOrderId is { } poId)
+        {
+            @if (SupplierView) { <span>@row.PoNumber</span> }
+            else { <DocLink Kind="DocKind.PurchaseOrder" Id="poId" Text="@row.PoNumber" Plain="true" /> }
+        }
+    </GridColumn>
+    <GridColumn Title="Invoice date" Key="date" Date="r => r.Inv.InvoiceDate" />
+    @* The total is computed from several amounts, so it is shown but not filtered or sorted in SQL. *@
+    <GridColumn Title="Total (before tax)" Text="r => Money.Format(r.Inv.TotalExclTax, r.Inv.Currency)" Filter="GridFilter.None" Sortable="false" CellClass="font-semibold text-ink" />
+    <GridColumn Title="Status" Key="status" Text="r => r.Inv.Status.ToString()" Filter="GridFilter.Select" Chips="true" Options="StatusOptions" Context="row">
+        <StatusChip Value="row.Inv.Status" />
+    </GridColumn>
+    <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
+</DataGrid>
+
+@code {
+    [Parameter, EditorRequired] public Func<GridRequest, Task<GridResult<InvoiceListRow>>> Provider { get; set; } = default!;
+    [Parameter] public bool SupplierView { get; set; }
+
+    private static readonly string[] StatusOptions = Enum.GetNames<InvoiceStatus>();
+    private static readonly string[] KindOptions = Enum.GetNames<InvoiceKind>();
+
+    private void Open(InvoiceListRow row) => Navigation.NavigateTo(DocLinks.For(DocKind.Invoice, row.Inv.Id, SupplierView));
+}

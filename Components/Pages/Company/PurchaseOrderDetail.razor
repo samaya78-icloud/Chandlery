@@ -240,48 +240,8 @@ else
     }
 
     @* Approval *@
-    @if (_approvals.Count > 0)
-    {
-        <div class="mt-6 card p-6 print:hidden">
-            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Approval</h2>
-            @foreach (var level in _approvals.GroupBy(a => a.Approval.Level).OrderBy(g => g.Key))
-            {
-                <div class="mb-3 flex flex-wrap items-center gap-3 text-sm">
-                    <span class="w-16 text-xs font-semibold uppercase text-slate-400">Level @level.Key</span>
-                    @foreach (var a in level)
-                    {
-                        <span class="@DecisionClasses(a.Approval.Decision) rounded-lg px-3 py-1.5">
-                            @a.ApproverName
-                            @if (a.Approval.Decision != ApprovalDecision.Pending)
-                            {
-                                <span class="ml-1 text-xs">· @a.Approval.Decision@(a.DecidedByName != a.ApproverName && a.DecidedByName != "" ? " by " + a.DecidedByName : "") @a.Approval.DecidedAt?.ToString("dd MMM HH:mm")</span>
-                            }
-                            @if (a.Approval.Comment != "")
-                            {
-                                <span class="ml-1 text-xs italic">“@a.Approval.Comment”</span>
-                            }
-                        </span>
-                    }
-                </div>
-            }
-
-            @if (_canDecide)
-            {
-                <div class="mt-4 border-t border-slate-100 pt-4">
-                    <p class="mb-2 text-sm text-slate-600">It is your turn to approve this purchase order (total @Money.Format(_po.Total, _po.Currency)).</p>
-                    <input @bind="_comment" placeholder="Comment (required when rejecting)" class="mb-3 w-full max-w-xl rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-                    <div class="flex gap-3">
-                        <button @onclick="() => Decide(true)" disabled="@_busy" class="btn btn-success">Approve</button>
-                        <button @onclick="() => Decide(false)" disabled="@_busy" class="btn btn-danger">Reject</button>
-                    </div>
-                </div>
-            }
-            @if (_error is not null)
-            {
-                <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
-            }
-        </div>
-    }
+    <ApprovalPanel Slots="_approvals.Select(ApprovalSlotView.From).ToList()" CanDecide="_canDecide" Noun="purchase order"
+                   TotalText="@Money.Format(_po.Total, _po.Currency)" Busy="_busy" Error="_error" OnDecide="Decide" />
 
     <div class="mt-6 flex gap-3 print:hidden">
         <button onclick="window.print()" class="btn btn-secondary">Print</button>
@@ -305,7 +265,6 @@ else
     private List<PoApprovalRow> _approvals = new();
     private bool _canDecide;
     private bool _busy;
-    private string _comment = "";
     private string? _error;
     private int _auditVersion;
 
@@ -441,14 +400,13 @@ else
         _auditVersion++;
     }
 
-    private async Task Decide(bool approve)
+    private async Task Decide((bool Approve, string Comment) decision)
     {
         _error = null;
         _busy = true;
         try
         {
-            await Approvals.DecideAsync(_companyId, PoId, _actor, approve, _comment);
-            _comment = "";
+            await Approvals.DecideAsync(_companyId, PoId, _actor, decision.Approve, decision.Comment);
             _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
             await LoadApprovals();
             await LoadDeliveries();
@@ -463,26 +421,4 @@ else
         }
     }
 
-    private static string StatusLabel(PoStatus s) => s switch
-    {
-        PoStatus.PendingApproval => "Pending approval",
-        PoStatus.Approved => "Approved",
-        PoStatus.Rejected => "Rejected",
-        _ => s.ToString()
-    };
-
-    private static string StatusClasses(PoStatus s) => s switch
-    {
-        PoStatus.PendingApproval => "bg-amber-50 text-amber-600",
-        PoStatus.Approved => "bg-emerald-50 text-emerald-600",
-        PoStatus.Rejected => "bg-rose-50 text-rose-600",
-        _ => "bg-slate-100 text-slate-500"
-    };
-
-    private static string DecisionClasses(ApprovalDecision d) => d switch
-    {
-        ApprovalDecision.Approved => "bg-emerald-50 text-emerald-700",
-        ApprovalDecision.Rejected => "bg-rose-50 text-rose-700",
-        _ => "bg-slate-100 text-slate-600"
-    };
 }

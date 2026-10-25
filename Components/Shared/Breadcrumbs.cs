@@ -16,6 +16,8 @@ public static class Breadcrumbs
         ("/company/requisitions", "Procurement", "Requisitions"),
         ("/company/rfqs", "Procurement", "RFQs"),
         ("/company/purchase-orders", "Procurement", "Purchase Orders"),
+        ("/company/invoices", "Procurement", "Invoices"),
+        ("/company/tax-codes", "Admin", "Tax Codes"),
         ("/company/suppliers", "Master data", "Suppliers"),
         ("/company/items", "Master data", "Items Catalog"),
         ("/company/categories", "Master data", "Categories"),
@@ -27,6 +29,8 @@ public static class Breadcrumbs
         ("/company/team", "Admin", "Team"),
         ("/supplier/rfqs", "Your work", "RFQs"),
         ("/supplier/purchase-orders", "Your work", "Purchase Orders"),
+        ("/supplier/invoices", "Your work", "Invoices"),
+        ("/supplier/profile", "Your work", "Bank Accounts"),
     };
 
     /// <summary>The steps before the current page. Empty on the dashboard and on pages we don't know.</summary>

@@ -25,6 +25,7 @@ public static class DbSeeder
         {
             await EnsureApprovalDemoAsync(db);
             await EnsureSpotDemoAsync(db);
+            await EnsureTaxCodesAsync(db);
             return;
         }
 
@@ -196,6 +197,21 @@ public static class DbSeeder
         await db.SaveChangesAsync();
         await EnsureApprovalDemoAsync(db);
         await EnsureSpotDemoAsync(db);
+        await EnsureTaxCodesAsync(db);
+    }
+
+    /// <summary>Illustrative tax codes for the first company (rates are examples, not tax advice). Idempotent.</summary>
+    private static async Task EnsureTaxCodesAsync(ChandleryDbContext db)
+    {
+        var companyId = await db.Users.Where(u => u.Email == "priya@chandlery.example.com" && u.CompanyId != null).Select(u => u.CompanyId).FirstOrDefaultAsync();
+        if (companyId is not { } id) return;
+        if (await db.TaxCodes.IgnoreQueryFilters().AnyAsync(t => t.CompanyId == id)) return;
+
+        db.TaxCodes.AddRange(
+            new TaxCode { CompanyId = id, Code = "NIL", Description = "No tax", RatePct = 0m },
+            new TaxCode { CompanyId = id, Code = "STD9", Description = "Standard rate (example)", RatePct = 9m },
+            new TaxCode { CompanyId = id, Code = "STD18", Description = "Higher rate (example)", RatePct = 18m });
+        await db.SaveChangesAsync();
     }
 
     /// <summary>

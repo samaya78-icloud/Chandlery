@@ -1,0 +1,73 @@
+@* The approval chain of a purchase order or invoice, and the approve / reject box for the approver whose turn it is. *@
+@if (Slots.Count > 0)
+{
+    <div class="mt-6 card p-6 print:hidden">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Approval</h2>
+        @foreach (var level in Slots.GroupBy(a => a.Level).OrderBy(g => g.Key))
+        {
+            <div class="mb-3 flex flex-wrap items-center gap-3 text-sm">
+                <span class="w-16 text-xs font-semibold uppercase text-muted">Level @level.Key</span>
+                @foreach (var a in level)
+                {
+                    <span class="@(DecisionClasses(a.Decision) + " rounded-lg px-3 py-1.5")">
+                        @a.ApproverName
+                        @if (a.Decision != ApprovalDecision.Pending)
+                        {
+                            <span class="ml-1 text-xs">· @a.Decision@(a.DecidedByName != a.ApproverName && a.DecidedByName != "" ? " by " + a.DecidedByName : "") @a.DecidedAt?.ToString("dd MMM HH:mm")</span>
+                        }
+                        @if (a.Comment != "")
+                        {
+                            <span class="ml-1 text-xs italic">“@a.Comment”</span>
+                        }
+                    </span>
+                }
+            </div>
+        }
+
+        @if (CanDecide)
+        {
+            <div class="mt-4 border-t border-line pt-4">
+                <p class="mb-2 text-sm text-muted">It is your turn to approve this @Noun (total @TotalText).</p>
+                <input @bind="_comment" placeholder="Comment (required when rejecting)" class="input mb-3 max-w-xl" />
+                <div class="flex gap-3">
+                    <button @onclick="() => Decide(true)" disabled="@Busy" class="btn btn-success">Approve</button>
+                    <button @onclick="() => Decide(false)" disabled="@Busy" class="btn btn-danger">Reject</button>
+                </div>
+            </div>
+        }
+        @if (Error is not null)
+        {
+            <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@Error</div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ApprovalSlotView> Slots { get; set; } = Array.Empty<ApprovalSlotView>();
+    [Parameter] public bool CanDecide { get; set; }
+
+    /// <summary>"purchase order" or "invoice", used in the sentence above the buttons.</summary>
+    [Parameter] public string Noun { get; set; } = "document";
+    [Parameter] public string TotalText { get; set; } = "";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Error { get; set; }
+
+    /// <summary>Raised with (approve, comment); the page performs the decision and reloads.</summary>
+    [Parameter] public EventCallback<(bool Approve, string Comment)> OnDecide { get; set; }
+
+    private string _comment = "";
+
+    private async Task Decide(bool approve)
+    {
+        var comment = _comment;
+        await OnDecide.InvokeAsync((approve, comment));
+        if (Error is null) _comment = "";
+    }
+
+    private static string DecisionClasses(ApprovalDecision d) => d switch
+    {
+        ApprovalDecision.Approved => "bg-emerald-50 text-emerald-700",
+        ApprovalDecision.Rejected => "bg-rose-50 text-rose-700",
+        _ => "bg-slate-100 text-slate-600"
+    };
+}

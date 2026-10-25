@@ -37,6 +37,12 @@ public class SearchService(IDbContextFactory<ChandleryDbContext> factory)
         foreach (var p in pos)
             hits.Add(new SearchHit("Purchase orders", p.PoNumber, $"{supplierNames.GetValueOrDefault(p.SupplierId)} · {Money.Format(p.Total, p.Currency)}", DocLinks.For(DocKind.PurchaseOrder, p.Id)));
 
+        var invoices = await db.Invoices.Where(i => i.CompanyId == companyId && (EF.Functions.ILike(i.InvoiceNumber, like) || EF.Functions.ILike(i.SupplierInvoiceRef, like)))
+            .OrderByDescending(i => i.SubmittedAt).Take(PerGroup).ToListAsync();
+        var invoiceSuppliers = await db.Suppliers.Where(s => invoices.Select(i => i.SupplierId).Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
+        foreach (var i in invoices)
+            hits.Add(new SearchHit("Invoices", i.InvoiceNumber, $"{invoiceSuppliers.GetValueOrDefault(i.SupplierId)} · {i.SupplierInvoiceRef} · {i.Status}", DocLinks.For(DocKind.Invoice, i.Id)));
+
         var linked = db.CompanySuppliers.Where(cs => cs.CompanyId == companyId).Select(cs => cs.SupplierId);
         foreach (var s in await db.Suppliers.Where(s => linked.Contains(s.Id) && (EF.Functions.ILike(s.Name, like) || EF.Functions.ILike(s.ContactEmail, like)))
                      .OrderBy(s => s.Name).Take(PerGroup).ToListAsync())
@@ -74,6 +80,10 @@ public class SearchService(IDbContextFactory<ChandleryDbContext> factory)
                      .Where(p => p.SupplierId == supplierId && p.Status == PoStatus.Approved && EF.Functions.ILike(p.PoNumber, like))
                      .OrderByDescending(p => p.CreatedDate).Take(PerGroup).ToListAsync())
             hits.Add(new SearchHit("Purchase orders", p.PoNumber, Money.Format(p.Total, p.Currency), DocLinks.For(DocKind.PurchaseOrder, p.Id, supplierPortal: true)));
+
+        foreach (var i in await db.Invoices.Where(i => i.SupplierId == supplierId && (EF.Functions.ILike(i.InvoiceNumber, like) || EF.Functions.ILike(i.SupplierInvoiceRef, like)))
+                     .OrderByDescending(i => i.SubmittedAt).Take(PerGroup).ToListAsync())
+            hits.Add(new SearchHit("Invoices", i.InvoiceNumber, $"{i.SupplierInvoiceRef} · {i.Status}", DocLinks.For(DocKind.Invoice, i.Id, supplierPortal: true)));
 
         return hits;
     }

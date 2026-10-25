@@ -1,0 +1,181 @@
+@page "/company/invoices/{InvoiceId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject InvoiceService InvoiceSvc
+@inject ToastService Toasts
+
+<PageTitle>@(_detail?.Invoice.InvoiceNumber ?? "Invoice") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Invoice not found" Message="It may belong to another company or have been removed.">
+        <Action><a href="/company/invoices" class="btn btn-secondary">Back to invoices</a></Action>
+    </EmptyState>
+}
+else
+{
+    var inv = _detail.Invoice;
+    <PageHeader Title="@inv.InvoiceNumber">
+        <Badges>
+            <StatusChip Value="inv.Status" />
+            <StatusChip Value="inv.Kind" />
+        </Badges>
+        <Facts>
+            <DocLink Kind="DocKind.Supplier" Id="_detail.Supplier.Id" Text="@_detail.Supplier.Name" />
+            @if (_detail.Po is not null)
+            {
+                <span>&middot; against</span>
+                <DocLink Kind="DocKind.PurchaseOrder" Id="_detail.Po.Id" Text="@_detail.Po.PoNumber" />
+            }
+            <span>&middot; supplier ref @inv.SupplierInvoiceRef</span>
+        </Facts>
+        <Actions>
+            @if (inv.Status == InvoiceStatus.Approved && _isAdmin)
+            {
+                <button @onclick="Finalize" disabled="@_busy" class="btn btn-success">Finalize invoice</button>
+            }
+        </Actions>
+    </PageHeader>
+
+    <RelatedDocuments CompanyId="_companyId" Kind="DocKind.Invoice" Id="inv.Id" Version="_auditVersion" />
+
+    @if (_detail.Match is { } m)
+    {
+        <div class="card mb-6 p-6">
+            <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Three-way match</h2>
+            <div class="grid grid-cols-2 gap-4 text-sm md:grid-cols-5">
+                <div><p class="label">PO total</p><p class="text-ink tabular-nums">@Money.Format(m.PoTotal, inv.Currency)</p></div>
+                <div><p class="label">Delivered value</p><p class="text-ink tabular-nums">@Money.Format(m.DeliveredValue, inv.Currency)</p></div>
+                <div><p class="label">PO charges due</p><p class="text-ink tabular-nums">@Money.Format(m.ExpectedCharges, inv.Currency)</p></div>
+                <div><p class="label">Invoice total</p><p class="text-ink tabular-nums">@Money.Format(inv.TotalExclTax, inv.Currency)</p></div>
+                <div>
+                    <p class="label">Difference</p>
+                    <p class="@("font-semibold tabular-nums " + (m.HasVariance ? "text-rose-600" : "text-emerald-600"))">
+                        @(m.HasVariance ? (m.Variance > 0 ? "+" : "−") + Money.Format(Math.Abs(m.Variance), inv.Currency) : "Matches")
+                    </p>
+                </div>
+            </div>
+            <p class="mt-3 text-xs text-muted">Delivered value is what the ticked deliveries are worth at the PO's prices after its discount. The difference is the invoice total before tax minus delivered value and any PO charges not yet invoiced.</p>
+        </div>
+    }
+
+    @if (inv.Status == InvoiceStatus.Submitted)
+    {
+        <div class="card mb-6 border-accent-300 p-6 print:hidden">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Verify this invoice</h2>
+            <p class="mb-4 text-sm text-muted">Check the figures and documents below, choose the tax code, then send it for approval. Rejecting returns it to the supplier with your reason.</p>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                    <label class="label">Tax code</label>
+                    <select @bind="_taxCodeId" class="select">
+                        <option value="0">No tax</option>
+                        @foreach (var t in _taxCodes)
+                        {
+                            <option value="@t.Id">@t.Code · @t.RatePct.ToString("0.##")% · @t.Description</option>
+                        }
+                    </select>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="label">Reason for any difference from delivered value@(_detail.Match is { HasVariance: true } ? " (required)" : "")</label>
+                    <input @bind="_variance" class="input" />
+                </div>
+            </div>
+            @if (_error is not null)
+            {
+                <div class="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+            }
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+                <button @onclick="Verify" disabled="@_busy" class="btn btn-primary">Verify and send for approval</button>
+                <span class="text-sm text-muted">or</span>
+                <input @bind="_rejectReason" placeholder="Reason for rejecting" class="input max-w-sm" />
+                <button @onclick="Reject" disabled="@_busy" class="btn btn-danger">Reject</button>
+            </div>
+        </div>
+    }
+
+    <InvoiceSummary Detail="_detail" />
+
+    <ApprovalPanel Slots="_detail.Approvals.Select(ApprovalSlotView.From).ToList()" CanDecide="_canDecide" Noun="invoice"
+                   TotalText="@Money.Format(inv.TotalExclTax, inv.Currency)" Busy="_busy" Error="@(inv.Status == InvoiceStatus.Submitted ? null : _error)" OnDecide="Decide" />
+
+    <div class="mt-6">
+        <AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.Invoice" EntityId="inv.Id" Version="_auditVersion" />
+    </div>
+}
+
+@code {
+    [Parameter] public int InvoiceId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private Actor _actor = Actor.System;
+    private bool _isAdmin;
+    private bool _loaded;
+    private bool _busy;
+    private bool _canDecide;
+    private string? _error;
+    private int _auditVersion;
+    private InvoiceInfo? _detail;
+    private List<TaxCode> _taxCodes = new();
+    private int _taxCodeId;
+    private string _variance = "";
+    private string _rejectReason = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
+        _isAdmin = authState.User.IsInRole("CompanyAdmin");
+        _taxCodes = await InvoiceSvc.GetTaxCodesAsync(_companyId);
+        await Reload();
+        _loaded = true;
+    }
+
+    private async Task Reload()
+    {
+        _detail = await InvoiceSvc.GetDetailAsync(InvoiceId, _companyId, null);
+        if (_detail is null) return;
+        var inv = _detail.Invoice;
+        _variance = inv.VarianceReason;
+        _taxCodeId = inv.TaxCodeId ?? 0;
+        var slots = _detail.Approvals.Select(a => (a.Approval.Level, a.Approval.Decision));
+        var current = ApprovalEngine.CurrentLevel(slots);
+        _canDecide = inv.Status == InvoiceStatus.PendingApproval && current is not null && _actor.UserId is { } uid
+            && _detail.Approvals.Any(a => a.Approval.Level == current && a.Approval.ApproverUserId == uid && a.Approval.Decision == ApprovalDecision.Pending);
+        _auditVersion++;
+    }
+
+    private async Task Run(Func<Task> action, string successMessage)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            await action();
+            await Reload();
+            await Toasts.Success(successMessage);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task Verify() => Run(() => InvoiceSvc.VerifyAsync(_companyId, InvoiceId, _actor, _taxCodeId == 0 ? null : _taxCodeId, _variance), "Invoice verified");
+
+    private Task Reject() => Run(() => InvoiceSvc.RejectAsync(_companyId, InvoiceId, _actor, _rejectReason), "Invoice rejected and returned to the supplier");
+
+    private Task Decide((bool Approve, string Comment) decision) =>
+        Run(() => InvoiceSvc.DecideAsync(_companyId, InvoiceId, _actor, decision.Approve, decision.Comment), decision.Approve ? "Approved" : "Rejected");
+
+    private Task Finalize() => Run(() => InvoiceSvc.FinalizeAsync(_companyId, InvoiceId, _actor, _isAdmin), "Invoice finalized");
+}

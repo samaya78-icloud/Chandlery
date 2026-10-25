@@ -31,6 +31,11 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<PoApproval> PoApprovals => Set<PoApproval>();
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<DeliveryOrder> DeliveryOrders => Set<DeliveryOrder>();
+    public DbSet<Invoice> Invoices => Set<Invoice>();
+    public DbSet<InvoiceApproval> InvoiceApprovals => Set<InvoiceApproval>();
+    public DbSet<InvoiceDocument> InvoiceDocuments => Set<InvoiceDocument>();
+    public DbSet<SupplierBankAccount> SupplierBankAccounts => Set<SupplierBankAccount>();
+    public DbSet<TaxCode> TaxCodes => Set<TaxCode>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -182,12 +187,70 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<PurchaseOrder>().WithMany().HasForeignKey(d => d.PurchaseOrderId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Supplier>().WithMany().HasForeignKey(d => d.SupplierId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Invoice>().WithMany().HasForeignKey(d => d.InvoiceId).OnDelete(DeleteBehavior.SetNull);
             b.HasIndex(d => new { d.CompanyId, d.DoNumber }).IsUnique();
             b.OwnsMany(d => d.Lines, lb =>
             {
                 lb.WithOwner().HasForeignKey("DeliveryOrderId");
                 lb.Property(l => l.Quantity).HasPrecision(18, 3);
             });
+            b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<SupplierBankAccount>(b =>
+        {
+            b.HasOne<Supplier>().WithMany().HasForeignKey(a => a.SupplierId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<TaxCode>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(t => new { t.CompanyId, t.Code }).IsUnique();
+            b.Property(t => t.RatePct).HasPrecision(5, 2);
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<Invoice>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<PurchaseOrder>().WithMany().HasForeignKey(i => i.PurchaseOrderId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Supplier>().WithMany().HasForeignKey(i => i.SupplierId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<TaxCode>().WithMany().HasForeignKey(i => i.TaxCodeId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<SupplierBankAccount>().WithMany().HasForeignKey(i => i.BankAccountId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Department>().WithMany().HasForeignKey(i => i.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(i => i.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(i => new { i.CompanyId, i.InvoiceNumber }).IsUnique();
+            b.Ignore(i => i.TotalExclTax);
+            b.Ignore(i => i.TaxAmount);
+            b.Ignore(i => i.TotalInclTax);
+            b.Property(i => i.InvoiceAmount).HasPrecision(18, 2);
+            b.Property(i => i.AdditionalItemsCost).HasPrecision(18, 2);
+            b.Property(i => i.AdditionalDeliveryCost).HasPrecision(18, 2);
+            b.Property(i => i.DiscountOrCredit).HasPrecision(18, 2);
+            b.Property(i => i.TaxRatePct).HasPrecision(5, 2);
+            b.OwnsMany(i => i.Lines, lb =>
+            {
+                lb.WithOwner().HasForeignKey("InvoiceId");
+                lb.Property(l => l.Quantity).HasPrecision(18, 3);
+                lb.Property(l => l.UnitPrice).HasPrecision(18, 2);
+                lb.Property(l => l.DiscountPct).HasPrecision(5, 2);
+            });
+            b.HasQueryFilter(i => CurrentCompanyId == null || i.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<InvoiceApproval>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Invoice>().WithMany().HasForeignKey(a => a.InvoiceId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<AppUser>().WithMany().HasForeignKey(a => a.ApproverUserId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(a => new { a.InvoiceId, a.Level });
+            b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<InvoiceDocument>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Invoice>().WithMany().HasForeignKey(d => d.InvoiceId).OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
         });
 

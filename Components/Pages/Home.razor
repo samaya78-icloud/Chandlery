@@ -25,7 +25,7 @@ else if (_company is { } c)
         <StatCard Label="RFQs awaiting quotes" Value="@c.RfqsAwaitingQuotes.ToString("N0")" Hint="@($"{c.RfqsWithQuotes} with quotes to compare")" Tone="warning" Href="/company/rfqs?f.status=Sent">
             <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M9 16h6M9 8h1M7 3h10a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V5a2 2 0 0 1 2-2Z"/></svg></Icon>
         </StatCard>
-        <StatCard Label="Waiting for my approval" Value="@c.PendingMyApproval.ToString("N0")" Hint="Purchase orders" Tone="danger" Href="/company/approvals">
+        <StatCard Label="Waiting for my approval" Value="@c.PendingMyApproval.ToString("N0")" Hint="Purchase orders and invoices" Tone="danger" Href="/company/approvals">
             <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></Icon>
         </StatCard>
         <StatCard Label="Awaiting delivery" Value="@c.AwaitingDelivery.ToString("N0")" Hint="Approved purchase orders" Tone="info" Href="/company/purchase-orders?f.status=Approved">
@@ -42,7 +42,7 @@ else if (_company is { } c)
                 <h2 class="mb-1 font-display text-lg font-bold text-ink">Needs your action</h2>
                 <p class="mb-5 text-sm text-muted">Jump straight to the next thing that is waiting on you.</p>
 
-                @if (c.MyApprovals.Count + c.QuotesToCompare.Count + c.RequisitionsWithoutRfq.Count == 0)
+                @if (c.MyApprovals.Count + c.MyInvoiceApprovals.Count + c.InvoicesToVerify.Count + c.QuotesToCompare.Count + c.RequisitionsWithoutRfq.Count == 0)
                 {
                     <EmptyState Title="You're all caught up" Message="No approvals, quotes or open requisitions need attention right now." />
                 }
@@ -60,6 +60,37 @@ else if (_company is { } c)
                                     <span class="text-muted">level @a.Level</span>
                                     <span class="ml-auto font-semibold text-ink">@Money.Format(a.Total, a.Po.Currency)</span>
                                     <a href="/company/purchase-orders/@a.Po.Id" class="btn btn-secondary btn-sm">Review</a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    @if (c.MyInvoiceApprovals.Count > 0)
+                    {
+                        <p class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Approve invoices</p>
+                        <ul class="mb-5 divide-y divide-line">
+                            @foreach (var a in c.MyInvoiceApprovals)
+                            {
+                                <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                                    <DocLink Kind="DocKind.Invoice" Id="a.Inv.Id" Text="@a.Inv.InvoiceNumber" />
+                                    <DocLink Kind="DocKind.Supplier" Id="a.Inv.SupplierId" Text="@a.Supplier" Plain="true" />
+                                    <span class="text-muted">level @a.Level</span>
+                                    <span class="ml-auto font-semibold text-ink">@Money.Format(a.Inv.TotalExclTax, a.Inv.Currency)</span>
+                                    <a href="/company/invoices/@a.Inv.Id" class="btn btn-secondary btn-sm">Review</a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    @if (c.InvoicesToVerify.Count > 0)
+                    {
+                        <p class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Verify invoices</p>
+                        <ul class="mb-5 divide-y divide-line">
+                            @foreach (var v in c.InvoicesToVerify)
+                            {
+                                <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                                    <DocLink Kind="DocKind.Invoice" Id="v.Inv.Id" Text="@v.Inv.InvoiceNumber" />
+                                    <DocLink Kind="DocKind.Supplier" Id="v.Inv.SupplierId" Text="@v.SupplierName" Plain="true" />
+                                    <span class="ml-auto font-semibold text-ink">@Money.Format(v.Inv.TotalExclTax, v.Inv.Currency)</span>
+                                    <a href="/company/invoices/@v.Inv.Id" class="btn btn-secondary btn-sm">Verify</a>
                                 </li>
                             }
                         </ul>

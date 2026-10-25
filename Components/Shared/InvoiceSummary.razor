@@ -1,0 +1,164 @@
+@* What an invoice says: facts, amounts, spot lines, the deliveries it covers and its documents. Used on the buyer's and the supplier's invoice pages. *@
+@{
+    var inv = Detail.Invoice;
+}
+
+@if (inv.Status == InvoiceStatus.Rejected && inv.RejectionReason != "")
+{
+    <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <p class="font-semibold">Rejected</p>
+        <p>@inv.RejectionReason</p>
+    </div>
+}
+
+<div class="grid gap-6 lg:grid-cols-3">
+    <div class="card p-6 lg:col-span-2">
+        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Invoice details</h2>
+        <dl class="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
+            <div><dt class="label">Supplier invoice no.</dt><dd class="text-ink">@inv.SupplierInvoiceRef</dd></div>
+            <div><dt class="label">Invoice date</dt><dd class="text-ink">@inv.InvoiceDate.ToString("dd MMM yyyy")</dd></div>
+            <div><dt class="label">Due date</dt><dd class="text-ink">@(inv.DueDate?.ToString("dd MMM yyyy") ?? "-")</dd></div>
+            <div><dt class="label">Currency</dt><dd class="text-ink">@inv.Currency</dd></div>
+            @if (Detail.Po is not null)
+            {
+                <div>
+                    <dt class="label">Purchase order</dt>
+                    <dd>
+                        @if (SupplierView) { <span class="text-ink">@Detail.Po.PoNumber</span> }
+                        else { <DocLink Kind="DocKind.PurchaseOrder" Id="Detail.Po.Id" Text="@Detail.Po.PoNumber" /> }
+                    </dd>
+                </div>
+            }
+            @if (!SupplierView)
+            {
+                <div><dt class="label">Supplier</dt><dd><DocLink Kind="DocKind.Supplier" Id="Detail.Supplier.Id" Text="@Detail.Supplier.Name" /></dd></div>
+            }
+            @if (Detail.Department != "") { <div><dt class="label">Department</dt><dd class="text-ink">@Detail.Department</dd></div> }
+            @if (Detail.Vessel != "" && inv.VesselId.HasValue)
+            {
+                <div><dt class="label">Vessel</dt><dd>@if (SupplierView) { <span class="text-ink">@Detail.Vessel</span> } else { <DocLink Kind="DocKind.Vessel" Id="inv.VesselId.Value" Text="@Detail.Vessel" /> }</dd></div>
+            }
+            @if (inv.CostCentre != "") { <div><dt class="label">Cost centre</dt><dd class="text-ink">@inv.CostCentre</dd></div> }
+            <div class="sm:col-span-2">
+                <dt class="label">Pay to</dt>
+                <dd class="text-ink">
+                    @if (Detail.Bank is { } bank)
+                    {
+                        <span class="font-medium">@bank.BankName</span><span class="text-muted"> &middot; @bank.AccountName &middot; @bank.AccountNumber@(bank.SwiftCode == "" ? "" : " · SWIFT " + bank.SwiftCode) &middot; @bank.Currency</span>
+                    }
+                    else { <span class="text-muted">No bank account chosen</span> }
+                </dd>
+            </div>
+            @if (inv.Remarks != "") { <div class="sm:col-span-2"><dt class="label">Remarks</dt><dd class="text-ink">@inv.Remarks</dd></div> }
+            @if (inv.VarianceReason != "") { <div class="sm:col-span-2"><dt class="label">Reason for difference from delivered value</dt><dd class="text-ink">@inv.VarianceReason</dd></div> }
+        </dl>
+        <p class="mt-5 border-t border-line pt-3 text-xs text-muted">
+            Submitted by @inv.SubmittedByName on @inv.SubmittedAt.ToString("dd MMM yyyy HH:mm") UTC
+            @if (inv.VerifiedAt.HasValue) { <span> &middot; verified by @inv.VerifiedByName on @inv.VerifiedAt.Value.ToString("dd MMM yyyy") </span> }
+            @if (inv.FinalizedAt.HasValue) { <span> &middot; finalized by @inv.FinalizedByName on @inv.FinalizedAt.Value.ToString("dd MMM yyyy") </span> }
+        </p>
+    </div>
+
+    <div class="card p-6">
+        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Amounts</h2>
+        <dl class="space-y-1.5 text-sm">
+            <div class="flex justify-between gap-4"><dt class="text-muted">@(inv.Kind == InvoiceKind.PoInvoice ? "Goods delivered" : "Lines")</dt><dd class="tabular-nums">@Money.Format(inv.InvoiceAmount, inv.Currency)</dd></div>
+            @if (inv.AdditionalItemsCost > 0) { <div class="flex justify-between gap-4"><dt class="text-muted">Additional items</dt><dd class="tabular-nums">@Money.Format(inv.AdditionalItemsCost, inv.Currency)</dd></div> }
+            @if (inv.AdditionalDeliveryCost > 0) { <div class="flex justify-between gap-4"><dt class="text-muted">Delivery cost</dt><dd class="tabular-nums">@Money.Format(inv.AdditionalDeliveryCost, inv.Currency)</dd></div> }
+            @if (inv.DiscountOrCredit > 0) { <div class="flex justify-between gap-4"><dt class="text-muted">Discount / credit</dt><dd class="tabular-nums">&minus;@Money.Format(inv.DiscountOrCredit, inv.Currency)</dd></div> }
+            <div class="flex justify-between gap-4 border-t border-line pt-2 font-semibold text-ink"><dt>Total before tax</dt><dd class="tabular-nums">@Money.Format(inv.TotalExclTax, inv.Currency)</dd></div>
+            @if (Detail.Tax is not null || inv.TaxRatePct > 0)
+            {
+                <div class="flex justify-between gap-4"><dt class="text-muted">Tax @(Detail.Tax?.Code) @inv.TaxRatePct.ToString("0.##")%</dt><dd class="tabular-nums">@Money.Format(inv.TaxAmount, inv.Currency)</dd></div>
+                <div class="flex justify-between gap-4 border-t border-line pt-2 text-base font-bold text-ink"><dt>Total with tax</dt><dd class="tabular-nums">@Money.Format(inv.TotalInclTax, inv.Currency)</dd></div>
+            }
+        </dl>
+    </div>
+</div>
+
+@if (inv.Lines.Count > 0)
+{
+    <div class="card mt-6 overflow-hidden">
+        <h2 class="px-6 pt-5 text-sm font-semibold uppercase tracking-wide text-muted">Lines</h2>
+        <table class="mt-3 w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                    <th class="px-6 py-2 font-medium">Description</th>
+                    <th class="px-3 py-2 font-medium">Qty</th>
+                    <th class="px-3 py-2 font-medium">Unit price</th>
+                    <th class="px-3 py-2 font-medium">Disc.</th>
+                    <th class="px-6 py-2 text-right font-medium">Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var l in inv.Lines)
+                {
+                    <tr class="border-b border-line last:border-0">
+                        <td class="px-6 py-2 text-ink">@l.Description</td>
+                        <td class="px-3 py-2 text-muted">@Money.Qty(l.Quantity)</td>
+                        <td class="px-3 py-2 text-muted">@l.UnitPrice.ToString("N2")</td>
+                        <td class="px-3 py-2 text-muted">@(l.DiscountPct > 0 ? l.DiscountPct.ToString("0.##") + "%" : "")</td>
+                        <td class="px-6 py-2 text-right tabular-nums">@Money.LineNet(l.Quantity, l.UnitPrice, l.DiscountPct).ToString("N2")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<div class="mt-6 grid gap-6 lg:grid-cols-2">
+    @if (inv.Kind == InvoiceKind.PoInvoice)
+    {
+        <div class="card p-6">
+            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Deliveries covered</h2>
+            @if (Detail.Deliveries.Count == 0)
+            {
+                <p class="text-sm text-muted">No delivery is linked (it was released when the invoice was rejected).</p>
+            }
+            else
+            {
+                <ul class="space-y-1.5 text-sm">
+                    @foreach (var d in Detail.Deliveries)
+                    {
+                        <li class="flex flex-wrap items-center gap-x-4 text-muted">
+                            <span class="font-semibold text-ink">@d.DoNumber</span>
+                            <span>@d.ReceivedDate.ToString("dd MMM yyyy")</span>
+                            @if (d.Place != "") { <span>@d.Place</span> }
+                            <span>@d.Lines.Count line(s)</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    <div class="card p-6">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Supporting documents</h2>
+        @if (Detail.Documents.Count == 0)
+        {
+            <p class="text-sm text-muted">No documents attached.</p>
+        }
+        else
+        {
+            <ul class="space-y-1.5 text-sm">
+                @foreach (var doc in Detail.Documents)
+                {
+                    <li class="flex flex-wrap items-center justify-between gap-2">
+                        <a href="/files/invoices/@doc.Id" class="link truncate" download>@doc.FileName</a>
+                        <span class="text-xs text-muted">@FormatSize(doc.SizeBytes) &middot; @doc.UploadedByName &middot; @doc.UploadedAt.ToString("dd MMM")</span>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public InvoiceInfo Detail { get; set; } = default!;
+
+    /// <summary>The supplier sees its own invoice without links into the buyer's master data.</summary>
+    [Parameter] public bool SupplierView { get; set; }
+
+    private static string FormatSize(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:0.#} MB" : $"{Math.Max(1, bytes / 1024)} KB";
+}

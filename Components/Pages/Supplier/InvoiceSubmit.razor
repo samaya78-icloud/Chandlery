@@ -1,0 +1,250 @@
+@page "/supplier/invoices/po/{PoId:int}"
+@page "/supplier/invoices/{InvoiceId:int}/edit"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject InvoiceService InvoiceSvc
+@inject NavigationManager Navigation
+
+<PageTitle>@(_isEdit ? "Correct invoice" : "New invoice") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_ctx is null)
+{
+    <EmptyState Title="Nothing to invoice here" Message="This order is not available for invoicing, or the invoice cannot be edited any more.">
+        <Action><a href="/supplier/invoices" class="btn btn-secondary">Back to invoices</a></Action>
+    </EmptyState>
+}
+else
+{
+    <PageHeader Title="@(_isEdit ? "Correct and resend invoice" : "New invoice")" Parent="@(new Crumb(_ctx.Po.PoNumber, null))"
+                Subtitle="@($"Against {_ctx.Po.PoNumber}, in {_ctx.Po.Currency}. Tick the deliveries you are invoicing, attach your invoice and choose where to be paid.")" />
+
+    @if (_ctx.Existing is { RejectionReason: not "" } existing)
+    {
+        <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <p class="font-semibold">The buyer rejected the previous version</p>
+            <p>@existing.RejectionReason</p>
+        </div>
+    }
+
+    <div class="max-w-5xl space-y-6">
+        <div class="card p-6">
+            <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Your invoice</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div><label class="label">Invoice number</label><input @bind="_req.SupplierInvoiceRef" class="input" /></div>
+                <div><label class="label">Invoice date</label><input type="date" @bind="_req.InvoiceDate" class="input" /></div>
+                <div><label class="label">Due date (optional)</label><input type="date" @bind="_req.DueDate" class="input" /></div>
+            </div>
+        </div>
+
+        <div class="card p-6">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Deliveries covered</h2>
+            <p class="mb-4 text-sm text-muted">Only deliveries that are not on another invoice are listed. The amount below follows your selection.</p>
+            @if (_ctx.Deliveries.Count == 0 && _ctx.Existing is null)
+            {
+                <p class="text-sm text-muted">No uninvoiced deliveries on this order yet.</p>
+            }
+            else
+            {
+                <div class="space-y-2">
+                    @foreach (var d in _ctx.Deliveries)
+                    {
+                        var id = d.Id;
+                        <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-line px-4 py-2.5 text-sm">
+                            <input type="checkbox" checked="@_req.DeliveryOrderIds.Contains(id)" @onchange="e => ToggleDelivery(id, (bool)e.Value!)" />
+                            <span class="font-semibold text-ink">@d.DoNumber</span>
+                            <span class="text-muted">@d.ReceivedDate.ToString("dd MMM yyyy")@(d.Place == "" ? "" : " · " + d.Place) · @d.Lines.Count line(s)</span>
+                            <span class="ml-auto tabular-nums text-muted">@Money.Format(InvoiceService.DeliveredValue(_ctx.Po, new[] { d }), _ctx.Po.Currency)</span>
+                        </label>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="card p-6">
+            <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Amounts</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div>
+                    <label class="label">Goods delivered</label>
+                    <input type="number" min="0" step="any" @bind="_req.InvoiceAmount" @bind:event="oninput" @bind:after="() => _amountEdited = true" class="input" />
+                </div>
+                <div><label class="label">Additional items</label><input type="number" min="0" step="any" @bind="_req.AdditionalItemsCost" @bind:event="oninput" class="input" /></div>
+                <div><label class="label">Delivery cost</label><input type="number" min="0" step="any" @bind="_req.AdditionalDeliveryCost" @bind:event="oninput" class="input" /></div>
+                <div><label class="label">Discount / credit</label><input type="number" min="0" step="any" @bind="_req.DiscountOrCredit" @bind:event="oninput" class="input" /></div>
+            </div>
+            <dl class="ml-auto mt-5 max-w-xs space-y-1 text-sm">
+                <div class="flex justify-between"><dt class="text-muted">Delivered value of the ticked deliveries</dt><dd class="tabular-nums">@Money.Format(SelectedValue, _ctx.Po.Currency)</dd></div>
+                <div class="flex justify-between border-t border-line pt-2 text-base font-bold text-ink"><dt>Invoice total</dt><dd class="tabular-nums">@Money.Format(Total, _ctx.Po.Currency)</dd></div>
+            </dl>
+            <div class="mt-4">
+                <label class="label">Reason for any difference from the delivered value (optional)</label>
+                <input @bind="_req.VarianceReason" placeholder="e.g. freight surcharge agreed by phone" class="input" />
+            </div>
+        </div>
+
+        <div class="card p-6">
+            <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Payment and documents</h2>
+            <div class="mb-5">
+                <label class="label">Pay into</label>
+                @if (_ctx.Banks.Count == 0)
+                {
+                    <p class="text-sm text-amber-600">You have no bank account saved. <a href="/supplier/profile" class="link">Add one first</a>, then come back.</p>
+                }
+                else
+                {
+                    <select @bind="_req.BankAccountId" class="select max-w-xl">
+                        <option value="0">Choose an account…</option>
+                        @foreach (var b in _ctx.Banks)
+                        {
+                            <option value="@b.Id">@b.BankName · @b.AccountName · @b.AccountNumber (@b.Currency)</option>
+                        }
+                    </select>
+                }
+            </div>
+
+            <label class="label">Supporting documents (PDF, PNG, JPG, XLSX or DOCX, up to 20 MB each)</label>
+            <InputFile OnChange="OnFiles" multiple class="input max-w-xl" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx" />
+            @if (_ctx.ExistingDocs.Count > 0 || _uploads.Count > 0)
+            {
+                <ul class="mt-3 space-y-1 text-sm">
+                    @foreach (var d in _ctx.ExistingDocs)
+                    {
+                        <li class="text-muted">&#10003; @d.FileName <span class="text-xs">(already attached)</span></li>
+                    }
+                    @foreach (var u in _uploads)
+                    {
+                        var upload = u;
+                        <li class="flex items-center gap-3 text-ink">
+                            &#10003; @u.FileName <span class="text-xs text-muted">@(u.Data.Length / 1024) KB</span>
+                            <button type="button" @onclick="() => _uploads.Remove(upload)" class="text-xs font-medium text-rose-600">Remove</button>
+                        </li>
+                    }
+                </ul>
+            }
+            <div class="mt-5">
+                <label class="label">Remarks (optional)</label>
+                <textarea @bind="_req.Remarks" rows="2" class="textarea"></textarea>
+            </div>
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+        <div class="flex gap-3">
+            <button @onclick="Submit" disabled="@_busy" class="btn btn-primary">@(_busy ? "Sending…" : _isEdit ? "Resend invoice" : "Send invoice")</button>
+            <a href="/supplier/invoices" class="btn btn-secondary">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int PoId { get; set; }
+    [Parameter] public int InvoiceId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _supplierId;
+    private Actor _actor = Actor.System;
+    private SubmitContext? _ctx;
+    private readonly SubmitInvoice _req = new();
+    private readonly List<UploadedFile> _uploads = new();
+    private bool _loaded;
+    private bool _isEdit;
+    private bool _amountEdited;
+    private bool _busy;
+    private string? _error;
+
+    private decimal SelectedValue => _ctx is null ? 0m
+        : InvoiceService.DeliveredValue(_ctx.Po, _ctx.Deliveries.Where(d => _req.DeliveryOrderIds.Contains(d.Id)));
+    private decimal Total => _req.InvoiceAmount + _req.AdditionalItemsCost + _req.AdditionalDeliveryCost - _req.DiscountOrCredit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _actor = Actor.From(authState.User);
+        _isEdit = InvoiceId != 0;
+
+        int? invoiceId = _isEdit ? InvoiceId : null;
+        var poId = PoId;
+        if (_isEdit)
+        {
+            var detail = await InvoiceSvc.GetDetailAsync(InvoiceId, null, _supplierId);
+            if (detail?.Invoice.PurchaseOrderId is not { } existingPo) { _loaded = true; return; }
+            poId = existingPo;
+        }
+
+        _ctx = await InvoiceSvc.GetSubmitContextAsync(_supplierId, poId, invoiceId);
+        if (_ctx is not null)
+        {
+            _req.PurchaseOrderId = poId;
+            if (_ctx.Existing is { } e)
+            {
+                _req.SupplierInvoiceRef = e.SupplierInvoiceRef;
+                _req.InvoiceDate = e.InvoiceDate;
+                _req.DueDate = e.DueDate;
+                _req.InvoiceAmount = e.InvoiceAmount;
+                _req.AdditionalItemsCost = e.AdditionalItemsCost;
+                _req.AdditionalDeliveryCost = e.AdditionalDeliveryCost;
+                _req.DiscountOrCredit = e.DiscountOrCredit;
+                _req.BankAccountId = e.BankAccountId ?? 0;
+                _req.Remarks = e.Remarks;
+                _req.VarianceReason = e.VarianceReason;
+                _amountEdited = true;
+            }
+            else
+            {
+                // Everything not yet invoiced is ticked by default; the supplier unticks what this invoice does not cover.
+                _req.DeliveryOrderIds = _ctx.Deliveries.Select(d => d.Id).ToList();
+                _req.InvoiceAmount = SelectedValue;
+                if (_ctx.Banks.Count == 1) _req.BankAccountId = _ctx.Banks[0].Id;
+            }
+        }
+        _loaded = true;
+    }
+
+    private void ToggleDelivery(int id, bool on)
+    {
+        if (on) { if (!_req.DeliveryOrderIds.Contains(id)) _req.DeliveryOrderIds.Add(id); }
+        else _req.DeliveryOrderIds.Remove(id);
+        if (!_amountEdited) _req.InvoiceAmount = SelectedValue;
+    }
+
+    private async Task OnFiles(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                _uploads.Add(new UploadedFile(file.Name, file.ContentType, memory.ToArray()));
+            }
+        }
+        catch (IOException)
+        {
+            _error = "A file is larger than 20 MB and was not added.";
+        }
+    }
+
+    private async Task Submit()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var invoice = await InvoiceSvc.SubmitAsync(_supplierId, _req, _uploads, _actor, _isEdit ? InvoiceId : null);
+            Navigation.NavigateTo($"/supplier/invoices/{invoice.Id}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}

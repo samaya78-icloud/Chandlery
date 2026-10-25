@@ -1,0 +1,108 @@
+@page "/company/tax-codes"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@inject InvoiceService InvoiceSvc
+@inject ToastService Toasts
+
+<PageTitle>Tax Codes · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Admin" Title="Tax Codes"
+            Subtitle="The tax rates you choose from when verifying an invoice. The rate is copied onto the invoice, so changing codes later never alters old invoices.">
+    <Actions>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add tax code</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="card mb-6 max-w-2xl p-6">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div><label class="label">Code</label><input @bind="_code" class="input uppercase" /></div>
+            <div><label class="label">Rate %</label><input type="number" min="0" max="100" step="any" @bind="_rate" class="input" /></div>
+            <div><label class="label">Description</label><input @bind="_description" class="input" /></div>
+        </div>
+        @if (_error is not null)
+        {
+            <div class="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+        <div class="mt-4 flex gap-3">
+            <button @onclick="Add" class="btn btn-primary">Save</button>
+            <button @onclick="() => _showForm = false" class="btn btn-secondary">Cancel</button>
+        </div>
+    </div>
+}
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_codes.Count == 0)
+{
+    <EmptyState Title="No tax codes yet" Message="Add the codes your finance team uses. Invoices can also be verified without tax." />
+}
+else
+{
+    <DataGrid TItem="TaxCode" Items="_codes" ItemName="tax codes" SyncUrl="false" EmptyText="No tax codes match.">
+        <GridColumn Title="Code" Text="t => t.Code" CellClass="font-semibold text-ink" />
+        <GridColumn Title="Rate" Text="t => RateText(t)" SortBy="t => t.RatePct" Filter="GridFilter.None" />
+        <GridColumn Title="Description" Text="t => t.Description" />
+        <GridColumn Title="" Filter="GridFilter.None" CellClass="text-right" Context="t">
+            <button @onclick="() => Delete(t)" class="text-xs font-medium text-rose-600 hover:text-rose-700">Delete</button>
+        </GridColumn>
+    </DataGrid>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private bool _loaded;
+    private bool _showForm;
+    private string _code = "";
+    private string _description = "";
+    private decimal _rate;
+    private string? _error;
+    private List<TaxCode> _codes = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        await Load();
+        _loaded = true;
+    }
+
+    private static string RateText(TaxCode t) => t.RatePct.ToString("0.##") + "%";
+
+    private async Task Load() => _codes = await InvoiceSvc.GetTaxCodesAsync(_companyId);
+
+    private async Task Add()
+    {
+        _error = null;
+        try
+        {
+            await InvoiceSvc.AddTaxCodeAsync(_companyId, _code, _description, _rate);
+            _code = ""; _description = ""; _rate = 0; _showForm = false;
+            await Load();
+            await Toasts.Success("Tax code saved");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task Delete(TaxCode code)
+    {
+        try
+        {
+            await InvoiceSvc.DeleteTaxCodeAsync(_companyId, code.Id);
+            await Load();
+            await Toasts.Success("Tax code deleted");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toasts.Error(ex.Message);
+        }
+    }
+}

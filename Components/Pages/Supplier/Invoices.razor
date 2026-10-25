@@ -1,0 +1,65 @@
+@page "/supplier/invoices"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject InvoiceService InvoiceSvc
+
+<PageTitle>Invoices · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Your work" Title="Invoices"
+            Subtitle="Invoice an order once the buyer has recorded its delivery. Every invoice needs a supporting document and a bank account." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else
+{
+    @if (_ready.Count > 0)
+    {
+        <div class="card mb-6 p-6">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Ready to invoice</h2>
+            <p class="mb-4 text-sm text-muted">These orders have deliveries that no invoice covers yet.</p>
+            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                @foreach (var r in _ready)
+                {
+                    <div class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3">
+                        <div>
+                            <p class="font-semibold text-ink">@r.Po.PoNumber</p>
+                            <p class="text-xs text-muted">@r.OpenDeliveries delivery(ies) &middot; about @Money.Format(r.OpenValue, r.Po.Currency)</p>
+                        </div>
+                        <a href="/supplier/invoices/po/@r.Po.Id" class="btn btn-primary btn-sm">Create invoice</a>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (_count == 0)
+    {
+        <EmptyState Title="No invoices yet" Message="When a buyer records a delivery against your order, it appears above ready to invoice." />
+    }
+    else
+    {
+        <InvoiceGrid Provider="Load" SupplierView="true" />
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _supplierId;
+    private int _count;
+    private bool _loaded;
+    private List<InvoiceablePo> _ready = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _count = await InvoiceSvc.GetSupplierCountAsync(_supplierId);
+        _ready = await InvoiceSvc.GetInvoiceablePosAsync(_supplierId);
+        _loaded = true;
+    }
+
+    private Task<GridResult<InvoiceListRow>> Load(GridRequest request) => InvoiceSvc.GetSupplierPageAsync(_supplierId, request);
+}

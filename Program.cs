@@ -27,6 +27,8 @@ builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<DeliveryService>();
 builder.Services.AddScoped<PoDocumentService>();
+builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddSingleton<IFileStore, DiskFileStore>();
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthorization();
@@ -232,6 +234,17 @@ app.MapGet("/supplier/purchase-orders/{poId:int}/pdf", async (int poId, HttpCont
     if (doc is null) return Results.NotFound();
     return Results.File(PoPdf.Build(doc), "application/pdf", PoFileName(doc));
 }).RequireAuthorization(policy => policy.RequireRole("SupplierAdmin", "SupplierUser"));
+
+// Invoice supporting documents: only the buyer that owns the invoice, or the supplier that sent it, can download them.
+app.MapGet("/files/invoices/{documentId:int}", async (int documentId, HttpContext http, InvoiceService invoices) =>
+{
+    int? companyId = int.TryParse(http.User.FindFirst("CompanyId")?.Value, out var c) ? c : null;
+    int? supplierId = int.TryParse(http.User.FindFirst("SupplierId")?.Value, out var s) ? s : null;
+
+    var found = await invoices.OpenDocumentAsync(documentId, companyId, supplierId);
+    if (found is null) return Results.NotFound();
+    return Results.File(found.Value.Content, found.Value.Doc.ContentType, found.Value.Doc.FileName);
+}).RequireAuthorization();
 
 static string PoFileName(PoDocument doc) =>
     doc.Po.Status == PoStatus.Approved ? $"{doc.Po.PoNumber}.pdf" : $"{doc.Po.PoNumber}-DRAFT.pdf";

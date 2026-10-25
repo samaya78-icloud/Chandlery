@@ -1,0 +1,48 @@
+@page "/supplier/invoices/{InvoiceId:int}"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject InvoiceService InvoiceSvc
+
+<PageTitle>@(_detail?.Invoice.InvoiceNumber ?? "Invoice") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Invoice not found" Message="It may belong to another supplier.">
+        <Action><a href="/supplier/invoices" class="btn btn-secondary">Back to invoices</a></Action>
+    </EmptyState>
+}
+else
+{
+    var inv = _detail.Invoice;
+    <PageHeader Title="@inv.InvoiceNumber" Subtitle="@($"Your invoice {inv.SupplierInvoiceRef}" + (_detail.Po is null ? "" : $" against {_detail.Po.PoNumber}"))">
+        <Badges><StatusChip Value="inv.Status" /></Badges>
+        <Actions>
+            @if (inv.Status == InvoiceStatus.Rejected && inv.Kind == InvoiceKind.PoInvoice)
+            {
+                <a href="/supplier/invoices/@inv.Id/edit" class="btn btn-primary">Correct and resend</a>
+            }
+        </Actions>
+    </PageHeader>
+
+    <InvoiceSummary Detail="_detail" SupplierView="true" />
+}
+
+@code {
+    [Parameter] public int InvoiceId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private InvoiceInfo? _detail;
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _detail = await InvoiceSvc.GetDetailAsync(InvoiceId, null, supplierId);
+        _loaded = true;
+    }
+}

@@ -43,6 +43,15 @@
         ApprovalDecision.Approved => ("Approved", "success"),
         ApprovalDecision.Rejected => ("Rejected", "danger"),
 
+        InvoiceStatus.Submitted => ("Submitted", "info"),
+        InvoiceStatus.PendingApproval => ("Pending approval", "warning"),
+        InvoiceStatus.Approved => ("Approved", "success"),
+        InvoiceStatus.Finalized => ("Finalized", "accent"),
+        InvoiceStatus.Rejected => ("Rejected", "danger"),
+
+        InvoiceKind.PoInvoice => ("PO invoice", "neutral"),
+        InvoiceKind.SpotInvoice => ("Spot invoice", "accent"),
+
         Urgency.Normal => ("Normal", "neutral"),
         Urgency.Urgent => ("Urgent", "danger"),
 

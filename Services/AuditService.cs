@@ -22,6 +22,7 @@ public static class AuditEntityTypes
     public const string Requisition = "Requisition";
     public const string Rfq = "Rfq";
     public const string PurchaseOrder = "PurchaseOrder";
+    public const string Invoice = "Invoice";
 }
 
 public static class AuditLog

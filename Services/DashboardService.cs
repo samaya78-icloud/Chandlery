@@ -19,7 +19,10 @@ public record CompanyDashboard(
     List<RfqBrief> QuotesToCompare,
     List<ReqnBrief> RequisitionsWithoutRfq,
     List<SpendRow> TopSuppliers,
-    List<ActivityRow> Activity);
+    List<ActivityRow> Activity,
+    List<PendingInvoiceRow> MyInvoiceApprovals,
+    List<InvoiceListRow> InvoicesToVerify,
+    int InvoicesToFinalize);
 
 public record SupplierDashboard(
     int RfqsToQuote,
@@ -31,7 +34,7 @@ public record SupplierDashboard(
     List<PoBrief> RecentPos);
 
 /// <summary>Numbers and work queues for the home page.</summary>
-public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, ApprovalService approvals, HubService hub)
+public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, ApprovalService approvals, HubService hub, InvoiceService invoices)
 {
     public async Task<CompanyDashboard> GetCompanyAsync(int companyId, int userId)
     {
@@ -47,6 +50,9 @@ public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, App
         var withQuotesCount = openRfqs.Count(x => x.Quotes > 0);
 
         var pending = await approvals.GetPendingForUserAsync(companyId, userId);
+        var invoiceApprovals = await invoices.GetPendingForUserAsync(companyId, userId);
+        var toVerify = await invoices.GetPageAsync(companyId, new GridRequest { PageSize = 5, Filters = new Dictionary<string, GridFilterValue> { ["status"] = new("", nameof(InvoiceStatus.Submitted), null, null) } });
+        var (_, toFinalize) = await invoices.GetQueueCountsAsync(companyId);
 
         var awaitingDelivery = await db.PurchaseOrders.CountAsync(p => p.CompanyId == companyId && p.Status == PoStatus.Approved
             && p.DeliveryStatus != DeliveryStatus.Delivered);
@@ -77,10 +83,10 @@ public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, App
         var activity = await GetActivityAsync(db, companyId);
 
         return new CompanyDashboard(
-            openReqns, awaiting, withQuotesCount, pending.Count, awaitingDelivery, currency, inCurrency.Sum(p => p.Total),
+            openReqns, awaiting, withQuotesCount, pending.Count + invoiceApprovals.Count, awaitingDelivery, currency, inCurrency.Sum(p => p.Total),
             pending.Take(5).ToList(),
             withQuotes.Select(r => new RfqBrief(r.Id, r.RfqNumber, r.Vessel, r.VesselId, r.CreatedDate, r.DueDate, r.Status, r.InvitedSupplierIds.Count)).ToList(),
-            reqnBriefs, top, activity);
+            reqnBriefs, top, activity, invoiceApprovals.Take(5).ToList(), toVerify.Rows, toFinalize);
     }
 
     private static async Task<List<ActivityRow>> GetActivityAsync(ChandleryDbContext db, int companyId)

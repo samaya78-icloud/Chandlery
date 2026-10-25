@@ -1,0 +1,44 @@
+@page "/company/invoices"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject InvoiceService InvoiceSvc
+
+<PageTitle>Invoices · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Procurement" Title="Invoices" Subtitle="@($"{_count:N0} invoices — sent in by suppliers against purchase orders, or entered here as spot invoices.")">
+    <Actions>
+        <a href="/company/invoices/new-spot" class="btn btn-primary">+ Spot invoice</a>
+    </Actions>
+</PageHeader>
+
+@if (_companyId == 0)
+{
+    <Skeleton Rows="5" />
+}
+else if (_count == 0)
+{
+    <EmptyState Title="No invoices yet" Message="Suppliers invoice from their portal once you record a delivery. You can also enter an invoice that has no purchase order.">
+        <Action><a href="/company/invoices/new-spot" class="btn btn-primary">New spot invoice</a></Action>
+    </EmptyState>
+}
+else
+{
+    <InvoiceGrid Provider="Load" />
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private int _count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _count = await InvoiceSvc.GetCountAsync(companyId);
+        _companyId = companyId; // the grid is only rendered once this is set
+    }
+
+    private Task<GridResult<InvoiceListRow>> Load(GridRequest request) => InvoiceSvc.GetPageAsync(_companyId, request);
+}

@@ -1,0 +1,217 @@
+@page "/company/invoices/new-spot"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject InvoiceService InvoiceSvc
+@inject NavigationManager Navigation
+
+<PageTitle>New Spot Invoice · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Procurement" Title="New Spot Invoice"
+            Subtitle="Record an invoice that has no purchase order, such as a port service or a one-off repair. It goes straight to approval by its total." />
+
+@if (_companyId != 0)
+{
+<div class="max-w-5xl space-y-6">
+    <div class="card p-6">
+        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Invoice details</h2>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+                <label class="label">Supplier</label>
+                <select @bind="_supplierId" @bind:after="LoadBanks" class="select">
+                    <option value="0">Choose a supplier…</option>
+                    @foreach (var s in _suppliers) { <option value="@s.Id">@s.Name</option> }
+                </select>
+            </div>
+            <div><label class="label">Supplier invoice no.</label><input @bind="_req.SupplierInvoiceRef" class="input" /></div>
+            <div><label class="label">Currency</label><input @bind="_req.Currency" maxlength="3" class="input uppercase" /></div>
+            <div><label class="label">Invoice date</label><input type="date" @bind="_req.InvoiceDate" class="input" /></div>
+            <div><label class="label">Due date (optional)</label><input type="date" @bind="_req.DueDate" class="input" /></div>
+            <div>
+                <label class="label">Tax code</label>
+                <select @bind="_taxCodeId" class="select">
+                    <option value="0">No tax</option>
+                    @foreach (var t in _taxCodes) { <option value="@t.Id">@t.Code · @t.RatePct.ToString("0.##")%</option> }
+                </select>
+            </div>
+            <div>
+                <label class="label">Department</label>
+                <select @bind="_departmentId" class="select">
+                    <option value="0">None</option>
+                    @foreach (var d in _departments) { <option value="@d.Id">@d.Name</option> }
+                </select>
+            </div>
+            <div>
+                <label class="label">Vessel</label>
+                <select @bind="_vesselId" class="select">
+                    <option value="0">None</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </div>
+            <div><label class="label">Cost centre</label><input @bind="_req.CostCentre" class="input" /></div>
+            <div class="md:col-span-3">
+                <label class="label">Pay into (the supplier's saved accounts)</label>
+                <select @bind="_bankId" class="select max-w-xl">
+                    <option value="0">@(_supplierId == 0 ? "Choose a supplier first" : _banks.Count == 0 ? "This supplier has not saved a bank account" : "Not specified")</option>
+                    @foreach (var b in _banks) { <option value="@b.Id">@b.BankName · @b.AccountNumber (@b.Currency)</option> }
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="card p-6">
+        <div class="mb-4 flex items-center justify-between">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Lines</h2>
+            <button type="button" @onclick="AddLine" class="btn btn-secondary btn-sm">+ Add line</button>
+        </div>
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                    <th class="px-2 py-2 font-medium">Description</th>
+                    <th class="px-2 py-2 font-medium">Qty</th>
+                    <th class="px-2 py-2 font-medium">Unit price</th>
+                    <th class="px-2 py-2 font-medium">Disc %</th>
+                    <th class="px-2 py-2 text-right font-medium">Amount</th>
+                    <th class="px-2 py-2"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in _req.Lines)
+                {
+                    var l = line;
+                    <tr class="border-b border-line last:border-0">
+                        <td class="px-2 py-2"><input @bind="l.Description" class="input input-sm min-w-56" /></td>
+                        <td class="px-2 py-2"><input type="number" min="0" step="any" @bind="l.Quantity" @bind:event="oninput" class="input input-sm w-20" /></td>
+                        <td class="px-2 py-2"><input type="number" min="0" step="any" @bind="l.UnitPrice" @bind:event="oninput" class="input input-sm w-28" /></td>
+                        <td class="px-2 py-2"><input type="number" min="0" max="100" step="any" @bind="l.DiscountPct" @bind:event="oninput" class="input input-sm w-20" /></td>
+                        <td class="px-2 py-2 text-right tabular-nums">@Money.LineNet(l.Quantity, l.UnitPrice, l.DiscountPct).ToString("N2")</td>
+                        <td class="px-2 py-2 text-right"><button type="button" @onclick="() => _req.Lines.Remove(l)" class="text-slate-400 hover:text-rose-500">&#10005;</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div><label class="label">Additional items</label><input type="number" min="0" step="any" @bind="_req.AdditionalItemsCost" @bind:event="oninput" class="input" /></div>
+            <div><label class="label">Delivery cost</label><input type="number" min="0" step="any" @bind="_req.AdditionalDeliveryCost" @bind:event="oninput" class="input" /></div>
+            <div><label class="label">Discount / credit</label><input type="number" min="0" step="any" @bind="_req.DiscountOrCredit" @bind:event="oninput" class="input" /></div>
+        </div>
+        <dl class="ml-auto mt-5 max-w-xs space-y-1 text-sm">
+            <div class="flex justify-between"><dt class="text-muted">Lines</dt><dd class="tabular-nums">@Money.Format(LinesTotal, Currency)</dd></div>
+            <div class="flex justify-between border-t border-line pt-2 text-base font-bold text-ink"><dt>Total before tax</dt><dd class="tabular-nums">@Money.Format(Total, Currency)</dd></div>
+        </dl>
+    </div>
+
+    <div class="card p-6">
+        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Documents and remarks</h2>
+        <label class="label">Supplier's invoice and other documents (PDF, PNG, JPG, XLSX or DOCX, up to 20 MB each)</label>
+        <InputFile OnChange="OnFiles" multiple class="input max-w-xl" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx" />
+        @if (_uploads.Count > 0)
+        {
+            <ul class="mt-3 space-y-1 text-sm">
+                @foreach (var u in _uploads)
+                {
+                    var upload = u;
+                    <li class="flex items-center gap-3 text-ink">&#10003; @u.FileName <span class="text-xs text-muted">@(u.Data.Length / 1024) KB</span>
+                        <button type="button" @onclick="() => _uploads.Remove(upload)" class="text-xs font-medium text-rose-600">Remove</button></li>
+                }
+            </ul>
+        }
+        <div class="mt-5"><label class="label">Remarks</label><textarea @bind="_req.Remarks" rows="2" class="textarea"></textarea></div>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+    <div class="flex gap-3">
+        <button @onclick="Submit" disabled="@_busy" class="btn btn-primary">@(_busy ? "Saving…" : "Create and send for approval")</button>
+        <a href="/company/invoices" class="btn btn-secondary">Cancel</a>
+    </div>
+</div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private Actor _actor = Actor.System;
+    private readonly NewSpotInvoice _req = new();
+    private readonly List<UploadedFile> _uploads = new();
+    private List<Supplier> _suppliers = new();
+    private List<Department> _departments = new();
+    private List<Vessel> _vessels = new();
+    private List<TaxCode> _taxCodes = new();
+    private List<SupplierBankAccount> _banks = new();
+    private int _supplierId, _departmentId, _vesselId, _taxCodeId, _bankId;
+    private bool _busy;
+    private string? _error;
+
+    private string Currency => string.IsNullOrWhiteSpace(_req.Currency) ? "USD" : _req.Currency.Trim().ToUpperInvariant();
+    private decimal LinesTotal => _req.Lines.Sum(l => Money.LineNet(l.Quantity, l.UnitPrice, l.DiscountPct));
+    private decimal Total => LinesTotal + _req.AdditionalItemsCost + _req.AdditionalDeliveryCost - _req.DiscountOrCredit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
+        _suppliers = await Procurement.GetCompanySuppliersAsync(companyId);
+        _departments = await Procurement.GetDepartmentsAsync(companyId);
+        _vessels = await Procurement.GetVesselsAsync(companyId);
+        _taxCodes = await InvoiceSvc.GetTaxCodesAsync(companyId);
+        _req.Lines.Add(new InvoiceLine());
+        _companyId = companyId; // the form is only rendered once everything above is loaded
+    }
+
+    private async Task LoadBanks()
+    {
+        _bankId = 0;
+        _banks = _supplierId == 0 ? new() : await InvoiceSvc.GetBankAccountsAsync(_supplierId);
+    }
+
+    private void AddLine() => _req.Lines.Add(new InvoiceLine());
+
+    private async Task OnFiles(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(10))
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                _uploads.Add(new UploadedFile(file.Name, file.ContentType, memory.ToArray()));
+            }
+        }
+        catch (IOException)
+        {
+            _error = "A file is larger than 20 MB and was not added.";
+        }
+    }
+
+    private async Task Submit()
+    {
+        _error = null;
+        if (_supplierId == 0) { _error = "Choose a supplier."; return; }
+        _req.SupplierId = _supplierId;
+        _req.Currency = Currency;
+        _req.DepartmentId = _departmentId == 0 ? null : _departmentId;
+        _req.VesselId = _vesselId == 0 ? null : _vesselId;
+        _req.TaxCodeId = _taxCodeId == 0 ? null : _taxCodeId;
+        _req.BankAccountId = _bankId == 0 ? null : _bankId;
+
+        _busy = true;
+        try
+        {
+            var invoice = await InvoiceSvc.CreateSpotAsync(_companyId, _req, _uploads, _actor);
+            Navigation.NavigateTo($"/company/invoices/{invoice.Id}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}

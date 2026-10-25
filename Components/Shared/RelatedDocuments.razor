@@ -71,6 +71,23 @@
                     </div>
                 </div>
             }
+            @if (_graph.Invoices.Count > 0)
+            {
+                <span class="hidden self-center text-lg text-muted sm:inline">&rsaquo;</span>
+                <div class="rounded-xl border border-line px-3 py-2">
+                    <p class="text-[11px] font-bold uppercase tracking-wider text-muted">Invoice@(_graph.Invoices.Count > 1 ? "s" : "")</p>
+                    <div class="mt-1 flex flex-col gap-1">
+                        @foreach (var inv in _graph.Invoices)
+                        {
+                            <div class="@("flex items-center gap-2 rounded-lg px-1.5 " + (Kind == DocKind.Invoice && Id == inv.Id ? "bg-accent-50" : ""))">
+                                <DocLink Kind="DocKind.Invoice" Id="inv.Id" Text="@inv.Number" />
+                                <StatusChip Value="inv.Status" />
+                                <span class="text-xs text-muted">@Money.Format(inv.Total, inv.Currency)</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
         </div>
     </div>
 }
@@ -92,6 +109,6 @@
     protected override async Task OnParametersSetAsync()
     {
         _graph = await Hub.GetRelatedAsync(CompanyId, Kind, Id);
-        _stages = (_graph.Requisition is null ? 0 : 1) + (_graph.Rfqs.Count > 0 ? 1 : 0) + (_graph.Pos.Count > 0 ? 1 : 0) + (_graph.Dos.Count > 0 ? 1 : 0);
+        _stages = (_graph.Requisition is null ? 0 : 1) + (_graph.Rfqs.Count > 0 ? 1 : 0) + (_graph.Pos.Count > 0 ? 1 : 0) + (_graph.Dos.Count > 0 ? 1 : 0) + (_graph.Invoices.Count > 0 ? 1 : 0);
     }
 }

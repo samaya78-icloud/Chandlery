@@ -8,21 +8,19 @@ public record ApprovalRuleRow(ApprovalRule Rule, string Department, string Appro
 public record PoApprovalRow(PoApproval Approval, string ApproverName, string DecidedByName);
 public record PendingApprovalRow(PurchaseOrder Po, string Supplier, string Department, int Level, decimal Total);
 
-/// <summary>Decides who must approve a new PO, from the company's approval matrix.</summary>
+/// <summary>Decides who must approve a new PO or invoice, from the company's approval matrix.</summary>
 public static class ApprovalEngine
 {
     /// <summary>
-    /// Call after the PO has been saved (it needs an Id). Picks the tier of the matrix that covers the PO total and creates
-    /// one pending slot per approver per level; with no matching rules the PO is approved straight away.
-    /// Rules for the PO's department are used when it has any, otherwise the rules without a department.
+    /// The matrix rows that apply to a document: those of its department (or the ones without a department when it has none),
+    /// at the smallest amount limit that covers the total. Empty when the company has no rules, meaning no approval is needed.
+    /// Shared by purchase orders and invoices.
     /// </summary>
-    public static async Task RouteAsync(ChandleryDbContext db, PurchaseOrder po, Actor actor)
+    public static List<ApprovalRule> ResolveChain(IReadOnlyCollection<ApprovalRule> rules, int? departmentId, decimal total)
     {
-        var rules = await db.ApprovalRules.Where(r => r.CompanyId == po.CompanyId).ToListAsync();
-        var scoped = po.DepartmentId.HasValue ? rules.Where(r => r.DepartmentId == po.DepartmentId).ToList() : new List<ApprovalRule>();
+        var scoped = departmentId.HasValue ? rules.Where(r => r.DepartmentId == departmentId).ToList() : new List<ApprovalRule>();
         if (scoped.Count == 0) scoped = rules.Where(r => r.DepartmentId == null).ToList();
 
-        var total = po.Total;
         var covering = scoped.Where(r => r.UpToAmount == null || r.UpToAmount >= total).ToList();
 
         List<ApprovalRule> chain;
@@ -34,12 +32,33 @@ public static class ApprovalEngine
         }
         else
         {
-            // The PO is above every tier and there is no unlimited one: use the highest tier rather than skipping approval.
+            // Above every tier and there is no unlimited one: use the highest tier rather than skipping approval.
             var highest = scoped.Where(r => r.UpToAmount.HasValue).Select(r => r.UpToAmount!.Value).DefaultIfEmpty().Max();
             chain = scoped.Where(r => r.UpToAmount == highest).ToList();
         }
 
-        chain = chain.GroupBy(r => (r.Level, r.ApproverUserId)).Select(g => g.First()).ToList();
+        return chain.GroupBy(r => (r.Level, r.ApproverUserId)).Select(g => g.First()).ToList();
+    }
+
+    /// <summary>The lowest level nobody has approved yet; null once every level is approved.</summary>
+    public static int? CurrentLevel(IEnumerable<(int Level, ApprovalDecision Decision)> slots)
+    {
+        var list = slots.ToList();
+        foreach (var level in list.Select(a => a.Level).Distinct().OrderBy(l => l))
+            if (!list.Any(a => a.Level == level && a.Decision == ApprovalDecision.Approved))
+                return level;
+        return null;
+    }
+
+    /// <summary>
+    /// Call after the PO has been saved (it needs an Id). Picks the tier of the matrix that covers the PO total and creates
+    /// one pending slot per approver per level; with no matching rules the PO is approved straight away.
+    /// Rules for the PO's department are used when it has any, otherwise the rules without a department.
+    /// </summary>
+    public static async Task RouteAsync(ChandleryDbContext db, PurchaseOrder po, Actor actor)
+    {
+        var rules = await db.ApprovalRules.Where(r => r.CompanyId == po.CompanyId).ToListAsync();
+        var chain = ResolveChain(rules, po.DepartmentId, po.Total);
         if (chain.Count == 0)
         {
             po.Status = PoStatus.Approved;
@@ -246,4 +265,14 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 
         await db.SaveChangesAsync();
     }
+}
+
+/// <summary>One approver's slot as the shared ApprovalPanel shows it (built from a PoApproval or an InvoiceApproval).</summary>
+public record ApprovalSlotView(int Level, string ApproverName, ApprovalDecision Decision, string DecidedByName, DateTime? DecidedAt, string Comment)
+{
+    public static ApprovalSlotView From(PoApprovalRow r) =>
+        new(r.Approval.Level, r.ApproverName, r.Approval.Decision, r.DecidedByName, r.Approval.DecidedAt, r.Approval.Comment);
+
+    public static ApprovalSlotView From(InvoiceApprovalRow r) =>
+        new(r.Approval.Level, r.ApproverName, r.Approval.Decision, r.DecidedByName, r.Approval.DecidedAt, r.Approval.Comment);
 }

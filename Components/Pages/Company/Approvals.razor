@@ -2,11 +2,12 @@
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ApprovalService ApprovalSvc
+@inject InvoiceService InvoiceSvc
 @inject NavigationManager Navigation
 
 <PageTitle>My Approvals · Chandlery</PageTitle>
 
-<PageHeader Eyebrow="Work" Title="My Approvals" Subtitle="Purchase orders waiting for your approval. Open one to approve or reject it." />
+<PageHeader Eyebrow="Work" Title="My Approvals" Subtitle="Purchase orders and invoices waiting for your approval. Open one to approve or reject it." />
 
 @if (!_loaded)
 {
@@ -18,17 +19,20 @@ else if (_rows.Count == 0)
 }
 else
 {
-    <DataGrid TItem="PendingApprovalRow" Items="_rows" ItemName="purchase orders" EmptyText="No purchase orders match these filters." OnRowClick="Open">
-        <GridColumn Title="PO #" Text="r => r.Po.PoNumber" Context="row">
-            <DocLink Kind="DocKind.PurchaseOrder" Id="row.Po.Id" Text="@row.Po.PoNumber" />
+    <DataGrid TItem="InboxRow" Items="_rows" ItemName="items" EmptyText="Nothing matches these filters." OnRowClick="Open">
+        <GridColumn Title="Type" Text="r => TypeText(r)" Filter="GridFilter.Select" Context="row">
+            <span class="chip chip-plain" data-tone="@(row.Kind == DocKind.PurchaseOrder ? "info" : "accent")">@(row.Kind == DocKind.PurchaseOrder ? "PO" : "Invoice")</span>
+        </GridColumn>
+        <GridColumn Title="Number" Text="r => r.Number" Context="row">
+            <DocLink Kind="row.Kind" Id="row.Id" Text="@row.Number" />
         </GridColumn>
         <GridColumn Title="Supplier" Text="r => r.Supplier" Context="row">
-            <DocLink Kind="DocKind.Supplier" Id="row.Po.SupplierId" Text="@row.Supplier" Plain="true" />
+            <DocLink Kind="DocKind.Supplier" Id="row.SupplierId" Text="@row.Supplier" Plain="true" />
         </GridColumn>
         <GridColumn Title="Department" Text="r => r.Department" />
-        <GridColumn Title="Raised" Date="r => r.Po.CreatedDate" />
+        <GridColumn Title="Raised" Date="r => r.Raised" />
         <GridColumn Title="Your level" Text="r => r.Level.ToString()" Filter="GridFilter.Select" />
-        <GridColumn Title="Total" Text="r => Money.Format(r.Total, r.Po.Currency)" CellClass="font-semibold text-ink" SortBy="r => r.Total" />
+        <GridColumn Title="Total" Text="r => Money.Format(r.Total, r.Currency)" CellClass="font-semibold text-ink" SortBy="r => r.Total" />
         <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Review &rarr;</span></GridColumn>
     </DataGrid>
 }
@@ -36,7 +40,10 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private List<PendingApprovalRow> _rows = new();
+    /// <summary>One waiting item, whether it is a purchase order or an invoice.</summary>
+    private record InboxRow(DocKind Kind, int Id, string Number, int SupplierId, string Supplier, string Department, DateTime Raised, int Level, decimal Total, string Currency);
+
+    private List<InboxRow> _rows = new();
     private bool _loaded;
 
     protected override async Task OnInitializedAsync()
@@ -45,9 +52,17 @@ else
         var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
         var actor = Actor.From(authState.User);
         if (actor.UserId is { } userId)
-            _rows = await ApprovalSvc.GetPendingForUserAsync(companyId, userId);
+        {
+            var pos = await ApprovalSvc.GetPendingForUserAsync(companyId, userId);
+            var invoices = await InvoiceSvc.GetPendingForUserAsync(companyId, userId);
+            _rows = pos.Select(p => new InboxRow(DocKind.PurchaseOrder, p.Po.Id, p.Po.PoNumber, p.Po.SupplierId, p.Supplier, p.Department, p.Po.CreatedDate, p.Level, p.Total, p.Po.Currency))
+                .Concat(invoices.Select(i => new InboxRow(DocKind.Invoice, i.Inv.Id, i.Inv.InvoiceNumber, i.Inv.SupplierId, i.Supplier, "", i.Inv.SubmittedAt, i.Level, i.Inv.TotalExclTax, i.Inv.Currency)))
+                .OrderBy(r => r.Raised).ToList();
+        }
         _loaded = true;
     }
 
-    private void Open(PendingApprovalRow row) => Navigation.NavigateTo($"/company/purchase-orders/{row.Po.Id}");
+    private static string TypeText(InboxRow row) => row.Kind == DocKind.PurchaseOrder ? "PO" : "Invoice";
+
+    private void Open(InboxRow row) => Navigation.NavigateTo(DocLinks.For(row.Kind, row.Id));
 }

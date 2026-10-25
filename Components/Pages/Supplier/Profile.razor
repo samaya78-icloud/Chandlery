@@ -1,0 +1,117 @@
+@page "/supplier/profile"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject InvoiceService InvoiceSvc
+@inject ToastService Toasts
+
+<PageTitle>Bank Accounts · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Your work" Title="Bank Accounts"
+            Subtitle="Where buyers should pay you. You choose one of these on every invoice, and buyers see it when they verify the invoice.">
+    <Actions>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add account</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="card mb-6 max-w-2xl p-6">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div><label class="label">Bank name</label><input @bind="_new.BankName" class="input" /></div>
+            <div><label class="label">Account holder</label><input @bind="_new.AccountName" class="input" /></div>
+            <div><label class="label">Account number / IBAN</label><input @bind="_new.AccountNumber" class="input" /></div>
+            <div><label class="label">SWIFT / BIC</label><input @bind="_new.SwiftCode" class="input uppercase" /></div>
+            <div><label class="label">Currency</label><input @bind="_new.Currency" maxlength="3" class="input uppercase" /></div>
+        </div>
+        @if (_error is not null)
+        {
+            <div class="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+        <div class="mt-4 flex gap-3">
+            <button @onclick="Add" class="btn btn-primary">Save account</button>
+            <button @onclick="() => _showForm = false" class="btn btn-secondary">Cancel</button>
+        </div>
+    </div>
+}
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_accounts.Count == 0)
+{
+    <EmptyState Title="No bank accounts yet" Message="Add the account you want to be paid into. You need one before you can send an invoice." />
+}
+else
+{
+    <div class="grid gap-4 md:grid-cols-2">
+        @foreach (var a in _accounts)
+        {
+            var account = a;
+            <div class="card p-5">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="font-semibold text-ink">@a.BankName</p>
+                        <p class="text-sm text-muted">@a.AccountName</p>
+                    </div>
+                    <span class="chip chip-plain" data-tone="accent">@a.Currency</span>
+                </div>
+                <p class="mt-3 font-mono text-sm text-ink">@a.AccountNumber</p>
+                @if (a.SwiftCode != "") { <p class="text-xs text-muted">SWIFT / BIC @a.SwiftCode</p> }
+                <button @onclick="() => Delete(account)" class="mt-3 text-xs font-medium text-rose-600 hover:text-rose-700">Delete</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _supplierId;
+    private bool _loaded;
+    private bool _showForm;
+    private string? _error;
+    private SupplierBankAccount _new = new();
+    private List<SupplierBankAccount> _accounts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        await Load();
+        _loaded = true;
+    }
+
+    private async Task Load() => _accounts = await InvoiceSvc.GetBankAccountsAsync(_supplierId);
+
+    private async Task Add()
+    {
+        _error = null;
+        try
+        {
+            await InvoiceSvc.AddBankAccountAsync(_supplierId, _new);
+            _new = new SupplierBankAccount();
+            _showForm = false;
+            await Load();
+            await Toasts.Success("Bank account saved");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task Delete(SupplierBankAccount account)
+    {
+        try
+        {
+            await InvoiceSvc.DeleteBankAccountAsync(_supplierId, account.Id);
+            await Load();
+            await Toasts.Success("Bank account deleted");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toasts.Error(ex.Message);
+        }
+    }
+}

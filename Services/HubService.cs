@@ -6,6 +6,7 @@ namespace Chandlery.Services;
 
 // Light summaries used by the hub pages, the lineage strip and the shared mini-tables.
 public record RfqBrief(int Id, string Number, string Vessel, int? VesselId, DateTime Created, DateTime? Due, RfqStatus Status, int SupplierCount);
+public record InvBrief(int Id, string Number, int PoId, string Supplier, InvoiceStatus Status, decimal Total, string Currency);
 public record DoBrief(int Id, string Number, int PoId, string PoNumber, DateTime Received, int Lines, bool Locked);
 public record PoBrief(int Id, string Number, int SupplierId, string Supplier, DateTime Created, string Currency, decimal Total, PoStatus Status, DeliveryStatus Delivery, bool IsSpot);
 public record ReqnBrief(int Id, string Number, int VesselId, string Vessel, int? DepartmentId, string Department, DateTime Date, RequisitionStatus Status, int Lines);
@@ -17,9 +18,9 @@ public record ItemHub(Item Item, string CategoryPath, List<PriceRow> Prices, Lis
 public record DepartmentHub(Department Department, List<ReqnBrief> Requisitions, List<PoBrief> Pos, List<ApprovalRuleRow> Rules);
 
 /// <summary>The document chain around one record: Requisition -> RFQs -> POs -> deliveries.</summary>
-public record RelatedGraph(ReqnBrief? Requisition, List<RfqBrief> Rfqs, List<PoBrief> Pos, List<DoBrief> Dos)
+public record RelatedGraph(ReqnBrief? Requisition, List<RfqBrief> Rfqs, List<PoBrief> Pos, List<DoBrief> Dos, List<InvBrief> Invoices)
 {
-    public bool IsEmpty => Requisition is null && Rfqs.Count == 0 && Pos.Count == 0 && Dos.Count == 0;
+    public bool IsEmpty => Requisition is null && Rfqs.Count == 0 && Pos.Count == 0 && Dos.Count == 0 && Invoices.Count == 0;
 }
 
 /// <summary>Read-only look-ups that connect records to everything related to them, so no page is a dead end.</summary>
@@ -126,6 +127,14 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
         return new DepartmentHub(dept, reqns, pos, rules);
     }
 
+    private static async Task<List<InvBrief>> InvoiceBriefsAsync(ChandleryDbContext db, int companyId, List<int> poIds, Dictionary<int, string> poNumbers)
+    {
+        var rows = await db.Invoices.Where(i => i.CompanyId == companyId && i.PurchaseOrderId != null && poIds.Contains(i.PurchaseOrderId.Value))
+            .OrderBy(i => i.SubmittedAt).ToListAsync();
+        var suppliers = await db.Suppliers.Where(s => rows.Select(r => r.SupplierId).Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
+        return rows.Select(i => new InvBrief(i.Id, i.InvoiceNumber, i.PurchaseOrderId!.Value, suppliers.GetValueOrDefault(i.SupplierId) ?? "", i.Status, i.TotalExclTax, i.Currency)).ToList();
+    }
+
     // ---- lineage ----
 
     /// <summary>Everything connected to a requisition, RFQ or PO: the requisition, all its RFQs, and the POs raised from them.</summary>
@@ -138,6 +147,14 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
         List<int> rfqIds = new();
         List<int> directPoIds = new();
 
+        if (kind == DocKind.Invoice)
+        {
+            var invoice = await db.Invoices.FirstOrDefaultAsync(i => i.Id == id && i.CompanyId == companyId);
+            if (invoice is null) return new RelatedGraph(null, new(), new(), new(), new());
+            if (invoice.PurchaseOrderId is { } invoicePo) return await GetRelatedAsync(companyId, DocKind.PurchaseOrder, invoicePo);
+            return new RelatedGraph(null, new(), new(), new(), new());
+        }
+
         switch (kind)
         {
             case DocKind.Requisition:
@@ -145,13 +162,13 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
                 break;
             case DocKind.Rfq:
                 var rfq = await db.Rfqs.FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId);
-                if (rfq is null) return new RelatedGraph(null, new(), new(), new());
+                if (rfq is null) return new RelatedGraph(null, new(), new(), new(), new());
                 requisitionId = rfq.RequisitionId;
                 if (requisitionId is null) rfqIds.Add(rfq.Id);
                 break;
             case DocKind.PurchaseOrder:
                 var po = await db.PurchaseOrders.FirstOrDefaultAsync(p => p.Id == id && p.CompanyId == companyId);
-                if (po is null) return new RelatedGraph(null, new(), new(), new());
+                if (po is null) return new RelatedGraph(null, new(), new(), new(), new());
                 if (po.RfqId is { } poRfqId)
                 {
                     var parent = await db.Rfqs.FirstOrDefaultAsync(r => r.Id == poRfqId);
@@ -186,6 +203,10 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
                 .Select(d => new DoBrief(d.Id, d.DoNumber, d.PurchaseOrderId, poNumbers.GetValueOrDefault(d.PurchaseOrderId) ?? "",
                     d.ReceivedDate, d.Lines.Count, d.InvoiceId.HasValue)).ToList();
 
-        return new RelatedGraph(requisition, rfqs.OrderBy(r => r.Created).ToList(), pos.OrderBy(p => p.Created).ToList(), deliveries);
+        var invoices = poIds.Count == 0
+            ? new List<InvBrief>()
+            : await InvoiceBriefsAsync(db, companyId, poIds, poNumbers);
+
+        return new RelatedGraph(requisition, rfqs.OrderBy(r => r.Created).ToList(), pos.OrderBy(p => p.Created).ToList(), deliveries, invoices);
     }
 }
