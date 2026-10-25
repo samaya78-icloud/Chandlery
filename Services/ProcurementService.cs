@@ -455,6 +455,19 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             .Select(x => x.CategoryId).ToListAsync()).ToHashSet();
     }
 
+    /// <summary>Every department-to-category link of the company with the department's name, for showing who may use a category.</summary>
+    public async Task<List<(int DepartmentId, string Department, int CategoryId)>> GetDepartmentCategoryLinksAsync(int companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var rows = await (from link in db.DepartmentCategories
+                          join d in db.Departments on link.DepartmentId equals d.Id
+                          where link.CompanyId == companyId
+                          orderby d.Name
+                          select new { link.DepartmentId, d.Name, link.CategoryId }).ToListAsync();
+        return rows.Select(r => (r.DepartmentId, r.Name, r.CategoryId)).ToList();
+    }
+
     public async Task<Dictionary<int, int>> GetDepartmentLinkCountsAsync(int companyId)
     {
         await using var db = await factory.CreateDbContextAsync();

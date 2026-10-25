@@ -3,129 +3,246 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject ToastService Toasts
+@inject IJSRuntime JS
 
-<PageTitle>Items Catalog · Chandlery</PageTitle>
+<PageTitle>Catalog · Chandlery</PageTitle>
 
-<PageHeader Eyebrow="Master data" Title="Items Catalog" Subtitle="@($"{_count:N0} items in your catalog — the single list every requisition and order draws from, within each department's categories.")">
+<PageHeader Eyebrow="Master data" Title="Catalog" Subtitle="@($"{_count:N0} items in {_categories.Count:N0} categories. Pick a category to see its items, then add, edit, disable or delete them.")">
     <Actions>
         <a href="/company/items/import" class="btn btn-secondary">Import CSV</a>
-        <button @onclick="OpenAdd" class="btn btn-primary">+ Add Item</button>
     </Actions>
 </PageHeader>
 
-@if (_editingId != -1)
+@if (!_loaded)
 {
-    <div class="mb-6 max-w-md card p-4">
-        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_editingId == 0 ? "New item" : "Edit item")</h2>
-        <div class="mb-3">
-            <label class="label">Code</label>
-            <input @bind="_code" class="input" />
-        </div>
-        <div class="mb-3">
-            <label class="label">Name</label>
-            <input @bind="_name" class="input" />
-        </div>
-        <div class="mb-3">
-            <label class="label">Category</label>
-            @if (_formTree.Count == 0)
-            {
-                <p class="text-xs text-muted">No enabled categories yet — add one on the Categories page first.</p>
-            }
-            else
-            {
-                <select @bind="_categoryId" class="select">
-                    <option value="0">Select category...</option>
-                    @foreach (var (category, path, _) in _formTree)
-                    {
-                        <option value="@category.Id">@path</option>
-                    }
-                </select>
-            }
-        </div>
-        <div class="mb-4">
-            <label class="label">Unit of Measure</label>
-            <input @bind="_uom" placeholder="e.g. Pcs, Drum, Litre" class="input" />
-        </div>
-
-        @if (_error is not null)
-        {
-            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
-        }
-
-        <div class="flex gap-3">
-            <button @onclick="Save" class="btn btn-primary">Save</button>
-            <button @onclick="() => _editingId = -1" class="btn btn-secondary">Cancel</button>
-        </div>
-    </div>
+    <Skeleton Rows="6" />
 }
-
-<div class="mb-4 flex flex-wrap items-center gap-3">
-    <select @bind="_filterCategoryId" @bind:after="CategoryChanged" class="select max-w-md">
-        <option value="0">All categories</option>
-        @foreach (var (category, path, _) in _tree)
-        {
-            <option value="@category.Id">@path@(category.IsActive ? "" : " (disabled)")</option>
-        }
-    </select>
-    <span class="text-sm text-muted">Includes sub-categories</span>
-</div>
-
-@if (_companyId != 0)
+else
 {
-    <DataGrid @ref="_grid" TItem="Item" ItemsProvider="LoadPage" ItemName="items" ExportName="items" PageSize="25" EmptyText="No items match these filters.">
-        <GridColumn Title="Code" Key="code" Text="i => i.Code" Context="item">
-            <DocLink Kind="DocKind.Item" Id="item.Id" Text="@item.Code" />
-        </GridColumn>
-        <GridColumn Title="Name" Key="name" Text="i => i.Name" CellClass="text-ink" />
-        <GridColumn Title="Category" Key="category" Text="i => CategoryPath(i.CategoryId)" Sortable="false" CellClass="text-muted" />
-        <GridColumn Title="UOM" Key="uom" Text="i => i.UnitOfMeasure" Filter="GridFilter.Select" OptionsLoader="LoadUomOptions" />
-        <GridColumn Title="Status" Key="status" Text="i => StatusText(i)" Filter="GridFilter.Select" Chips="true" Options="StatusOptions" Context="item">
-            <span class="chip" data-tone="@(item.IsActive ? "success" : "neutral")">@StatusText(item)</span>
-        </GridColumn>
-        <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right" Context="item">
-            <button @onclick="() => OpenEdit(item)" class="text-xs font-medium text-accent-600 hover:text-accent-700">Edit</button>
-            <button @onclick="() => Toggle(item)" class="ml-3 text-xs font-medium text-amber-600 hover:text-amber-700">@(item.IsActive ? "Disable" : "Enable")</button>
-            @if (!_used.Contains(item.Id))
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
+
+        @* ---- Category tree ---- *@
+        <aside class="card flex max-h-[45vh] flex-col overflow-hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-7rem)]">
+            <div class="flex items-center gap-2 border-b border-line p-3">
+                <input @bind="_treeSearch" @bind:event="oninput" placeholder="Find a category…" class="input input-sm" />
+                <button @onclick="() => OpenCategoryForm(false)" class="btn btn-primary btn-sm shrink-0" title="Add a top-level category">+ Add</button>
+            </div>
+            <ul class="min-h-0 flex-1 overflow-y-auto py-1">
+                <li>
+                    <button @onclick="() => SelectAsync(0)" class="@RowClass(0)">
+                        <span class="w-4"></span>
+                        <span class="flex-1 truncate font-semibold">All items</span>
+                        <span class="text-xs text-muted">@_count.ToString("N0")</span>
+                    </button>
+                </li>
+                @foreach (var (category, _, depth) in VisibleTree)
+                {
+                    var c = category;
+                    var hasChildren = _usage.GetValueOrDefault(c.Id).Children > 0;
+                    <li>
+                        <div class="@RowClass(c.Id)" style="padding-left: @(8 + depth * 16)px">
+                            @if (hasChildren)
+                            {
+                                <button type="button" @onclick="() => ToggleCollapse(c.Id)" @onclick:stopPropagation="true" class="grid h-4 w-4 place-items-center text-muted" aria-label="Expand or collapse">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="@("h-3 w-3 transition " + (_collapsed.Contains(c.Id) ? "" : "rotate-90"))" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="w-4"></span>
+                            }
+                            <button type="button" @onclick="() => SelectAsync(c.Id)" class="flex min-w-0 flex-1 items-center gap-2 text-left">
+                                <span class="@("flex-1 truncate " + (depth == 0 ? "font-semibold " : "") + (c.IsActive ? "" : "text-muted line-through"))">@c.Name</span>
+                                <span class="text-xs text-muted">@_subtreeCounts.GetValueOrDefault(c.Id).ToString("N0")</span>
+                            </button>
+                        </div>
+                    </li>
+                }
+            </ul>
+        </aside>
+
+        @* ---- Selected category and its items ---- *@
+        <section id="catalog-items" class="min-w-0 scroll-mt-20">
+            <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <h2 class="font-display text-xl font-bold text-ink">@(_selected is null ? "All items" : _pathById.GetValueOrDefault(_selected.Id, _selected.Name))</h2>
+                    @if (_selected is not null)
+                    {
+                        <p class="mt-1 text-sm text-muted">
+                            @_subtreeCounts.GetValueOrDefault(_selected.Id).ToString("N0") item(s) including sub-categories
+                            @if (!_selected.IsActive) { <span class="chip chip-plain ml-2" data-tone="neutral">Disabled</span> }
+                        </p>
+                        <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+                            Departments that can use it:
+                            @if (SelectedDepartments.Count == 0)
+                            {
+                                <span class="text-amber-600">none yet</span>
+                            }
+                            else
+                            {
+                                @foreach (var d in SelectedDepartments)
+                                {
+                                    <DocLink Kind="DocKind.Department" Id="d.Id" Text="@d.Name" />
+                                }
+                            }
+                        </p>
+                    }
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button @onclick="OpenItemForm" class="btn btn-primary btn-sm">+ Add item</button>
+                    @if (_selected is not null)
+                    {
+                        <button @onclick="() => OpenCategoryForm(true)" class="btn btn-secondary btn-sm">+ Sub-category</button>
+                        <button @onclick="OpenCategoryEdit" class="btn btn-secondary btn-sm">Edit</button>
+                        <button @onclick="ToggleCategory" class="btn btn-secondary btn-sm">@(_selected.IsActive ? "Disable" : "Enable")</button>
+                        @if (SelectedIsEmpty)
+                        {
+                            <button @onclick="DeleteCategory" class="btn btn-danger btn-sm">Delete</button>
+                        }
+                    }
+                </div>
+            </div>
+
+            @if (_categoryForm != CategoryFormMode.None)
             {
-                <button @onclick="() => Delete(item)" class="ml-3 text-xs font-medium text-rose-600 hover:text-rose-700">Delete</button>
+                <div class="mb-4 max-w-lg card p-4">
+                    <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_categoryForm == CategoryFormMode.Edit ? "Edit category" : "New category")</h3>
+                    <div class="mb-3">
+                        <label class="label">Name</label>
+                        <input @bind="_catName" maxlength="80" class="input" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="label">Parent category</label>
+                        <select @bind="_catParentId" class="select">
+                            <option value="0">None (top-level)</option>
+                            @foreach (var (category, path, _) in ParentChoices)
+                            {
+                                <option value="@category.Id">@path</option>
+                            }
+                        </select>
+                    </div>
+                    @if (_error is not null) { <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+                    <div class="flex gap-3">
+                        <button @onclick="SaveCategory" class="btn btn-primary btn-sm">Save</button>
+                        <button @onclick="() => _categoryForm = CategoryFormMode.None" class="btn btn-secondary btn-sm">Cancel</button>
+                    </div>
+                </div>
             }
-        </GridColumn>
-    </DataGrid>
-    <p class="mt-3 text-xs text-muted">Delete appears only for items that are on no requisition, RFQ, purchase order or delivery. Otherwise disable the item: it stays on old documents but cannot be added to new ones.</p>
+
+            @if (_itemFormId != -1)
+            {
+                <div class="mb-4 max-w-lg card p-4">
+                    <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_itemFormId == 0 ? "New item" : "Edit item")</h3>
+                    <div class="mb-3 grid grid-cols-2 gap-3">
+                        <div><label class="label">Code</label><input @bind="_code" class="input" /></div>
+                        <div><label class="label">Unit of measure</label><input @bind="_uom" placeholder="Pcs, Drum, Litre" class="input" /></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="label">Name</label>
+                        <input @bind="_name" class="input" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="label">Category</label>
+                        @if (_formTree.Count == 0)
+                        {
+                            <p class="text-xs text-muted">No enabled categories yet. Add one on the left first.</p>
+                        }
+                        else
+                        {
+                            <select @bind="_itemCategoryId" class="select">
+                                <option value="0">Select category…</option>
+                                @foreach (var (category, path, _) in _formTree)
+                                {
+                                    <option value="@category.Id">@path</option>
+                                }
+                            </select>
+                        }
+                    </div>
+                    @if (_error is not null) { <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+                    <div class="flex gap-3">
+                        <button @onclick="SaveItem" class="btn btn-primary btn-sm">Save</button>
+                        <button @onclick="() => _itemFormId = -1" class="btn btn-secondary btn-sm">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            <DataGrid @ref="_grid" TItem="Item" ItemsProvider="LoadPage" ItemName="items" ExportName="items" PageSize="25"
+                      ExtraQuery="@ExtraQuery" EmptyText="No items here yet.">
+                <GridColumn Title="Code" Key="code" Text="i => i.Code" Context="item">
+                    <DocLink Kind="DocKind.Item" Id="item.Id" Text="@item.Code" />
+                </GridColumn>
+                <GridColumn Title="Name" Key="name" Text="i => i.Name" CellClass="text-ink" />
+                <GridColumn Title="Category" Key="category" Text="i => CategoryPath(i.CategoryId)" Sortable="false" CellClass="text-muted" />
+                <GridColumn Title="UOM" Key="uom" Text="i => i.UnitOfMeasure" Filter="GridFilter.Select" OptionsLoader="LoadUomOptions" />
+                <GridColumn Title="Status" Key="status" Text="i => StatusText(i)" Filter="GridFilter.Select" Chips="true" Options="StatusOptions" Context="item">
+                    <span class="chip" data-tone="@(item.IsActive ? "success" : "neutral")">@StatusText(item)</span>
+                </GridColumn>
+                <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right" Context="item">
+                    <button @onclick="() => OpenItemEdit(item)" class="text-xs font-medium text-accent-600 hover:text-accent-700">Edit</button>
+                    <button @onclick="() => ToggleItem(item)" class="ml-3 text-xs font-medium text-amber-600 hover:text-amber-700">@(item.IsActive ? "Disable" : "Enable")</button>
+                    @if (!_used.Contains(item.Id))
+                    {
+                        <button @onclick="() => DeleteItem(item)" class="ml-3 text-xs font-medium text-rose-600 hover:text-rose-700">Delete</button>
+                    }
+                </GridColumn>
+            </DataGrid>
+            <p class="mt-3 text-xs text-muted">
+                Item Delete appears only for items on no requisition, RFQ, purchase order or delivery; otherwise disable the item (it stays on old documents but can't be added to new ones).
+                A category can be deleted only when it has no items and no sub-categories; disabling one also hides everything beneath it.
+            </p>
+        </section>
+    </div>
 }
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
+    /// <summary>The category open on the right; kept in the address as ?c=ID so the view can be shared or revisited.</summary>
+    [SupplyParameterFromQuery(Name = "c")] public int? CategoryQuery { get; set; }
+
+    private enum CategoryFormMode { None, Add, Edit }
+
     private static readonly string[] StatusOptions = { "Active", "Disabled" };
 
     private DataGrid<Item>? _grid;
     private int _companyId;
+    private bool _loaded;
     private int _count;
     private List<Category> _categories = new();
     private List<(Category Category, string Path, int Depth)> _tree = new();
-    private List<(Category Category, string Path, int Depth)> _formTree = new();
     private Dictionary<int, string> _pathById = new();
+    private Dictionary<int, (int Items, int Children)> _usage = new();
+    private Dictionary<int, int> _subtreeCounts = new();
+    private List<(int DepartmentId, string Department, int CategoryId)> _links = new();
     private HashSet<int> _used = new();
-
-    /// <summary>-1 = form closed, 0 = adding, otherwise the id of the item being edited.</summary>
-    private int _editingId = -1;
-    private string _code = "";
-    private string _name = "";
-    private string _uom = "";
-    private int _categoryId;
+    private readonly HashSet<int> _collapsed = new();
+    private string _treeSearch = "";
+    private int _selectedId;
     private string? _error;
 
-    private int _filterCategoryId;
+    // Category form
+    private CategoryFormMode _categoryForm;
+    private string _catName = "";
+    private int _catParentId;
+
+    // Item form: -1 closed, 0 adding, otherwise the id being edited
+    private int _itemFormId = -1;
+    private string _code = "", _name = "", _uom = "";
+    private int _itemCategoryId;
+    private List<(Category Category, string Path, int Depth)> _formTree = new();
+
+    private Category? _selected => _selectedId == 0 ? null : _categories.FirstOrDefault(c => c.Id == _selectedId);
+    private string? ExtraQuery => _selectedId == 0 ? null : $"c={_selectedId}";
+    private bool SelectedIsEmpty => _selected is not null && _usage.GetValueOrDefault(_selected.Id) is { Items: 0, Children: 0 };
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
-        _companyId = companyId;
-
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
         await LoadCategories();
-        _count = await Procurement.GetItemCountAsync(companyId);
+        _count = await Procurement.GetItemCountAsync(_companyId);
+        if (CategoryQuery is { } c && _categories.Any(x => x.Id == c)) _selectedId = c;
+        _loaded = true;
     }
 
     private async Task LoadCategories()
@@ -133,7 +250,79 @@
         _categories = await Procurement.GetCategoriesAsync(_companyId);
         _tree = Category.BuildTree(_categories);
         _pathById = _tree.ToDictionary(t => t.Category.Id, t => t.Path);
+        _usage = await Procurement.GetCategoryUsageAsync(_companyId);
+        _links = await Procurement.GetDepartmentCategoryLinksAsync(_companyId);
+
+        _subtreeCounts = new Dictionary<int, int>();
+        foreach (var c in _categories)
+            _subtreeCounts[c.Id] = CategoryIds.Descendants(_categories, c.Id).Sum(id => _usage.GetValueOrDefault(id).Items);
     }
+
+    // ---- Tree ----
+
+    /// <summary>The tree minus collapsed branches; while searching, only matches and the categories above them.</summary>
+    private IEnumerable<(Category Category, string Path, int Depth)> VisibleTree
+    {
+        get
+        {
+            var term = _treeSearch.Trim();
+            if (term != "")
+            {
+                var keep = new HashSet<int>();
+                foreach (var t in _tree.Where(t => t.Category.Name.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                    for (Category? c = t.Category; c is not null; c = c.ParentCategoryId is { } p ? _categories.FirstOrDefault(x => x.Id == p) : null)
+                        keep.Add(c.Id);
+                return _tree.Where(t => keep.Contains(t.Category.Id));
+            }
+            return _tree.Where(t => !HasCollapsedAncestor(t.Category));
+        }
+    }
+
+    private bool HasCollapsedAncestor(Category category)
+    {
+        for (var parentId = category.ParentCategoryId; parentId is not null;)
+        {
+            if (_collapsed.Contains(parentId.Value)) return true;
+            parentId = _categories.FirstOrDefault(c => c.Id == parentId)?.ParentCategoryId;
+        }
+        return false;
+    }
+
+    private void ToggleCollapse(int id)
+    {
+        if (!_collapsed.Remove(id)) _collapsed.Add(id);
+    }
+
+    private string RowClass(int id) =>
+        "flex w-full items-center gap-1 px-2 py-1.5 text-left text-sm transition " +
+        (_selectedId == id ? "bg-accent-50 text-accent-700" : "text-ink-2 hover:bg-surface-2");
+
+    private async Task SelectAsync(int id)
+    {
+        _selectedId = id;
+        _categoryForm = CategoryFormMode.None;
+        _itemFormId = -1;
+        _error = null;
+        StateHasChanged();
+        await Task.Yield(); // let the grid receive the new ExtraQuery before it rewrites the address
+        if (_grid is not null) await _grid.ReloadAsync(resetPage: true);
+        if (id != 0) { try { await JS.InvokeVoidAsync("chandlery.scrollToOnSmall", "catalog-items"); } catch (InvalidOperationException) { } catch (JSDisconnectedException) { } }
+    }
+
+    private List<Department> SelectedDepartments
+    {
+        get
+        {
+            if (_selected is null) return new();
+            var upward = new HashSet<int>();
+            for (Category? c = _selected; c is not null; c = c.ParentCategoryId is { } p ? _categories.FirstOrDefault(x => x.Id == p) : null)
+                upward.Add(c.Id);
+            return _links.Where(l => upward.Contains(l.CategoryId)).Select(l => (l.DepartmentId, l.Department)).Distinct()
+                .Select(l => new Department { Id = l.DepartmentId, Name = l.Department }).ToList();
+        }
+    }
+
+    // ---- Items grid ----
 
     private static string StatusText(Item item) => item.IsActive ? "Active" : "Disabled";
 
@@ -141,19 +330,15 @@
 
     private async Task<IEnumerable<string>> LoadUomOptions() => await Procurement.GetItemUomOptionsAsync(_companyId);
 
-    /// <summary>
-    /// The category dropdown (with its sub-categories) and the Category column's text filter both narrow the
-    /// item query to a set of category ids, because the category path is built from the tree, not stored on the item.
-    /// </summary>
     private async Task<GridResult<Item>> LoadPage(GridRequest request)
     {
-        HashSet<int>? allowed = _filterCategoryId == 0 ? null : CategoryIds.Descendants(_categories, _filterCategoryId);
+        HashSet<int>? allowed = _selectedId == 0 ? null : CategoryIds.Descendants(_categories, _selectedId);
 
+        // The Category column's text filter narrows by category path, which lives in the tree rather than on the item.
         var term = request.Text("category");
         if (term != "")
         {
-            var matching = _tree.Where(t => t.Path.Contains(term, StringComparison.OrdinalIgnoreCase))
-                .Select(t => t.Category.Id).ToHashSet();
+            var matching = _tree.Where(t => t.Path.Contains(term, StringComparison.OrdinalIgnoreCase)).Select(t => t.Category.Id).ToHashSet();
             if (allowed is not null) matching.IntersectWith(allowed);
             allowed = matching;
         }
@@ -163,45 +348,54 @@
         return result;
     }
 
-    private Task CategoryChanged() => _grid is null ? Task.CompletedTask : _grid.ReloadAsync(resetPage: true);
-
-    private void OpenAdd()
+    private async Task RefreshAfterChangeAsync()
     {
-        _editingId = 0;
-        _code = _name = _uom = "";
-        _categoryId = 0;
-        _error = null;
-        _formTree = FormChoices(0);
+        await LoadCategories();
+        _count = await Procurement.GetItemCountAsync(_companyId);
+        StateHasChanged();
+        await Task.Yield();
+        if (_grid is not null) await _grid.ReloadAsync();
     }
 
-    private void OpenEdit(Item item)
-    {
-        _editingId = item.Id;
-        _code = item.Code;
-        _name = item.Name;
-        _uom = item.UnitOfMeasure;
-        _categoryId = item.CategoryId;
-        _error = null;
-        _formTree = FormChoices(item.CategoryId);
-    }
+    // ---- Item form and actions ----
 
-    /// <summary>Enabled categories, plus the item's current one so editing a disabled-category item still shows where it sits.</summary>
     private List<(Category Category, string Path, int Depth)> FormChoices(int currentCategoryId)
     {
         var active = Category.ActiveIds(_categories);
         return _tree.Where(t => active.Contains(t.Category.Id) || t.Category.Id == currentCategoryId).ToList();
     }
 
-    private async Task Save()
+    private void OpenItemForm()
+    {
+        _categoryForm = CategoryFormMode.None;
+        _itemFormId = 0;
+        _code = _name = _uom = "";
+        _itemCategoryId = _selected is { IsActive: true } ? _selected.Id : 0;
+        _error = null;
+        _formTree = FormChoices(_itemCategoryId);
+    }
+
+    private void OpenItemEdit(Item item)
+    {
+        _categoryForm = CategoryFormMode.None;
+        _itemFormId = item.Id;
+        _code = item.Code;
+        _name = item.Name;
+        _uom = item.UnitOfMeasure;
+        _itemCategoryId = item.CategoryId;
+        _error = null;
+        _formTree = FormChoices(item.CategoryId);
+    }
+
+    private async Task SaveItem()
     {
         _error = null;
         try
         {
-            if (_editingId == 0) await Procurement.AddItemAsync(_companyId, _code, _name, _categoryId, _uom);
-            else await Procurement.UpdateItemAsync(_companyId, _editingId, _code, _name, _categoryId, _uom);
-            _count = await Procurement.GetItemCountAsync(_companyId);
-            _editingId = -1;
-            if (_grid is not null) await _grid.ReloadAsync();
+            if (_itemFormId == 0) await Procurement.AddItemAsync(_companyId, _code, _name, _itemCategoryId, _uom);
+            else await Procurement.UpdateItemAsync(_companyId, _itemFormId, _code, _name, _itemCategoryId, _uom);
+            _itemFormId = -1;
+            await RefreshAfterChangeAsync();
             await Toasts.Success("Item saved");
         }
         catch (InvalidOperationException ex)
@@ -210,13 +404,13 @@
         }
     }
 
-    private async Task Toggle(Item item)
+    private async Task ToggleItem(Item item)
     {
         try
         {
             var enable = !item.IsActive;
             await Procurement.SetItemActiveAsync(_companyId, item.Id, enable);
-            if (_grid is not null) await _grid.ReloadAsync();
+            await RefreshAfterChangeAsync();
             await Toasts.Success(enable ? $"{item.Code} enabled" : $"{item.Code} disabled");
         }
         catch (InvalidOperationException ex)
@@ -225,14 +419,103 @@
         }
     }
 
-    private async Task Delete(Item item)
+    private async Task DeleteItem(Item item)
     {
         try
         {
             await Procurement.DeleteItemAsync(_companyId, item.Id);
-            _count = await Procurement.GetItemCountAsync(_companyId);
-            if (_grid is not null) await _grid.ReloadAsync();
+            await RefreshAfterChangeAsync();
             await Toasts.Success($"{item.Code} deleted");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toasts.Error(ex.Message);
+        }
+    }
+
+    // ---- Category form and actions ----
+
+    /// <summary>Parents offered in the form: enabled categories, and when editing never the category itself or anything beneath it.</summary>
+    private IEnumerable<(Category Category, string Path, int Depth)> ParentChoices
+    {
+        get
+        {
+            var blocked = _categoryForm == CategoryFormMode.Edit && _selected is not null ? CategoryIds.Descendants(_categories, _selected.Id) : new HashSet<int>();
+            var active = Category.ActiveIds(_categories);
+            return _tree.Where(t => !blocked.Contains(t.Category.Id) && (active.Contains(t.Category.Id) || t.Category.Id == _catParentId));
+        }
+    }
+
+    private void OpenCategoryForm(bool underSelected)
+    {
+        _itemFormId = -1;
+        _categoryForm = CategoryFormMode.Add;
+        _catName = "";
+        _catParentId = underSelected && _selected is not null ? _selected.Id : 0;
+        _error = null;
+    }
+
+    private void OpenCategoryEdit()
+    {
+        if (_selected is null) return;
+        _itemFormId = -1;
+        _categoryForm = CategoryFormMode.Edit;
+        _catName = _selected.Name;
+        _catParentId = _selected.ParentCategoryId ?? 0;
+        _error = null;
+    }
+
+    private async Task SaveCategory()
+    {
+        _error = null;
+        try
+        {
+            var parent = _catParentId == 0 ? (int?)null : _catParentId;
+            if (_categoryForm == CategoryFormMode.Add)
+            {
+                var created = await Procurement.AddCategoryAsync(_companyId, _catName, parent);
+                _selectedId = created.Id;
+            }
+            else if (_selected is not null)
+            {
+                await Procurement.UpdateCategoryAsync(_companyId, _selected.Id, _catName, parent);
+            }
+            _categoryForm = CategoryFormMode.None;
+            await RefreshAfterChangeAsync();
+            await Toasts.Success("Category saved");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ToggleCategory()
+    {
+        if (_selected is null) return;
+        var category = _selected;
+        try
+        {
+            await Procurement.SetCategoryActiveAsync(_companyId, category.Id, !category.IsActive);
+            await RefreshAfterChangeAsync();
+            await Toasts.Success(category.IsActive ? $"{category.Name} disabled" : $"{category.Name} enabled");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toasts.Error(ex.Message);
+        }
+    }
+
+    private async Task DeleteCategory()
+    {
+        if (_selected is null) return;
+        var category = _selected;
+        try
+        {
+            await Procurement.DeleteCategoryAsync(_companyId, category.Id);
+            _selectedId = category.ParentCategoryId ?? 0;
+            await RefreshAfterChangeAsync();
+            await Toasts.Success($"{category.Name} deleted");
         }
         catch (InvalidOperationException ex)
         {

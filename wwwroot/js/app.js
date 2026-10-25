@@ -156,7 +156,15 @@
   function setMode(mode) { write(KEY_MODE, mode); apply(); }
   function setTheme(theme) { write(KEY_THEME, theme); apply(); }
 
+  // On narrow screens the items grid sits below the category tree, so bring it into view after a selection.
+  function scrollToOnSmall(id) {
+    if (window.innerWidth >= 1024) return;
+    var el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   window.chandlery = {
+    scrollToOnSmall: scrollToOnSmall,
     applyTheme: apply, toast: toast, replaceQuery: replaceQuery, download: download,
     registerPalette: registerPalette, setMode: setMode, setTheme: setTheme
   };

@@ -233,6 +233,9 @@
     /// <summary>Keep filters, sort and page in the browser address so the view survives Back and can be shared.</summary>
     [Parameter] public bool SyncUrl { get; set; } = true;
 
+    /// <summary>Extra address parameters the page owns (for example "c=12"), kept when the grid rewrites the query string.</summary>
+    [Parameter] public string? ExtraQuery { get; set; }
+
     /// <summary>File name (without extension) for CSV export.</summary>
     [Parameter] public string ExportName { get; set; } = "export";
 
@@ -342,6 +345,7 @@
         if (resetPage) _page = 1;
         foreach (var c in _columns) await c.LoadOptionsAsync();
         await LoadAsync();
+        await SyncUrlAsync();
     }
 
     private GridRequest BuildRequest(int? pageOverride = null, int? sizeOverride = null) => new()
@@ -388,6 +392,7 @@
     {
         if (!SyncUrl) return;
         var parts = new List<string>();
+        if (!string.IsNullOrEmpty(ExtraQuery)) parts.Add(ExtraQuery);
         foreach (var c in _columns)
         {
             var value = c.UrlValue;
