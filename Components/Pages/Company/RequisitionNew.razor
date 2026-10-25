@@ -1,0 +1,170 @@
+@page "/company/requisitions/new"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject RequisitionService Requisitions
+@inject NavigationManager Navigation
+
+<PageTitle>New Requisition · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Procurement" Title="New Requisition" Subtitle="Enter what the vessel needs once. You choose the suppliers and send the RFQ from the requisition afterwards." />
+
+@if (_companyId != 0)
+{
+<div class="max-w-5xl space-y-6">
+
+    <div class="card p-6">
+        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-400">Requisition details</h2>
+
+        <div class="mb-5 flex gap-6">
+            <label class="flex items-center gap-2 text-sm text-slate-700">
+                <input type="radio" name="reqn-type" checked="@(_reqn.Type == RfqType.Stores)" @onchange="() => _reqn.Type = RfqType.Stores" /> Stores
+            </label>
+            <label class="flex items-center gap-2 text-sm text-slate-700">
+                <input type="radio" name="reqn-type" checked="@(_reqn.Type == RfqType.Spares)" @onchange="() => _reqn.Type = RfqType.Spares" /> Spares
+            </label>
+            <label class="ml-auto flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" @bind="_reqn.IsBreakdown" /> Breakdown / incident
+            </label>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Vessel <span class="text-rose-500">*</span></label>
+                <select @bind="_reqn.VesselId" class="@InputClass">
+                    <option value="0">Select vessel…</option>
+                    @foreach (var v in _vessels)
+                    {
+                        <option value="@v.Id">@v.Name</option>
+                    }
+                </select>
+                @if (_vessels.Count == 0)
+                {
+                    <p class="mt-1 text-xs text-slate-400">No vessels yet &mdash; <a href="/company/vessels" class="text-indigo-600 underline">add one</a> first.</p>
+                }
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Department</label>
+                <select @bind="_departmentId" class="@InputClass">
+                    <option value="0">Not specified</option>
+                    @foreach (var d in _departments)
+                    {
+                        <option value="@d.Id">@d.Name</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Urgency</label>
+                <select @bind="_reqn.Urgency" class="@InputClass">
+                    @foreach (var u in Enum.GetValues<Urgency>())
+                    {
+                        <option value="@u">@u</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Delivery port <span class="text-rose-500">*</span></label>
+                <select @bind="_portId" class="@InputClass">
+                    <option value="0">Select port…</option>
+                    @foreach (var p in _ports)
+                    {
+                        <option value="@p.Id">@p.Name, @p.Country</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Requisition date</label>
+                <input type="date" @bind="_reqn.ReqnDate" class="@InputClass" />
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Est. delivery date</label>
+                <input type="date" @bind="_reqn.EstDeliveryDate" class="@InputClass" />
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Vessel ETA</label>
+                <input type="date" @bind="_reqn.VesselEta" class="@InputClass" />
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Vessel ETD</label>
+                <input type="date" @bind="_reqn.VesselEtd" class="@InputClass" />
+            </div>
+        </div>
+
+        <div class="mt-6">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Remarks</label>
+            <textarea @bind="_reqn.Remarks" rows="2" class="@InputClass"></textarea>
+        </div>
+    </div>
+
+    <ItemLinePicker CompanyId="_companyId" Lines="_reqn.Lines" ShowDrawingNo="@(_reqn.Type == RfqType.Spares)"
+                    CopySourceLabel="requisition" CopySources="_copySources" OnChanged="StateHasChanged" />
+
+    @if (_error is not null)
+    {
+        <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+
+    <div class="flex gap-3">
+        <button @onclick="Submit" disabled="@_busy" class="btn btn-primary">
+            @(_busy ? "Saving…" : $"Save requisition ({_reqn.Lines.Count} lines)")
+        </button>
+        <a href="/company/requisitions" class="btn btn-secondary">Cancel</a>
+    </div>
+</div>
+}
+
+@code {
+    private const string InputClass = "input";
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private int _departmentId;
+    private int _portId;
+    private Actor _actor = Actor.System;
+    private readonly NewRequisition _reqn = new();
+    private List<Vessel> _vessels = new();
+    private List<Department> _departments = new();
+    private List<Port> _ports = new();
+    private List<LineCopySource> _copySources = new();
+    private string? _error;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
+
+        _vessels = await Procurement.GetVesselsAsync(companyId);
+        _departments = await Procurement.GetDepartmentsAsync(companyId);
+        _ports = await Procurement.GetPortsAsync();
+
+        var recent = await Requisitions.GetRecentAsync(companyId);
+        _copySources = recent.Select(r => new LineCopySource(
+            r.Id,
+            $"{r.ReqnNumber} · {r.Lines.Count} lines · {r.ReqnDate:dd-MMM-yyyy}",
+            r.Lines.Select(l => new NewRfqLine { ItemId = l.ItemId, Quantity = l.Quantity, Description = l.Description ?? "", DrawingNo = l.DrawingNo ?? "" }).ToList())).ToList();
+
+        _companyId = companyId; // the form is only rendered once everything above is loaded
+    }
+
+    private async Task Submit()
+    {
+        _error = null;
+        _reqn.DepartmentId = _departmentId == 0 ? null : _departmentId;
+        _reqn.DeliveryPortId = _portId == 0 ? null : _portId;
+
+        _busy = true;
+        try
+        {
+            var created = await Requisitions.CreateAsync(_companyId, _reqn, _actor);
+            Navigation.NavigateTo($"/company/requisitions/{created.Id}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}

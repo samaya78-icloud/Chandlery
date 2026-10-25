@@ -1,0 +1,40 @@
+@page "/supplier/purchase-orders/{PoId:int}/document"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject PoDocumentService Documents
+
+<PageTitle>@(_doc?.Po.PoNumber ?? "Purchase order") document · Chandlery</PageTitle>
+
+@if (_loaded && _doc is null)
+{
+    <EmptyState Title="Purchase order not found" Message="Only approved orders addressed to your company are available here." />
+}
+else if (_doc is not null)
+{
+    <PageHeader Title="Purchase order document" Parent="@(new Crumb(_doc.Po.PoNumber, null))"
+                Subtitle="Download the PDF to keep a copy for your records.">
+        <Actions>
+            <a href="/supplier/purchase-orders" class="btn btn-secondary">Back to orders</a>
+            <button onclick="window.print()" class="btn btn-secondary">Print</button>
+            <a href="/supplier/purchase-orders/@PoId/pdf" download class="btn btn-primary">Download PDF</a>
+        </Actions>
+    </PageHeader>
+
+    <PoDocumentView Doc="_doc" />
+}
+
+@code {
+    [Parameter] public int PoId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private PoDocument? _doc;
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _doc = await Documents.GetForSupplierAsync(supplierId, PoId);
+        _loaded = true;
+    }
+}

@@ -1,0 +1,37 @@
+@* Compact, linked list of requisitions for hub pages. *@
+<DataGrid TItem="ReqnBrief" Items="Requisitions" ItemName="requisitions" SyncUrl="false" ExportName="@ExportName" EmptyText="No requisitions.">
+    <GridColumn Title="Reqn #" Text="r => r.Number" Context="r">
+        <DocLink Kind="DocKind.Requisition" Id="r.Id" Text="@r.Number" />
+    </GridColumn>
+    @if (ShowVessel)
+    {
+        <GridColumn Title="Vessel" Text="r => r.Vessel" Context="r">
+            <DocLink Kind="DocKind.Vessel" Id="r.VesselId" Text="@r.Vessel" Plain="true" />
+        </GridColumn>
+    }
+    @if (ShowDepartment)
+    {
+        <GridColumn Title="Department" Text="r => r.Department" Context="r">
+            @if (r.DepartmentId is { } departmentId)
+            {
+                <DocLink Kind="DocKind.Department" Id="departmentId" Text="@r.Department" Plain="true" />
+            }
+            else
+            {
+                <span class="text-muted">—</span>
+            }
+        </GridColumn>
+    }
+    <GridColumn Title="Date" Date="r => r.Date" />
+    <GridColumn Title="Lines" Text="r => r.Lines.ToString()" Filter="GridFilter.None" SortBy="r => r.Lines" />
+    <GridColumn Title="Status" Text="r => r.Status.ToString()" Filter="GridFilter.Select" Context="r">
+        <StatusChip Value="r.Status" />
+    </GridColumn>
+</DataGrid>
+
+@code {
+    [Parameter, EditorRequired] public List<ReqnBrief> Requisitions { get; set; } = new();
+    [Parameter] public bool ShowVessel { get; set; } = true;
+    [Parameter] public bool ShowDepartment { get; set; } = true;
+    [Parameter] public string ExportName { get; set; } = "requisitions";
+}

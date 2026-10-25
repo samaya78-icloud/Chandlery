@@ -1,0 +1,234 @@
+@page "/"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject DashboardService Dashboards
+
+<PageTitle>Dashboard · Chandlery</PageTitle>
+
+@if (_company is null && _supplier is null)
+{
+    <Skeleton Rows="6" />
+}
+else if (_company is { } c)
+{
+    <PageHeader Eyebrow="@DateTime.UtcNow.ToString("dddd, d MMMM")" Title="@($"Welcome back, {_firstName}")" Subtitle="Here's what needs your attention today.">
+        <Actions>
+            <a href="/company/requisitions/new" class="btn btn-primary">+ New requisition</a>
+            <a href="/company/rfqs/new" class="btn btn-secondary">+ New RFQ</a>
+        </Actions>
+    </PageHeader>
+
+    <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard Label="Open requisitions" Value="@c.OpenRequisitions.ToString("N0")" Hint="@($"{c.RequisitionsWithoutRfq.Count} not yet sent out")" Href="/company/requisitions?f.status=Open">
+            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="m9 13 2 2 4-4"/></svg></Icon>
+        </StatCard>
+        <StatCard Label="RFQs awaiting quotes" Value="@c.RfqsAwaitingQuotes.ToString("N0")" Hint="@($"{c.RfqsWithQuotes} with quotes to compare")" Tone="warning" Href="/company/rfqs?f.status=Sent">
+            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M9 16h6M9 8h1M7 3h10a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V5a2 2 0 0 1 2-2Z"/></svg></Icon>
+        </StatCard>
+        <StatCard Label="Waiting for my approval" Value="@c.PendingMyApproval.ToString("N0")" Hint="Purchase orders" Tone="danger" Href="/company/approvals">
+            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></Icon>
+        </StatCard>
+        <StatCard Label="Awaiting delivery" Value="@c.AwaitingDelivery.ToString("N0")" Hint="Approved purchase orders" Tone="info" Href="/company/purchase-orders?f.status=Approved">
+            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg></Icon>
+        </StatCard>
+        <StatCard Label="Ordered, last 30 days" Value="@(c.Spend30Days == 0 ? "—" : Money.Format(c.Spend30Days, c.SpendCurrency))" Hint="Approved purchase orders" Tone="success" Href="/company/purchase-orders">
+            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8M14 7h7v7"/></svg></Icon>
+        </StatCard>
+    </div>
+
+    <div class="grid gap-6 xl:grid-cols-3">
+        <div class="space-y-6 xl:col-span-2">
+            <section class="card p-6">
+                <h2 class="mb-1 font-display text-lg font-bold text-ink">Needs your action</h2>
+                <p class="mb-5 text-sm text-muted">Jump straight to the next thing that is waiting on you.</p>
+
+                @if (c.MyApprovals.Count + c.QuotesToCompare.Count + c.RequisitionsWithoutRfq.Count == 0)
+                {
+                    <EmptyState Title="You're all caught up" Message="No approvals, quotes or open requisitions need attention right now." />
+                }
+                else
+                {
+                    @if (c.MyApprovals.Count > 0)
+                    {
+                        <p class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Approve</p>
+                        <ul class="mb-5 divide-y divide-line">
+                            @foreach (var a in c.MyApprovals)
+                            {
+                                <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                                    <DocLink Kind="DocKind.PurchaseOrder" Id="a.Po.Id" Text="@a.Po.PoNumber" />
+                                    <DocLink Kind="DocKind.Supplier" Id="a.Po.SupplierId" Text="@a.Supplier" Plain="true" />
+                                    <span class="text-muted">level @a.Level</span>
+                                    <span class="ml-auto font-semibold text-ink">@Money.Format(a.Total, a.Po.Currency)</span>
+                                    <a href="/company/purchase-orders/@a.Po.Id" class="btn btn-secondary btn-sm">Review</a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    @if (c.QuotesToCompare.Count > 0)
+                    {
+                        <p class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Compare quotes</p>
+                        <ul class="mb-5 divide-y divide-line">
+                            @foreach (var r in c.QuotesToCompare)
+                            {
+                                <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                                    <DocLink Kind="DocKind.Rfq" Id="r.Id" Text="@r.Number" />
+                                    <span class="text-ink-2">@r.Vessel</span>
+                                    <StatusChip Value="r.Status" />
+                                    <span class="ml-auto text-muted">due @(r.Due?.ToString("MMM d") ?? "—")</span>
+                                    <a href="/company/rfqs/@r.Id" class="btn btn-secondary btn-sm">Compare</a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                    @if (c.RequisitionsWithoutRfq.Count > 0)
+                    {
+                        <p class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Send out for quotes</p>
+                        <ul class="divide-y divide-line">
+                            @foreach (var r in c.RequisitionsWithoutRfq)
+                            {
+                                <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                                    <DocLink Kind="DocKind.Requisition" Id="r.Id" Text="@r.Number" />
+                                    <DocLink Kind="DocKind.Vessel" Id="r.VesselId" Text="@r.Vessel" Plain="true" />
+                                    <span class="text-muted">@r.Lines lines</span>
+                                    <a href="/company/requisitions/@r.Id" class="btn btn-secondary btn-sm ml-auto">Create RFQ</a>
+                                </li>
+                            }
+                        </ul>
+                    }
+                }
+            </section>
+
+            <section class="card p-6">
+                <h2 class="mb-4 font-display text-lg font-bold text-ink">Recent activity</h2>
+                @if (c.Activity.Count == 0)
+                {
+                    <p class="text-sm text-muted">Activity will show up here as your team works.</p>
+                }
+                else
+                {
+                    <ul class="space-y-3">
+                        @foreach (var e in c.Activity)
+                        {
+                            <li class="flex gap-3 text-sm">
+                                <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full" style="background-image:linear-gradient(135deg,var(--accent-from),var(--accent-to))"></span>
+                                <div class="min-w-0">
+                                    <p class="text-ink-2"><DocLink Kind="e.Kind" Id="e.Id" Text="@e.Number" /> &middot; @e.Text</p>
+                                    <p class="text-xs text-muted">@e.UserName &middot; @e.At.ToString("d MMM HH:mm") UTC</p>
+                                </div>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+        </div>
+
+        <section class="card h-fit p-6">
+            <h2 class="mb-1 font-display text-lg font-bold text-ink">Top suppliers</h2>
+            <p class="mb-5 text-sm text-muted">Approved orders in the last 30 days (@c.SpendCurrency).</p>
+            @if (c.TopSuppliers.Count == 0)
+            {
+                <p class="text-sm text-muted">No approved purchase orders in this period.</p>
+            }
+            else
+            {
+                var max = c.TopSuppliers.Max(s => s.Total);
+                <ul class="space-y-4">
+                    @foreach (var s in c.TopSuppliers)
+                    {
+                        <li>
+                            <div class="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                                <DocLink Kind="DocKind.Supplier" Id="s.SupplierId" Text="@s.Supplier" Plain="true" />
+                                <span class="font-semibold text-ink">@s.Total.ToString("N0")</span>
+                            </div>
+                            <div class="h-2 overflow-hidden rounded-full bg-surface-2">
+                                <div class="h-full rounded-full" style="width:@(max == 0 ? 0 : Math.Max(4, (int)(s.Total / max * 100)))%;background-image:linear-gradient(90deg,var(--accent-from),var(--accent-to))"></div>
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+    </div>
+}
+else if (_supplier is { } s)
+{
+    <PageHeader Eyebrow="@DateTime.UtcNow.ToString("dddd, d MMMM")" Title="@($"Welcome back, {_firstName}")" Subtitle="Your RFQs and orders at a glance." />
+
+    <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard Label="RFQs to quote" Value="@s.RfqsToQuote.ToString("N0")" Hint="Open and not yet quoted" Tone="warning" Href="/supplier/rfqs" />
+        <StatCard Label="Quotes submitted" Value="@s.QuotesSubmitted.ToString("N0")" Tone="info" Href="/supplier/rfqs" />
+        <StatCard Label="Purchase orders won" Value="@s.ApprovedPos.ToString("N0")" Tone="success" Href="/supplier/purchase-orders" />
+        <StatCard Label="Order value" Value="@(s.ApprovedValue == 0 ? "—" : Money.Format(s.ApprovedValue, s.ValueCurrency))" Hint="Approved purchase orders" Href="/supplier/purchase-orders" />
+    </div>
+
+    <div class="grid gap-6 xl:grid-cols-2">
+        <section class="card p-6">
+            <h2 class="mb-4 font-display text-lg font-bold text-ink">RFQs waiting for your quote</h2>
+            @if (s.OpenRfqs.Count == 0)
+            {
+                <p class="text-sm text-muted">Nothing open. New RFQs from your buyers will appear here.</p>
+            }
+            else
+            {
+                <ul class="divide-y divide-line">
+                    @foreach (var r in s.OpenRfqs)
+                    {
+                        <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                            <DocLink Kind="DocKind.Rfq" Id="r.Id" Text="@r.Number" SupplierPortal="true" />
+                            <span class="text-ink-2">@r.Vessel</span>
+                            <span class="ml-auto text-muted">due @(r.Due?.ToString("MMM d") ?? "—")</span>
+                            <a href="/supplier/rfqs/@r.Id" class="btn btn-secondary btn-sm">Quote</a>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+
+        <section class="card p-6">
+            <h2 class="mb-4 font-display text-lg font-bold text-ink">Recent purchase orders</h2>
+            @if (s.RecentPos.Count == 0)
+            {
+                <p class="text-sm text-muted">No purchase orders yet.</p>
+            }
+            else
+            {
+                <ul class="divide-y divide-line">
+                    @foreach (var p in s.RecentPos)
+                    {
+                        <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-sm">
+                            <a href="/supplier/purchase-orders" class="link">@p.Number</a>
+                            <span class="text-muted">@p.Created.ToString("MMM d")</span>
+                            <span class="ml-auto font-semibold text-ink">@Money.Format(p.Total, p.Currency)</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private CompanyDashboard? _company;
+    private SupplierDashboard? _supplier;
+    private string _firstName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthStateTask!).User;
+        _firstName = (user.Identity?.Name ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+
+        var isCompany = user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser");
+        if (isCompany
+            && int.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
+            && int.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId))
+        {
+            _company = await Dashboards.GetCompanyAsync(companyId, userId);
+        }
+        else if (int.TryParse(user.FindFirst("SupplierId")?.Value, out var supplierId))
+        {
+            _supplier = await Dashboards.GetSupplierAsync(supplierId);
+        }
+    }
+}

@@ -1,0 +1,84 @@
+@page "/company/vessels"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+
+<PageTitle>Vessels · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Vessels" Subtitle="@($"{_vessels.Count:N0} vessels — open one to see everything raised for it.")">
+    <Actions>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add Vessel</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="mb-6 max-w-md card p-4">
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Name</label>
+            <input @bind="_name" placeholder="e.g. MV Sea Falcon" class="input" />
+        </div>
+        <div class="mb-4">
+            <label class="mb-1 block text-sm font-medium text-slate-700">IMO Number</label>
+            <input @bind="_imo" placeholder="Optional" class="input" />
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+
+        <button @onclick="Add" class="btn btn-primary">Save</button>
+    </div>
+}
+
+<DataGrid TItem="Vessel" Items="_vessels" ItemName="vessels" ExportName="vessels" EmptyText="No vessels match these filters.">
+    <GridColumn Title="Name" Text="v => v.Name" Context="v">
+        <DocLink Kind="DocKind.Vessel" Id="v.Id" Text="@v.Name" />
+    </GridColumn>
+    <GridColumn Title="IMO Number" Text="v => v.ImoNumber ?? string.Empty" />
+    <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
+</DataGrid>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private List<Vessel> _vessels = new();
+    private bool _showForm;
+    private string _name = "";
+    private string _imo = "";
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _vessels = await Procurement.GetVesselsAsync(_companyId);
+    }
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "Name is required.";
+            return;
+        }
+
+        try
+        {
+            await Procurement.AddVesselAsync(_companyId, _name.Trim(), _imo.Trim());
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            return;
+        }
+
+        _vessels = await Procurement.GetVesselsAsync(_companyId);
+        _name = "";
+        _imo = "";
+        _error = null;
+        _showForm = false;
+    }
+}

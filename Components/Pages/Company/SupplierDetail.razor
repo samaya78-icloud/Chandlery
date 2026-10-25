@@ -1,0 +1,61 @@
+@page "/company/suppliers/{SupplierId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject HubService Hub
+
+<PageTitle>@(_hub?.Supplier.Name ?? "Supplier") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_hub is null)
+{
+    <EmptyState Title="Supplier not found" Message="It may not be linked to your company." />
+}
+else
+{
+    <PageHeader Eyebrow="Supplier" Title="@_hub.Supplier.Name">
+        <Facts>
+            <a href="mailto:@_hub.Supplier.ContactEmail" class="link">@_hub.Supplier.ContactEmail</a>
+        </Facts>
+    </PageHeader>
+
+    <div class="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard Label="RFQs invited" Value="@_hub.Rfqs.Count.ToString("N0")" Hint="@($"{_hub.QuotesSubmitted} quoted")" />
+        <StatCard Label="Quotes submitted" Value="@_hub.QuotesSubmitted.ToString("N0")" Tone="info" />
+        <StatCard Label="Purchase orders" Value="@_hub.Pos.Count.ToString("N0")" Hint="@($"{_hub.Pos.Count(p => p.Status == PoStatus.PendingApproval)} awaiting approval")" Tone="warning" />
+        <StatCard Label="Ordered value (approved)" Value="@SpendText" Hint="@(_hub.Pos.Count(p => p.Status == PoStatus.Approved) + " approved POs")" Tone="success" />
+    </div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Purchase orders</h2>
+    <div class="mb-8"><PoTable Pos="_hub.Pos" ShowSupplier="false" ExportName="@(_hub.Supplier.Name + "-pos")" /></div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">RFQs they were invited to</h2>
+    <div class="mb-8"><RfqTable Rfqs="_hub.Rfqs" ExportName="@(_hub.Supplier.Name + "-rfqs")" /></div>
+}
+
+@code {
+    [Parameter] public int SupplierId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private SupplierHub? _hub;
+    private bool _loaded;
+
+    private string SpendText
+    {
+        get
+        {
+            var groups = _hub!.Pos.Where(p => p.Status == PoStatus.Approved).GroupBy(p => p.Currency).ToList();
+            return groups.Count == 0 ? "—" : string.Join(" · ", groups.Select(g => Money.Format(g.Sum(p => p.Total), g.Key)));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _hub = await Hub.GetSupplierAsync(companyId, SupplierId);
+        _loaded = true;
+    }
+}

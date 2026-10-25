@@ -1,0 +1,59 @@
+@page "/register"
+@layout LoginLayout
+@attribute [AllowAnonymous]
+
+<PageTitle>Register your company · Chandlery</PageTitle>
+
+<div class="w-full max-w-md rise">
+    <div class="mb-8 flex items-center gap-3 lg:hidden">
+        <div class="brand-mark">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6"/></svg>
+        </div>
+        <span class="font-display text-xl font-extrabold text-ink">Chandlery</span>
+    </div>
+
+    <h1 class="font-display text-3xl font-extrabold text-ink">Register your company</h1>
+    <p class="mt-2 text-muted">Creates your company and its first admin account.</p>
+
+    @if (ErrorFlag == "1")
+    {
+        <div class="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">All fields are required.</div>
+    }
+    else if (ErrorFlag == "2")
+    {
+        <div class="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">An account with that email already exists.</div>
+    }
+
+    <form method="post" action="account/register" class="mt-8 flex flex-col gap-5">
+        <AntiforgeryToken />
+
+        <div>
+            <label class="label">Company name</label>
+            <input name="companyName" type="text" required placeholder="e.g. Nimbus Marine Co." class="input" />
+        </div>
+        <div>
+            <label class="label">Your name</label>
+            <input name="adminName" type="text" required class="input" />
+        </div>
+        <div>
+            <label class="label">Email</label>
+            <input name="email" type="email" required class="input" />
+        </div>
+        <div>
+            <label class="label">Password</label>
+            <input name="password" type="password" required minlength="8" class="input" />
+            <p class="mt-1 text-xs text-muted">At least 8 characters.</p>
+        </div>
+
+        <button type="submit" class="btn btn-primary mt-1 py-3">Create company account</button>
+    </form>
+
+    <p class="mt-8 text-sm text-muted">
+        Already registered? <a href="/login" class="link">Sign in</a>
+    </p>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? ErrorFlag { get; set; }
+}

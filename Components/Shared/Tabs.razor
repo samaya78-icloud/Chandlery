@@ -1,0 +1,28 @@
+@* Pill tabs. Items are (key, label, optional count). *@
+<div class="inline-flex flex-wrap gap-1 rounded-xl border border-line bg-surface p-1 text-sm">
+    @foreach (var (key, label, count) in Items)
+    {
+        var k = key;
+        var active = k == Active;
+        <button type="button" @onclick="() => Select(k)"
+                class="@("flex items-center gap-2 rounded-lg px-3.5 py-1.5 font-semibold transition " + (active ? "bg-accent-50 text-accent-700" : "text-muted hover:text-ink"))">
+            @label
+            @if (count is > 0)
+            {
+                <span class="rounded-full bg-surface-2 px-1.5 text-xs font-bold text-muted">@count</span>
+            }
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<(string Key, string Label, int? Count)> Items { get; set; } = Array.Empty<(string, string, int?)>();
+    [Parameter] public string Active { get; set; } = "";
+    [Parameter] public EventCallback<string> ActiveChanged { get; set; }
+
+    private async Task Select(string key)
+    {
+        Active = key;
+        await ActiveChanged.InvokeAsync(key);
+    }
+}

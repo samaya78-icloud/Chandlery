@@ -1,0 +1,30 @@
+@* Compact, linked list of purchase orders for hub pages. *@
+<DataGrid TItem="PoBrief" Items="Pos" ItemName="purchase orders" SyncUrl="false" ExportName="@ExportName" EmptyText="No purchase orders.">
+    <GridColumn Title="PO #" Text="p => p.Number" Context="p">
+        <DocLink Kind="DocKind.PurchaseOrder" Id="p.Id" Text="@p.Number" />
+        @if (p.IsSpot)
+        {
+            <span class="chip chip-plain ml-2" data-tone="accent">Spot</span>
+        }
+    </GridColumn>
+    @if (ShowSupplier)
+    {
+        <GridColumn Title="Supplier" Text="p => p.Supplier" Context="p">
+            <DocLink Kind="DocKind.Supplier" Id="p.SupplierId" Text="@p.Supplier" Plain="true" />
+        </GridColumn>
+    }
+    <GridColumn Title="Created" Date="p => p.Created" />
+    <GridColumn Title="Total" Text="p => Money.Format(p.Total, p.Currency)" Filter="GridFilter.None" SortBy="p => p.Total" CellClass="font-semibold text-ink" />
+    <GridColumn Title="Delivery" Text="p => p.Delivery.ToString()" Filter="GridFilter.Select" Context="p">
+        <StatusChip Value="p.Delivery" />
+    </GridColumn>
+    <GridColumn Title="Status" Text="p => p.Status.ToString()" Filter="GridFilter.Select" Context="p">
+        <StatusChip Value="p.Status" />
+    </GridColumn>
+</DataGrid>
+
+@code {
+    [Parameter, EditorRequired] public List<PoBrief> Pos { get; set; } = new();
+    [Parameter] public bool ShowSupplier { get; set; } = true;
+    [Parameter] public string ExportName { get; set; } = "purchase-orders";
+}

@@ -1,0 +1,95 @@
+@page "/company/suppliers"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+
+<PageTitle>Suppliers · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Suppliers" Subtitle="@($"{_suppliers.Count:N0} suppliers you work with — open one for its RFQs, orders and invoices.")">
+    <Actions>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add Supplier</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="mb-6 max-w-md card p-4">
+        <p class="mb-3 text-xs text-slate-500">
+            If this supplier already has an account on Chandlery (added by another company), you'll just be linked to them.
+            Otherwise a new supplier profile and login are created.
+        </p>
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Contact Email</label>
+            <input @bind="_email" type="email" class="input" />
+        </div>
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Company Name</label>
+            <input @bind="_name" placeholder="Only needed if this is a new supplier" class="input" />
+        </div>
+        <div class="mb-4">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Temporary Password</label>
+            <input @bind="_password" placeholder="Only needed if this is a new supplier" class="input" />
+            <p class="mt-1 text-xs text-slate-400">Share this with the supplier yourself — no email invites yet.</p>
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+        @if (_message is not null)
+        {
+            <div class="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_message</div>
+        }
+
+        <button @onclick="Add" class="btn btn-primary">Save</button>
+    </div>
+}
+
+<DataGrid TItem="Supplier" Items="_suppliers" ItemName="suppliers" ExportName="suppliers" EmptyText="No suppliers match these filters.">
+    <GridColumn Title="Name" Text="s => s.Name" Context="s">
+        <DocLink Kind="DocKind.Supplier" Id="s.Id" Text="@s.Name" />
+    </GridColumn>
+    <GridColumn Title="Contact Email" Text="s => s.ContactEmail" />
+    <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
+</DataGrid>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private List<Supplier> _suppliers = new();
+    private bool _showForm;
+    private string _name = "";
+    private string _email = "";
+    private string _password = "";
+    private string? _error;
+    private string? _message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _suppliers = await Procurement.GetCompanySuppliersAsync(_companyId);
+    }
+
+    private async Task Add()
+    {
+        _error = null;
+        _message = null;
+
+        if (string.IsNullOrWhiteSpace(_email))
+        {
+            _error = "Contact email is required.";
+            return;
+        }
+
+        var (supplier, wasCreated) = await Procurement.AddOrLinkSupplierAsync(
+            _companyId, _name, _email, string.IsNullOrWhiteSpace(_password) ? "Passw0rd!" : _password);
+
+        _suppliers = await Procurement.GetCompanySuppliersAsync(_companyId);
+        _message = wasCreated ? $"Created and linked {supplier.Name}." : $"Linked existing supplier {supplier.Name}.";
+        _name = "";
+        _email = "";
+        _password = "";
+    }
+}

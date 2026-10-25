@@ -1,0 +1,514 @@
+@inject ProcurementService Procurement
+
+@* Line-item entry shared by the RFQ and requisition forms: catalog picker, paste from Excel, copy from a
+   previous document, and a paged/filterable grid of the lines. Items are searched on the server, so large
+   catalogs are fine. The caller owns the Lines list; OnChanged fires after the picker changes it. *@
+
+<div class="card p-6">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">
+            Line items <span class="ml-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium normal-case text-indigo-600">@Lines.Count</span>
+        </h2>
+        <div class="inline-flex rounded-lg border border-slate-200 bg-surface p-1 text-sm">
+            <button type="button" @onclick="() => TogglePanel(Panel.Catalog)" class="@PanelButtonClass(Panel.Catalog)">Add from catalog</button>
+            <button type="button" @onclick="() => TogglePanel(Panel.Paste)" class="@PanelButtonClass(Panel.Paste)">Paste from Excel</button>
+            @if (CopySources.Count > 0)
+            {
+                <button type="button" @onclick="() => TogglePanel(Panel.Copy)" class="@PanelButtonClass(Panel.Copy)">Copy from previous @CopySourceLabel</button>
+            }
+        </div>
+    </div>
+
+    @if (_catalogCount == 0)
+    {
+        <p class="text-sm text-slate-400">No items in your catalog yet &mdash; add some on the Items Catalog page, or <a href="/company/items/import" class="text-indigo-600 underline">import a CSV</a>.</p>
+    }
+
+    @if (_toolMessage is not null)
+    {
+        <div class="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">@_toolMessage</div>
+    }
+
+    @* Catalog picker *@
+    @if (_panel == Panel.Catalog)
+    {
+        var added = AddedIds;
+        <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+                <input @bind="_pickSearch" @bind:after="SearchChanged" placeholder="Search code or name…" class="@(InputClass + " w-60")" />
+                <select @bind="_pickCategoryId" @bind:after="SearchChanged" class="@(InputClass + " w-auto max-w-sm")">
+                    <option value="0">All categories</option>
+                    @foreach (var (category, path, _) in _tree)
+                    {
+                        <option value="@category.Id">@path</option>
+                    }
+                </select>
+                <span class="text-sm text-slate-500">@_pickTotal matching</span>
+                <button type="button" @onclick="AddAllMatching" disabled="@(_pickTotal == 0 || _busy)"
+                        class="ml-auto btn btn-primary btn-sm">
+                    Add all @_pickTotal matching
+                </button>
+            </div>
+
+            <table class="w-full text-left text-sm">
+                <thead>
+                    <tr class="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
+                        <th class="px-2 py-2 font-medium">Code</th>
+                        <th class="px-2 py-2 font-medium">Name</th>
+                        <th class="px-2 py-2 font-medium">Category</th>
+                        <th class="px-2 py-2 font-medium">UOM</th>
+                        <th class="px-2 py-2 font-medium">Qty</th>
+                        <th class="px-2 py-2"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _pickRows)
+                    {
+                        var already = added.Contains(item.Id);
+                        <tr class="border-b border-slate-100 last:border-0">
+                            <td class="px-2 py-2 font-medium text-slate-800">@item.Code</td>
+                            <td class="px-2 py-2 text-slate-600">@item.Name</td>
+                            <td class="px-2 py-2 text-xs text-slate-500">@CategoryName(item.CategoryId)</td>
+                            <td class="px-2 py-2 text-slate-600">@item.UnitOfMeasure</td>
+                            <td class="px-2 py-2">
+                                @if (!already)
+                                {
+                                    <input type="number" min="0" step="any" value="@PickQty(item.Id)" @onchange="e => SetPickQty(item.Id, e.Value)" class="w-20 input input-sm" />
+                                }
+                            </td>
+                            <td class="px-2 py-2 text-right">
+                                @if (already)
+                                {
+                                    <span class="text-xs font-medium text-emerald-600">&#10003; Added</span>
+                                }
+                                else
+                                {
+                                    <button type="button" @onclick="() => AddOne(item)" class="text-xs font-medium text-indigo-600 hover:text-indigo-700">Add</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div class="mt-3 flex items-center justify-between text-xs text-slate-500">
+                <span>@(_pickTotal == 0 ? "No items match" : $"Showing {(_pickPage - 1) * PickPageSize + 1}–{Math.Min(_pickPage * PickPageSize, _pickTotal)} of {_pickTotal}")</span>
+                <div class="flex items-center gap-2">
+                    <button type="button" @onclick="() => GoToPickPage(_pickPage - 1)" disabled="@(_pickPage <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                    <span>Page @_pickPage of @Math.Max(1, (int)Math.Ceiling(_pickTotal / (double)PickPageSize))</span>
+                    <button type="button" @onclick="() => GoToPickPage(_pickPage + 1)" disabled="@(_pickPage * PickPageSize >= _pickTotal)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* Paste from Excel *@
+    @if (_panel == Panel.Paste)
+    {
+        <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p class="mb-2 text-sm text-slate-600">Paste rows copied from Excel: item <b>code</b>, then <b>quantity</b>@(ShowPrice ? ", then unit price" : "") (separated by a tab, comma or space). One item per row.</p>
+            <textarea @bind="_paste" rows="8" placeholder="@(ShowPrice ? "PRV-0001, 25, 3.40 (one item per row)" : "PRV-0001, 25 (one item per row)")" class="@(InputClass + " font-mono text-xs")"></textarea>
+            <button type="button" @onclick="ApplyPaste" disabled="@(string.IsNullOrWhiteSpace(_paste) || _busy)"
+                    class="mt-3 btn btn-primary btn-sm">
+                Add pasted lines
+            </button>
+        </div>
+    }
+
+    @* Copy from a previous document *@
+    @if (_panel == Panel.Copy)
+    {
+        <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p class="mb-2 text-sm text-slate-600">Reuse the item lines of an earlier @CopySourceLabel, for example last month's provisions list.</p>
+            <div class="flex flex-wrap items-center gap-3">
+                <select @bind="_copyId" class="@(InputClass + " w-auto min-w-72")">
+                    <option value="0">Choose @(CopySourceLabel)…</option>
+                    @foreach (var source in CopySources)
+                    {
+                        <option value="@source.Id">@source.Label</option>
+                    }
+                </select>
+                <button type="button" @onclick="CopyFromSource" disabled="@(_copyId == 0 || _busy)"
+                        class="btn btn-primary btn-sm">
+                    Copy lines
+                </button>
+            </div>
+        </div>
+    }
+
+    @* Lines grid *@
+    @if (Lines.Count == 0)
+    {
+        <div class="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
+            No lines yet. Use <b>Add from catalog</b> or <b>Paste from Excel</b>@(CopySources.Count > 0 ? $" or Copy from previous {CopySourceLabel}" : "") above.
+        </div>
+    }
+    else
+    {
+        var visible = FilteredLines;
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+            <input @bind="_lineFilter" @bind:after="() => _linePage = 1" placeholder="Filter these lines…" class="@(InputClass + " w-60")" />
+            <span class="text-sm text-slate-500">@visible.Count of @Lines.Count lines</span>
+            <button type="button" @onclick="ClearLines" class="ml-auto text-xs font-medium text-rose-600 hover:text-rose-700">Remove all lines</button>
+        </div>
+
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                    <th class="px-2 py-2 font-medium">Item</th>
+                    <th class="px-2 py-2 font-medium">Qty</th>
+                    <th class="px-2 py-2 font-medium">UOM</th>
+                    <th class="px-2 py-2 font-medium">Description / notes</th>
+                    @if (ShowDrawingNo)
+                    {
+                        <th class="px-2 py-2 font-medium">Drawing no.</th>
+                    }
+                    @if (ShowPrice)
+                    {
+                        <th class="px-2 py-2 font-medium">Unit price</th>
+                        <th class="px-2 py-2 font-medium">Disc %</th>
+                        <th class="px-2 py-2 text-right font-medium">Line total</th>
+                    }
+                    <th class="px-2 py-2"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in visible.Skip((_linePage - 1) * LinePageSize).Take(LinePageSize))
+                {
+                    var item = _itemsById.GetValueOrDefault(line.ItemId);
+                    <tr class="border-b border-slate-50 last:border-0">
+                        <td class="px-2 py-2">
+                            <p class="font-medium text-slate-800">@item?.Code</p>
+                            <p class="text-xs text-slate-500">@item?.Name</p>
+                        </td>
+                        <td class="px-2 py-2"><input type="number" min="0" step="any" @bind="line.Quantity" @bind:after="NotifyChanged" class="w-24 input input-sm" /></td>
+                        <td class="px-2 py-2 text-slate-600">@item?.UnitOfMeasure</td>
+                        <td class="px-2 py-2"><input @bind="line.Description" class="w-full min-w-40 input input-sm" /></td>
+                        @if (ShowDrawingNo)
+                        {
+                            <td class="px-2 py-2"><input @bind="line.DrawingNo" class="w-28 input input-sm" /></td>
+                        }
+                        @if (ShowPrice)
+                        {
+                            <td class="px-2 py-2"><input type="number" min="0" step="any" @bind="line.UnitPrice" @bind:after="NotifyChanged" class="w-28 input input-sm" /></td>
+                            <td class="px-2 py-2"><input type="number" min="0" max="100" step="any" @bind="line.DiscountPct" @bind:after="NotifyChanged" class="w-20 input input-sm" /></td>
+                            <td class="px-2 py-2 text-right font-medium tabular-nums text-slate-700">@Money.LineNet(line.Quantity, line.UnitPrice, line.DiscountPct).ToString("N2")</td>
+                        }
+                        <td class="px-2 py-2 text-right">
+                            <button type="button" @onclick="() => RemoveLine(line)" class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-rose-500">&#10005;</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-500">
+            <span>Showing @((_linePage - 1) * LinePageSize + 1)–@Math.Min(_linePage * LinePageSize, visible.Count) of @visible.Count</span>
+            <div class="flex items-center gap-2">
+                <button type="button" @onclick="() => _linePage--" disabled="@(_linePage <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                <span>Page @_linePage of @Math.Max(1, (int)Math.Ceiling(visible.Count / (double)LinePageSize))</span>
+                <button type="button" @onclick="() => _linePage++" disabled="@(_linePage * LinePageSize >= visible.Count)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const string InputClass = "input";
+    private const int PickPageSize = 10;
+    private const int LinePageSize = 20;
+
+    private enum Panel { None, Catalog, Paste, Copy }
+
+    [Parameter, EditorRequired] public int CompanyId { get; set; }
+    [Parameter, EditorRequired] public List<NewRfqLine> Lines { get; set; } = new();
+    [Parameter] public bool ShowDrawingNo { get; set; }
+
+    /// <summary>Adds unit price and discount columns (used by the Spot PO form, which prices lines up front).</summary>
+    [Parameter] public bool ShowPrice { get; set; }
+
+    /// <summary>"RFQ" or "requisition": the label for the copy-from-previous tool. Hidden when there are no sources.</summary>
+    [Parameter] public string CopySourceLabel { get; set; } = "document";
+    [Parameter] public IReadOnlyList<LineCopySource> CopySources { get; set; } = Array.Empty<LineCopySource>();
+
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private readonly Dictionary<int, Item> _itemsById = new();
+    private readonly Dictionary<int, decimal> _pickQty = new();
+    private List<(Category Category, string Path, int Depth)> _tree = new();
+    private List<Category> _categories = new();
+    private Dictionary<int, string> _categoryNames = new();
+    private int _catalogCount = 1;
+
+    private Panel _panel = Panel.None;
+    private string _pickSearch = "";
+    private int _pickCategoryId;
+    private int _pickPage = 1;
+    private List<Item> _pickRows = new();
+    private int _pickTotal;
+    private string _paste = "";
+    private int _copyId;
+    private string _lineFilter = "";
+    private int _linePage = 1;
+    private string? _toolMessage;
+    private bool _busy;
+    private bool _loaded;
+
+    private HashSet<int> AddedIds => Lines.Select(l => l.ItemId).ToHashSet();
+
+    private List<NewRfqLine> FilteredLines
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_lineFilter)) return Lines;
+            var term = _lineFilter.Trim();
+            return Lines.Where(l =>
+            {
+                var item = _itemsById.GetValueOrDefault(l.ItemId);
+                return item is not null && (item.Code.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                            || item.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }).ToList();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_loaded)
+        {
+            _loaded = true;
+            _categories = await Procurement.GetCategoriesAsync();
+            _tree = Category.BuildTree(_categories);
+            _categoryNames = _categories.ToDictionary(c => c.Id, c => c.Name);
+            _catalogCount = await Procurement.GetItemCountAsync(CompanyId);
+        }
+        await EnsureLineItemsAsync();
+    }
+
+    /// <summary>Loads the item details for any lines we have not seen yet (code, name and UOM for the grid and its filter).</summary>
+    private async Task EnsureLineItemsAsync()
+    {
+        var missing = Lines.Select(l => l.ItemId).Where(id => !_itemsById.ContainsKey(id)).Distinct().ToList();
+        if (missing.Count == 0) return;
+        foreach (var item in await Procurement.GetItemsByIdsAsync(missing))
+            if (item.CompanyId == CompanyId) _itemsById[item.Id] = item;
+    }
+
+    private string CategoryName(int categoryId) => _categoryNames.GetValueOrDefault(categoryId, "—");
+
+    private string PanelButtonClass(Panel p) =>
+        (_panel == p ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50") + " rounded-md px-3 py-1.5 font-medium";
+
+    private async Task TogglePanel(Panel p)
+    {
+        _panel = _panel == p ? Panel.None : p;
+        _toolMessage = null;
+        if (_panel == Panel.Catalog) await LoadPickAsync();
+    }
+
+    private Task NotifyChanged() => OnChanged.InvokeAsync();
+
+    // ---- Catalog picker ----
+
+    private IReadOnlyCollection<int>? PickCategoryIds => _pickCategoryId == 0 ? null : CategoryIds.Descendants(_categories, _pickCategoryId);
+
+    private async Task LoadPickAsync()
+    {
+        var (rows, total) = await Procurement.SearchItemsAsync(CompanyId, _pickSearch, PickCategoryIds, (_pickPage - 1) * PickPageSize, PickPageSize);
+        _pickRows = rows;
+        _pickTotal = total;
+    }
+
+    private async Task SearchChanged()
+    {
+        _pickPage = 1;
+        await LoadPickAsync();
+    }
+
+    private async Task GoToPickPage(int page)
+    {
+        _pickPage = Math.Max(1, page);
+        await LoadPickAsync();
+    }
+
+    private decimal PickQty(int itemId) => _pickQty.GetValueOrDefault(itemId, 1m);
+
+    private void SetPickQty(int itemId, object? value)
+    {
+        if (decimal.TryParse(value?.ToString(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var qty) && qty > 0)
+            _pickQty[itemId] = qty;
+    }
+
+    private async Task AddOne(Item item)
+    {
+        if (Lines.Any(l => l.ItemId == item.Id)) return;
+        _itemsById[item.Id] = item;
+        Lines.Add(new NewRfqLine { ItemId = item.Id, Quantity = PickQty(item.Id) });
+        _toolMessage = null;
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task AddAllMatching()
+    {
+        _busy = true;
+        try
+        {
+            var matches = await Procurement.FindItemsAsync(CompanyId, _pickSearch, PickCategoryIds);
+            var added = AddedIds;
+            var toAdd = matches.Where(i => !added.Contains(i.Id)).ToList();
+            foreach (var item in toAdd)
+            {
+                _itemsById[item.Id] = item;
+                Lines.Add(new NewRfqLine { ItemId = item.Id, Quantity = PickQty(item.Id) });
+            }
+
+            _toolMessage = toAdd.Count == 0
+                ? "Everything matching was already added."
+                : $"Added {toAdd.Count} lines (quantity 1 unless you set one). Set the quantities in the grid below, or paste them from Excel.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+        await OnChanged.InvokeAsync();
+    }
+
+    // ---- Paste from Excel ----
+
+    private async Task ApplyPaste()
+    {
+        _busy = true;
+        try
+        {
+            var rows = new List<(string Code, string? QtyToken, string? PriceToken)>();
+            foreach (var raw in _paste.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var row = raw.Trim();
+                if (row.Length == 0) continue;
+
+                var tokens = System.Text.RegularExpressions.Regex.Split(row, @"[\t,;]+");
+                if (tokens.Length == 1)
+                    tokens = System.Text.RegularExpressions.Regex.Split(row, @"\s+");
+                rows.Add((tokens[0].Trim(), tokens.Length > 1 ? tokens[1].Trim() : null, ShowPrice && tokens.Length > 2 ? tokens[2].Trim() : null));
+            }
+
+            var byCode = (await Procurement.GetItemsByCodesAsync(CompanyId, rows.Select(r => r.Code)))
+                .GroupBy(i => i.Code, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+            var added = 0;
+            var updated = 0;
+            var unknown = new List<string>();
+            var badQty = new List<string>();
+
+            foreach (var (code, qtyToken, priceToken) in rows)
+            {
+                if (!byCode.TryGetValue(code, out var item))
+                {
+                    unknown.Add(code);
+                    continue;
+                }
+
+                decimal qty = 1;
+                if (!string.IsNullOrWhiteSpace(qtyToken))
+                {
+                    if (!decimal.TryParse(qtyToken, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out qty) || qty <= 0)
+                    {
+                        badQty.Add($"{code} ({qtyToken})");
+                        continue;
+                    }
+                }
+
+                decimal? price = null;
+                if (!string.IsNullOrWhiteSpace(priceToken))
+                {
+                    if (!decimal.TryParse(priceToken, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsedPrice) || parsedPrice < 0)
+                    {
+                        badQty.Add($"{code} (price {priceToken})");
+                        continue;
+                    }
+                    price = parsedPrice;
+                }
+
+                _itemsById[item.Id] = item;
+                var existing = Lines.FirstOrDefault(l => l.ItemId == item.Id);
+                if (existing is null) { Lines.Add(new NewRfqLine { ItemId = item.Id, Quantity = qty, UnitPrice = price ?? 0m }); added++; }
+                else { existing.Quantity = qty; if (price.HasValue) existing.UnitPrice = price.Value; updated++; }
+            }
+
+            var parts = new List<string> { $"Added {added} lines, updated {updated}." };
+            if (unknown.Count > 0)
+                parts.Add($"{unknown.Count} unknown code(s) skipped: {string.Join(", ", unknown.Distinct().Take(10))}{(unknown.Distinct().Count() > 10 ? "…" : "")}.");
+            if (badQty.Count > 0)
+                parts.Add($"{badQty.Count} row(s) with an invalid quantity skipped: {string.Join(", ", badQty.Take(10))}{(badQty.Count > 10 ? "…" : "")}.");
+            _toolMessage = string.Join(" ", parts);
+
+            if (unknown.Count == 0 && badQty.Count == 0)
+                _paste = "";
+        }
+        finally
+        {
+            _busy = false;
+        }
+        await OnChanged.InvokeAsync();
+    }
+
+    // ---- Copy from a previous document ----
+
+    private async Task CopyFromSource()
+    {
+        var source = CopySources.FirstOrDefault(s => s.Id == _copyId);
+        if (source is null) return;
+
+        _busy = true;
+        try
+        {
+            var known = (await Procurement.GetItemsByIdsAsync(source.Lines.Select(l => l.ItemId)))
+                .Where(i => i.CompanyId == CompanyId).ToDictionary(i => i.Id);
+
+            var added = AddedIds;
+            var copied = 0;
+            foreach (var line in source.Lines)
+            {
+                if (!known.TryGetValue(line.ItemId, out var item) || !added.Add(line.ItemId)) continue;
+                _itemsById[item.Id] = item;
+                Lines.Add(new NewRfqLine
+                {
+                    ItemId = line.ItemId,
+                    Quantity = line.Quantity,
+                    UnitPrice = line.UnitPrice,
+                    DiscountPct = line.DiscountPct,
+                    Description = line.Description ?? "",
+                    DrawingNo = line.DrawingNo ?? ""
+                });
+                copied++;
+            }
+
+            var skipped = source.Lines.Count - copied;
+            _toolMessage = $"Copied {copied} lines from {source.Label.Split('·')[0].Trim()}" + (skipped > 0 ? $" ({skipped} already added or no longer in your catalog)." : ".");
+        }
+        finally
+        {
+            _busy = false;
+        }
+        await OnChanged.InvokeAsync();
+    }
+
+    // ---- Lines ----
+
+    private async Task RemoveLine(NewRfqLine line)
+    {
+        Lines.Remove(line);
+        var pages = Math.Max(1, (int)Math.Ceiling(FilteredLines.Count / (double)LinePageSize));
+        if (_linePage > pages) _linePage = pages;
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task ClearLines()
+    {
+        Lines.Clear();
+        _linePage = 1;
+        _lineFilter = "";
+        _toolMessage = null;
+        await OnChanged.InvokeAsync();
+    }
+}

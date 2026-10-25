@@ -1,0 +1,492 @@
+@typeparam TItem
+@attribute [CascadingTypeParameter(nameof(TItem))]
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@* Common table: sortable headers, per-column filters, status chips, density, column visibility, CSV export,
+   and filter/sort/page kept in the URL so a view survives Back and can be shared.
+   Client-side mode: pass Items.  Server-side mode: pass ItemsProvider (one filtered, sorted page at a time). *@
+<CascadingValue Value="this" IsFixed="true">@ChildContent</CascadingValue>
+
+@{
+    List<TItem> rows;
+    int total;
+    if (IsServer)
+    {
+        rows = _rows;
+        total = _total;
+    }
+    else
+    {
+        var matched = Items.Where(i => _columns.All(c => c.Matches(i))).ToList();
+        matched = SortClient(matched);
+        total = matched.Count;
+        rows = PageRows(matched);
+    }
+    var paged = EffectivePageSize > 0;
+    var visible = _columns.Where(c => !_hidden.Contains(c)).ToList();
+    var chipColumns = _columns.Where(c => c.IsChipFilter).ToList();
+    var inlineFilterColumns = visible.Where(c => c.EffectiveFilter != GridFilter.None && !c.IsChipFilter).ToList();
+    var anyFilter = _columns.Any(c => c.IsFiltered);
+    var cellPad = _compact ? "px-4 py-1.5" : "px-4 py-3";
+}
+
+<div class="card overflow-hidden">
+    @* Toolbar *@
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-3 print:hidden">
+        @foreach (var chipColumn in chipColumns)
+        {
+            var current = chipColumn.FilterSelect;
+            <div class="flex flex-wrap items-center gap-1.5">
+                <span class="mr-1 text-[11px] font-bold uppercase tracking-wider text-muted">@chipColumn.Title</span>
+                <button type="button" @onclick="() => SetSelect(chipColumn, string.Empty)" class="@ChipClass(current == "")">All</button>
+                @foreach (var option in OptionsFor(chipColumn))
+                {
+                    var o = option;
+                    <button type="button" @onclick="() => SetSelect(chipColumn, o)" class="@ChipClass(current == o)">@Humanize(o)</button>
+                }
+            </div>
+        }
+
+        <div class="ml-auto flex flex-wrap items-center gap-2 text-sm">
+            <span class="text-muted">
+                @(total == 0 ? "No results" : $"{total:N0} {(ItemName == "" ? "results" : ItemName)}")@(IsServer || !anyFilter ? "" : $" of {Items.Count:N0}")
+            </span>
+            @if (anyFilter)
+            {
+                <button type="button" @onclick="ClearFilters" class="btn btn-ghost btn-sm text-accent-600">Clear filters</button>
+            }
+            <details class="menu">
+                <summary class="btn btn-secondary btn-sm" title="Show or hide columns">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></svg>
+                    <span class="hidden sm:inline">Columns</span>
+                </summary>
+                <div class="menu-panel" style="min-width:13rem">
+                    @foreach (var column in _columns.Where(c => c.IsDataColumn))
+                    {
+                        var col = column;
+                        <label class="menu-item cursor-pointer">
+                            <input type="checkbox" checked="@(!_hidden.Contains(col))" @onchange="e => ToggleColumn(col, (bool)e.Value!)" />
+                            @col.Title
+                        </label>
+                    }
+                </div>
+            </details>
+            <button type="button" @onclick="() => _compact = !_compact" class="btn btn-secondary btn-sm" title="Switch between comfortable and compact rows">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                <span class="hidden sm:inline">@(_compact ? "Comfortable" : "Compact")</span>
+            </button>
+            <button type="button" @onclick="ExportCsv" disabled="@(total == 0)" class="btn btn-secondary btn-sm" title="Download the filtered list as CSV">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                <span class="hidden sm:inline">Export</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="text-xs uppercase tracking-wide text-muted">
+                    @foreach (var column in visible)
+                    {
+                        var col = column;
+                        <th class="px-4 pb-1 pt-3 font-semibold">
+                            @if (col.IsSortable)
+                            {
+                                <button type="button" @onclick="() => SortBy(col)" class="@("group inline-flex items-center gap-1 uppercase tracking-wide transition hover:text-ink " + (_sortKey == col.EffectiveKey ? "text-accent-600" : ""))" title="Sort by @col.Title">
+                                    @col.Title
+                                    <span class="@("text-[10px] leading-none " + (_sortKey == col.EffectiveKey ? "" : "opacity-0 group-hover:opacity-60"))">@(_sortKey == col.EffectiveKey ? (_sortDesc ? "▼" : "▲") : "▲")</span>
+                                </button>
+                            }
+                            else
+                            {
+                                @col.Title
+                            }
+                        </th>
+                    }
+                </tr>
+                @if (inlineFilterColumns.Count > 0)
+                {
+                    <tr class="border-b border-line align-top">
+                        @foreach (var column in visible)
+                        {
+                            var c = column;
+                            <th class="px-4 pb-3 font-normal">
+                                @if (!c.IsChipFilter)
+                                {
+                                    @switch (c.EffectiveFilter)
+                                    {
+                                        case GridFilter.Text:
+                                            <input @bind="c.FilterText" @bind:event="oninput" @bind:after="() => FilterChanged(GridFilter.Text)"
+                                                   placeholder="Filter…" aria-label="Filter @c.Title" class="@FilterBox" />
+                                            break;
+                                        case GridFilter.Select:
+                                            <select @bind="c.FilterSelect" @bind:after="() => FilterChanged(GridFilter.Select)" aria-label="Filter @c.Title" class="@FilterBox">
+                                                <option value="">All</option>
+                                                @foreach (var v in OptionsFor(c))
+                                                {
+                                                    <option value="@v">@Humanize(v)</option>
+                                                }
+                                            </select>
+                                            break;
+                                        case GridFilter.DateRange:
+                                            <div class="flex flex-col gap-1">
+                                                <input type="date" @bind="c.From" @bind:after="() => FilterChanged(GridFilter.DateRange)" title="@c.Title on or after" aria-label="@c.Title from" class="@FilterBox" />
+                                                <input type="date" @bind="c.To" @bind:after="() => FilterChanged(GridFilter.DateRange)" title="@c.Title on or before" aria-label="@c.Title to" class="@FilterBox" />
+                                            </div>
+                                            break;
+                                    }
+                                }
+                            </th>
+                        }
+                    </tr>
+                }
+                else
+                {
+                    <tr class="border-b border-line"><th colspan="@Math.Max(visible.Count, 1)" class="h-2 p-0"></th></tr>
+                }
+            </thead>
+            <tbody class="@(_loading ? "opacity-60 transition" : "transition")">
+                @foreach (var item in rows)
+                {
+                    var row = item;
+                    <tr class="@(OnRowClick.HasDelegate ? "cursor-pointer " : "")border-b border-line/60 last:border-0 hover:bg-surface-2"
+                        @onclick="() => OnRowClick.InvokeAsync(row)">
+                        @foreach (var column in visible)
+                        {
+                            <td class="@cellPad @column.CellClass">
+                                @if (column.ChildContent is not null)
+                                {
+                                    @column.ChildContent(row)
+                                }
+                                else
+                                {
+                                    @column.CellText(row)
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+                @if (rows.Count == 0)
+                {
+                    <tr>
+                        <td colspan="@Math.Max(visible.Count, 1)" class="px-4 py-14 text-center">
+                            @if (_loading)
+                            {
+                                <span class="text-sm text-muted">Loading…</span>
+                            }
+                            else
+                            {
+                                <p class="font-display text-base font-bold text-ink">Nothing here</p>
+                                <p class="mt-1 text-sm text-muted">@EmptyText</p>
+                                @if (anyFilter)
+                                {
+                                    <button type="button" @onclick="ClearFilters" class="btn btn-secondary btn-sm mt-3">Clear filters</button>
+                                }
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (paged)
+    {
+        var totalPages = TotalPages(total);
+        <div class="flex items-center justify-between border-t border-line px-4 py-3 text-xs text-muted print:hidden">
+            <span>@(total == 0 ? "No rows" : $"Showing {(_page - 1) * EffectivePageSize + 1}–{Math.Min(_page * EffectivePageSize, total)} of {total:N0}")</span>
+            <div class="flex items-center gap-2">
+                <button @onclick="() => GoToPage(_page - 1)" disabled="@(_page <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                <span>Page @_page of @totalPages</span>
+                <button @onclick="() => GoToPage(_page + 1)" disabled="@(_page >= totalPages)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const string FilterBox = "input input-sm text-xs font-normal normal-case tracking-normal";
+    private const int DefaultServerPageSize = 25;
+    private static readonly TimeSpan TextDebounce = TimeSpan.FromMilliseconds(300);
+
+    private readonly List<GridColumn<TItem>> _columns = new();
+    private readonly HashSet<GridColumn<TItem>> _hidden = new();
+
+    /// <summary>Client-side mode: the full list; the grid filters it in memory.</summary>
+    [Parameter] public IReadOnlyList<TItem> Items { get; set; } = Array.Empty<TItem>();
+
+    /// <summary>Server-side mode: returns one filtered, sorted page. Use for lists that can grow large.</summary>
+    [Parameter] public Func<GridRequest, Task<GridResult<TItem>>>? ItemsProvider { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public EventCallback<TItem> OnRowClick { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "Nothing matches these filters.";
+
+    /// <summary>Plural noun for the result count, e.g. "RFQs".</summary>
+    [Parameter] public string ItemName { get; set; } = "";
+
+    /// <summary>Rows per page. Client-side: 0 (default) shows everything on one page. Server-side: 0 means 25.</summary>
+    [Parameter] public int PageSize { get; set; }
+
+    /// <summary>Keep filters, sort and page in the browser address so the view survives Back and can be shared.</summary>
+    [Parameter] public bool SyncUrl { get; set; } = true;
+
+    /// <summary>File name (without extension) for CSV export.</summary>
+    [Parameter] public string ExportName { get; set; } = "export";
+
+    private bool IsServer => ItemsProvider is not null;
+    private int EffectivePageSize => PageSize > 0 ? PageSize : (IsServer ? DefaultServerPageSize : 0);
+
+    private int _page = 1;
+    private string _lastFilterKey = "";
+    private string? _sortKey;
+    private bool _sortDesc;
+    private bool _compact;
+    private readonly Dictionary<string, string> _initialFilters = new();
+
+    // Server-side state.
+    private List<TItem> _rows = new();
+    private int _total;
+    private bool _loading;
+    private int _loadVersion;
+    private CancellationTokenSource? _debounce;
+
+    private int TotalPages(int count) => EffectivePageSize <= 0 ? 1 : Math.Max(1, (int)Math.Ceiling(count / (double)EffectivePageSize));
+
+    private IEnumerable<string> OptionsFor(GridColumn<TItem> c) =>
+        c.OptionList ?? (IsServer ? Enumerable.Empty<string>() : Items.Select(c.CellText).Distinct().OrderBy(v => v));
+
+    private static string Humanize(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text, "(?<=[a-z])(?=[A-Z])", " ")
+            .Replace("Rfq", "RFQ").Replace("Po ", "PO ");
+
+    private static string ChipClass(bool active) =>
+        "rounded-full border px-3 py-1 text-xs font-semibold transition " +
+        (active ? "border-accent-200 bg-accent-50 text-accent-700" : "border-line text-muted hover:bg-surface-2 hover:text-ink");
+
+    protected override async Task OnInitializedAsync()
+    {
+        ReadUrl();
+        // With filters in the address the first query has to wait until the columns exist (see OnAfterRenderAsync).
+        if (IsServer && _initialFilters.Count == 0) await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && IsServer && _initialFilters.Count > 0)
+        {
+            _initialFilters.Clear(); // columns have applied them by now
+            await LoadAsync();
+        }
+    }
+
+    private void ReadUrl()
+    {
+        if (!SyncUrl) return;
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
+        foreach (var (key, value) in query)
+        {
+            if (key.StartsWith("f.")) _initialFilters[key[2..]] = value.ToString();
+            else if (key == "s") _sortKey = value.ToString();
+            else if (key == "d") _sortDesc = value.ToString() == "1";
+            else if (key == "p" && int.TryParse(value, out var p) && p > 0) _page = p;
+        }
+    }
+
+    /// <summary>Client-side paging: the current page of the matched rows, back to page 1 whenever a filter changes.</summary>
+    private List<TItem> PageRows(List<TItem> matched)
+    {
+        if (EffectivePageSize <= 0) return matched;
+
+        var key = string.Join("|", _columns.Select(c => c.FilterKey)) + "|" + _sortKey + _sortDesc;
+        if (key != _lastFilterKey)
+        {
+            if (_lastFilterKey != "") _page = 1;
+            _lastFilterKey = key;
+        }
+        _page = Math.Clamp(_page, 1, TotalPages(matched.Count));
+        return matched.Skip((_page - 1) * EffectivePageSize).Take(EffectivePageSize).ToList();
+    }
+
+    private List<TItem> SortClient(List<TItem> list)
+    {
+        var column = _sortKey is null ? null : _columns.FirstOrDefault(c => c.EffectiveKey == _sortKey);
+        if (column is null) return list;
+
+        var comparer = Comparer<IComparable?>.Create((a, b) =>
+        {
+            if (a is null && b is null) return 0;
+            if (a is null) return -1;
+            if (b is null) return 1;
+            if (a.GetType() != b.GetType()) return string.Compare(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase);
+            return a.CompareTo(b);
+        });
+        return (_sortDesc ? list.OrderByDescending(column.SortValue, comparer) : list.OrderBy(column.SortValue, comparer)).ToList();
+    }
+
+    internal void AddColumn(GridColumn<TItem> column)
+    {
+        _columns.Add(column);
+        if (_initialFilters.TryGetValue(column.EffectiveKey, out var raw)) column.ApplyUrlValue(raw);
+        StateHasChanged();
+    }
+
+    internal void Refresh() => StateHasChanged();
+
+    /// <summary>Server-side mode: re-run the query (e.g. after the page added a row or changed a pre-filter) and refresh drop-down options.</summary>
+    public async Task ReloadAsync(bool resetPage = false)
+    {
+        if (!IsServer) return;
+        if (resetPage) _page = 1;
+        foreach (var c in _columns) await c.LoadOptionsAsync();
+        await LoadAsync();
+    }
+
+    private GridRequest BuildRequest(int? pageOverride = null, int? sizeOverride = null) => new()
+    {
+        Page = pageOverride ?? _page,
+        PageSize = sizeOverride ?? EffectivePageSize,
+        SortKey = _sortKey,
+        SortDesc = _sortDesc,
+        Filters = _columns.Where(c => c.IsFiltered)
+            .ToDictionary(c => c.EffectiveKey, c => new GridFilterValue(c.FilterText.Trim(), c.FilterSelect, c.From, c.To))
+    };
+
+    private async Task LoadAsync()
+    {
+        var version = ++_loadVersion;
+        _loading = true;
+        StateHasChanged();
+
+        var result = await ItemsProvider!(BuildRequest());
+        if (version != _loadVersion) return; // a newer request superseded this one
+
+        var lastPage = TotalPages(result.Total);
+        if (_page > lastPage)
+        {
+            // The page we asked for no longer exists (rows were removed or filters narrowed) — go to the last one.
+            _page = lastPage;
+            await LoadAsync();
+            return;
+        }
+
+        _rows = result.Rows;
+        _total = result.Total;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task StateChangedAsync(bool reload)
+    {
+        if (reload && IsServer) await LoadAsync();
+        await SyncUrlAsync();
+    }
+
+    private async Task SyncUrlAsync()
+    {
+        if (!SyncUrl) return;
+        var parts = new List<string>();
+        foreach (var c in _columns)
+        {
+            var value = c.UrlValue;
+            if (value is not null) parts.Add($"f.{Uri.EscapeDataString(c.EffectiveKey)}={Uri.EscapeDataString(value)}");
+        }
+        if (_sortKey is not null)
+        {
+            parts.Add($"s={Uri.EscapeDataString(_sortKey)}");
+            if (_sortDesc) parts.Add("d=1");
+        }
+        if (_page > 1) parts.Add($"p={_page}");
+
+        try { await JS.InvokeVoidAsync("chandlery.replaceQuery", string.Join("&", parts)); }
+        catch (InvalidOperationException) { /* prerendering */ }
+        catch (JSDisconnectedException) { }
+    }
+
+    private async Task FilterChanged(GridFilter kind)
+    {
+        _page = 1;
+        if (!IsServer)
+        {
+            await SyncUrlAsync();
+            return;
+        }
+
+        _debounce?.Cancel();
+        _debounce = new CancellationTokenSource();
+        var token = _debounce.Token;
+
+        if (kind == GridFilter.Text)
+        {
+            // Wait for a pause in typing before hitting the database.
+            try { await Task.Delay(TextDebounce, token); }
+            catch (TaskCanceledException) { return; }
+        }
+        await StateChangedAsync(reload: true);
+    }
+
+    private async Task SetSelect(GridColumn<TItem> column, string value)
+    {
+        column.FilterSelect = value;
+        _page = 1;
+        await StateChangedAsync(reload: true);
+    }
+
+    private async Task SortBy(GridColumn<TItem> column)
+    {
+        // none -> ascending -> descending -> none
+        if (_sortKey != column.EffectiveKey) { _sortKey = column.EffectiveKey; _sortDesc = false; }
+        else if (!_sortDesc) _sortDesc = true;
+        else { _sortKey = null; _sortDesc = false; }
+        _page = 1;
+        await StateChangedAsync(reload: true);
+    }
+
+    private async Task GoToPage(int page)
+    {
+        _page = Math.Max(1, page);
+        await StateChangedAsync(reload: true);
+    }
+
+    private async Task ClearFilters()
+    {
+        foreach (var c in _columns) c.ClearFilter();
+        _page = 1;
+        await StateChangedAsync(reload: true);
+    }
+
+    private void ToggleColumn(GridColumn<TItem> column, bool show)
+    {
+        if (show) _hidden.Remove(column); else _hidden.Add(column);
+    }
+
+    /// <summary>Downloads everything that matches the current filters and sort (not just the current page).</summary>
+    private async Task ExportCsv()
+    {
+        List<TItem> all;
+        if (IsServer)
+        {
+            var result = await ItemsProvider!(BuildRequest(pageOverride: 1, sizeOverride: 5000));
+            all = result.Rows;
+        }
+        else
+        {
+            all = SortClient(Items.Where(i => _columns.All(c => c.Matches(i))).ToList());
+        }
+
+        var columns = _columns.Where(c => c.IsDataColumn && !_hidden.Contains(c)).ToList();
+        var csv = new System.Text.StringBuilder();
+        csv.AppendLine(string.Join(",", columns.Select(c => Csv.Cell(c.Title))));
+        foreach (var row in all)
+            csv.AppendLine(string.Join(",", columns.Select(c => Csv.Cell(c.CellText(row)))));
+
+        await JS.InvokeVoidAsync("chandlery.download", $"{ExportName}-{DateTime.UtcNow:yyyyMMdd}.csv", csv.ToString());
+    }
+
+    public void Dispose()
+    {
+        _debounce?.Cancel();
+    }
+}

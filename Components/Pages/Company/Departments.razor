@@ -1,0 +1,77 @@
+@page "/company/departments"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+
+<PageTitle>Departments · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Departments" Subtitle="@($"{_departments.Count:N0} departments — used on requisitions and by the approval matrix.")">
+    <Actions>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add Department</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="mb-6 max-w-md card p-4">
+        <div class="mb-4">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Name</label>
+            <input @bind="_name" placeholder="e.g. Engine" class="input" />
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+
+        <button @onclick="Add" class="btn btn-primary">Save</button>
+    </div>
+}
+
+<DataGrid TItem="Department" Items="_departments" ItemName="departments" ExportName="departments" EmptyText="No departments yet.">
+    <GridColumn Title="Name" Text="d => d.Name" Context="d">
+        <DocLink Kind="DocKind.Department" Id="d.Id" Text="@d.Name" />
+    </GridColumn>
+    <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
+</DataGrid>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private List<Department> _departments = new();
+    private bool _showForm;
+    private string _name = "";
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _departments = await Procurement.GetDepartmentsAsync(_companyId);
+    }
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "Name is required.";
+            return;
+        }
+
+        try
+        {
+            await Procurement.AddDepartmentAsync(_companyId, _name.Trim());
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            return;
+        }
+
+        _departments = await Procurement.GetDepartmentsAsync(_companyId);
+        _name = "";
+        _error = null;
+        _showForm = false;
+    }
+}

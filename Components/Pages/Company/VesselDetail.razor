@@ -1,0 +1,55 @@
+@page "/company/vessels/{VesselId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject HubService Hub
+
+<PageTitle>@(_hub?.Vessel.Name ?? "Vessel") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_hub is null)
+{
+    <EmptyState Title="Vessel not found" />
+}
+else
+{
+    <PageHeader Eyebrow="Vessel" Title="@_hub.Vessel.Name" Subtitle="@(string.IsNullOrWhiteSpace(_hub.Vessel.ImoNumber) ? "No IMO number recorded" : "IMO " + _hub.Vessel.ImoNumber)">
+        <Actions>
+            <a href="/company/requisitions/new" class="btn btn-primary">+ New Requisition</a>
+        </Actions>
+    </PageHeader>
+
+    <div class="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard Label="Requisitions" Value="@_hub.Requisitions.Count.ToString("N0")" Hint="@($"{_hub.Requisitions.Count(r => r.Status == RequisitionStatus.Open)} open")" />
+        <StatCard Label="RFQs" Value="@_hub.Rfqs.Count.ToString("N0")" Tone="info" />
+        <StatCard Label="Purchase orders" Value="@_hub.Pos.Count.ToString("N0")" Tone="warning" />
+        <StatCard Label="Awaiting delivery" Value="@_hub.Pos.Count(p => p.Status == PoStatus.Approved && p.Delivery != DeliveryStatus.Delivered).ToString("N0")" Tone="success" />
+    </div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Requisitions</h2>
+    <div class="mb-8"><ReqnTable Requisitions="_hub.Requisitions" ShowVessel="false" ExportName="@(_hub.Vessel.Name + "-requisitions")" /></div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">RFQs</h2>
+    <div class="mb-8"><RfqTable Rfqs="_hub.Rfqs" ExportName="@(_hub.Vessel.Name + "-rfqs")" /></div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Purchase orders</h2>
+    <div class="mb-8"><PoTable Pos="_hub.Pos" ExportName="@(_hub.Vessel.Name + "-pos")" /></div>
+}
+
+@code {
+    [Parameter] public int VesselId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private VesselHub? _hub;
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _hub = await Hub.GetVesselAsync(companyId, VesselId);
+        _loaded = true;
+    }
+}

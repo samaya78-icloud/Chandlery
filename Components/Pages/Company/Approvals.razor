@@ -1,0 +1,53 @@
+@page "/company/approvals"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ApprovalService ApprovalSvc
+@inject NavigationManager Navigation
+
+<PageTitle>My Approvals · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Work" Title="My Approvals" Subtitle="Purchase orders waiting for your approval. Open one to approve or reject it." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_rows.Count == 0)
+{
+    <EmptyState Title="You're all caught up" Message="Nothing is waiting for your approval right now." />
+}
+else
+{
+    <DataGrid TItem="PendingApprovalRow" Items="_rows" ItemName="purchase orders" EmptyText="No purchase orders match these filters." OnRowClick="Open">
+        <GridColumn Title="PO #" Text="r => r.Po.PoNumber" Context="row">
+            <DocLink Kind="DocKind.PurchaseOrder" Id="row.Po.Id" Text="@row.Po.PoNumber" />
+        </GridColumn>
+        <GridColumn Title="Supplier" Text="r => r.Supplier" Context="row">
+            <DocLink Kind="DocKind.Supplier" Id="row.Po.SupplierId" Text="@row.Supplier" Plain="true" />
+        </GridColumn>
+        <GridColumn Title="Department" Text="r => r.Department" />
+        <GridColumn Title="Raised" Date="r => r.Po.CreatedDate" />
+        <GridColumn Title="Your level" Text="r => r.Level.ToString()" Filter="GridFilter.Select" />
+        <GridColumn Title="Total" Text="r => Money.Format(r.Total, r.Po.Currency)" CellClass="font-semibold text-ink" SortBy="r => r.Total" />
+        <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Review &rarr;</span></GridColumn>
+    </DataGrid>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private List<PendingApprovalRow> _rows = new();
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var actor = Actor.From(authState.User);
+        if (actor.UserId is { } userId)
+            _rows = await ApprovalSvc.GetPendingForUserAsync(companyId, userId);
+        _loaded = true;
+    }
+
+    private void Open(PendingApprovalRow row) => Navigation.NavigateTo($"/company/purchase-orders/{row.Po.Id}");
+}

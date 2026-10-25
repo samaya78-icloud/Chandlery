@@ -1,0 +1,58 @@
+<span class="chip" data-tone="@_tone">@_label</span>
+
+@code {
+    /// <summary>Any status enum used in the app (RfqStatus, PoStatus, RequisitionStatus, DeliveryStatus, ApprovalDecision, Urgency, RfqType...).</summary>
+    [Parameter] public object? Value { get; set; }
+
+    /// <summary>Override the text or tone when the default mapping is not what you want.</summary>
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string? Tone { get; set; }
+
+    private string _label = "";
+    private string _tone = "neutral";
+
+    protected override void OnParametersSet()
+    {
+        var (label, tone) = Describe(Value);
+        _label = Label ?? label;
+        _tone = Tone ?? tone;
+    }
+
+    /// <summary>The single place that decides how every status looks.</summary>
+    public static (string Label, string Tone) Describe(object? value) => value switch
+    {
+        RfqStatus.Draft => ("Draft", "neutral"),
+        RfqStatus.Sent => ("Sent", "warning"),
+        RfqStatus.QuotesReceived => ("Quotes received", "info"),
+        RfqStatus.Awarded => ("Awarded", "success"),
+
+        RequisitionStatus.Open => ("Open", "neutral"),
+        RequisitionStatus.RfqPosted => ("RFQ posted", "warning"),
+        RequisitionStatus.Ordered => ("Ordered", "success"),
+        RequisitionStatus.Cancelled => ("Cancelled", "danger"),
+
+        PoStatus.PendingApproval => ("Pending approval", "warning"),
+        PoStatus.Approved => ("Approved", "success"),
+        PoStatus.Rejected => ("Rejected", "danger"),
+
+        DeliveryStatus.Pending => ("Not delivered", "neutral"),
+        DeliveryStatus.Partial => ("Partly delivered", "warning"),
+        DeliveryStatus.Delivered => ("Delivered", "success"),
+
+        ApprovalDecision.Pending => ("Waiting", "neutral"),
+        ApprovalDecision.Approved => ("Approved", "success"),
+        ApprovalDecision.Rejected => ("Rejected", "danger"),
+
+        Urgency.Normal => ("Normal", "neutral"),
+        Urgency.Urgent => ("Urgent", "danger"),
+
+        RfqType.Stores => ("Stores", "accent"),
+        RfqType.Spares => ("Spares", "info"),
+
+        null => ("", "neutral"),
+        _ => (Humanize(value.ToString() ?? ""), "neutral")
+    };
+
+    private static string Humanize(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text, "(?<=[a-z])(?=[A-Z])", " ");
+}

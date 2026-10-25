@@ -1,0 +1,488 @@
+@page "/company/purchase-orders/{PoId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject ApprovalService Approvals
+@inject DeliveryService Deliveries
+@inject ToastService Toasts
+
+<PageTitle>@(_po?.PoNumber ?? "Purchase Order") · Chandlery</PageTitle>
+
+@if (_po is null)
+{
+    <p class="text-sm text-slate-500">Purchase order not found.</p>
+}
+else
+{
+    <PageHeader Eyebrow="Purchase order" Title="@_po.PoNumber">
+        <Badges>
+            <StatusChip Value="_po.Status" />
+            <StatusChip Value="_po.DeliveryStatus" />
+            @if (_po.IsSpot) { <StatusChip Label="Spot PO" Tone="accent" /> }
+            @if (_po.IsDummy) { <StatusChip Label="Dummy" Tone="neutral" /> }
+        </Badges>
+        <Facts>
+            @if (_supplier is not null)
+            {
+                <DocLink Kind="DocKind.Supplier" Id="_supplier.Id" Text="@_supplier.Name" />
+            }
+            @if (_rfq is not null)
+            {
+                <span>&middot; RFQ</span>
+                <DocLink Kind="DocKind.Rfq" Id="_rfq.Id" Text="@_rfq.RfqNumber" />
+            }
+            <span>&middot; Raised @_po.CreatedDate.ToString("MMM d, yyyy")</span>
+        </Facts>
+        <Actions>
+            <a href="/company/purchase-orders/@_po.Id/document" class="btn btn-primary btn-sm">PO document</a>
+        </Actions>
+    </PageHeader>
+
+    <RelatedDocuments CompanyId="_companyId" Kind="DocKind.PurchaseOrder" Id="_po.Id" Version="_auditVersion" />
+
+    @if (_po.IsSpot && (_vesselName != "" || _portName != "" || _po.SupplierRef != "" || _po.Remarks != ""))
+    {
+        <div class="mb-6 card grid grid-cols-1 gap-4 p-5 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            @if (_vesselName != "") { <div><p class="label">Vessel</p><DocLink Kind="DocKind.Vessel" Id="_po.VesselId!.Value" Text="@_vesselName" /></div> }
+            @if (_portName != "") { <div><p class="label">Order port</p><p class="text-ink">@_portName</p></div> }
+            @if (_po.SupplierRef != "") { <div><p class="label">Supplier reference</p><p class="text-ink">@_po.SupplierRef</p></div> }
+            @if (_po.Remarks != "") { <div class="sm:col-span-2"><p class="label">Remarks</p><p class="text-ink">@_po.Remarks</p></div> }
+        </div>
+    }
+
+    <div class="card">
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                    <th class="px-4 py-3 font-medium">Item</th>
+                    <th class="px-4 py-3 font-medium">Qty</th>
+                    @if (ShowDelivery)
+                    {
+                        <th class="px-4 py-3 font-medium">Delivered</th>
+                        <th class="px-4 py-3 font-medium">Remaining</th>
+                    }
+                    <th class="px-4 py-3 font-medium">Unit Price</th>
+                    <th class="px-4 py-3 font-medium">Line Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in _po.Lines)
+                {
+                    var item = _itemsById.GetValueOrDefault(line.ItemId);
+                    <tr class="border-b border-slate-50 last:border-0">
+                        <td class="px-4 py-3">
+                            <p class="font-medium text-ink">@item?.Name</p>
+                            @if (item is not null)
+                            {
+                                <DocLink Kind="DocKind.Item" Id="item.Id" Text="@item.Code" Plain="true" />
+                            }
+                        </td>
+                        <td class="px-4 py-3 text-slate-600">@Money.Qty(line.Quantity) @item?.UnitOfMeasure</td>
+                        @if (ShowDelivery)
+                        {
+                            var progress = _progress.GetValueOrDefault(line.ItemId);
+                            <td class="px-4 py-3 text-slate-600">@Money.Qty(progress?.Delivered ?? 0)</td>
+                            <td class="px-4 py-3 @((progress?.Remaining ?? 0) > 0 ? "text-amber-600" : "text-emerald-600")">@Money.Qty(progress?.Remaining ?? 0)</td>
+                        }
+                        <td class="px-4 py-3 text-slate-600">@Money.Format(line.UnitPrice, _po.Currency)@(line.DiscountPct > 0 ? $" (less {line.DiscountPct:0.##}%)" : "")</td>
+                        <td class="px-4 py-3 font-medium text-slate-800">@Money.Format(Money.LineNet(line.Quantity, line.UnitPrice, line.DiscountPct), _po.Currency)</td>
+                    </tr>
+                }
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="@FooterSpan" class="px-4 py-2 text-right text-sm text-slate-500">Subtotal</td>
+                    <td class="px-4 py-2 text-slate-700">@Money.Format(_po.Subtotal, _po.Currency)</td>
+                </tr>
+                @if (_po.DiscountPct > 0)
+                {
+                    <tr>
+                        <td colspan="@FooterSpan" class="px-4 py-2 text-right text-sm text-slate-500">Discount @_po.DiscountPct.ToString("0.##")%</td>
+                        <td class="px-4 py-2 text-slate-700">&minus;@Money.Format(Money.HeaderDiscount(_po.Subtotal, _po.DiscountPct), _po.Currency)</td>
+                    </tr>
+                }
+                @if (_po.AdditionalCharges > 0)
+                {
+                    <tr>
+                        <td colspan="@FooterSpan" class="px-4 py-2 text-right text-sm text-slate-500">@(string.IsNullOrWhiteSpace(_po.AdditionalChargeDescription) ? "Additional charges" : _po.AdditionalChargeDescription)</td>
+                        <td class="px-4 py-2 text-slate-700">@Money.Format(_po.AdditionalCharges, _po.Currency)</td>
+                    </tr>
+                }
+                <tr>
+                    <td colspan="@FooterSpan" class="px-4 py-3 text-right text-sm font-medium text-slate-500">Total</td>
+                    <td class="px-4 py-3 text-lg font-bold text-slate-900">@Money.Format(_po.Total, _po.Currency)</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+
+    @* Deliveries *@
+    @if (_po.Status == PoStatus.Approved)
+    {
+        <div class="mt-6 card p-6 print:hidden">
+            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">
+                    Deliveries <span class="ml-1 chip chip-plain" data-tone="accent">@_deliveries.Count</span>
+                </h2>
+                @if (_deliveryStatus != DeliveryStatus.Delivered)
+                {
+                    <button @onclick="ToggleReceive" class="btn btn-primary btn-sm">@(_receiving ? "Cancel" : "+ Record delivery")</button>
+                }
+            </div>
+
+            @if (_receiving)
+            {
+                <div class="mb-5 rounded-xl border border-line bg-surface-2 p-4">
+                    <div class="mb-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <div>
+                            <label class="label">Received on</label>
+                            <input type="date" @bind="_newDelivery.ReceivedDate" class="input" />
+                        </div>
+                        <div>
+                            <label class="label">Place</label>
+                            <input @bind="_newDelivery.Place" placeholder="e.g. Singapore anchorage" class="input" />
+                        </div>
+                        <div>
+                            <label class="label">Remarks</label>
+                            <input @bind="_newDelivery.Remarks" class="input" />
+                        </div>
+                    </div>
+
+                    <div class="mb-2 flex flex-wrap items-center justify-between gap-3">
+                        <p class="text-sm text-muted">Enter what arrived. Lines already fully received are not listed.</p>
+                        <button type="button" @onclick="ReceiveAll" class="link text-sm">Receive all remaining</button>
+                    </div>
+                    <table class="w-full text-left text-sm">
+                        <thead>
+                            <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                                <th class="px-2 py-2 font-medium">Item</th>
+                                <th class="px-2 py-2 font-medium">Remaining</th>
+                                <th class="px-2 py-2 font-medium">Received now</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var p in ReceivableLines.Skip((_receivePage - 1) * ReceivePageSize).Take(ReceivePageSize))
+                            {
+                                var item = _itemsById.GetValueOrDefault(p.ItemId);
+                                var pid = p.ItemId;
+                                <tr class="border-b border-line last:border-0">
+                                    <td class="px-2 py-2">
+                                        <span class="font-medium text-ink">@item?.Name</span>
+                                        <span class="ml-1 text-xs text-muted">@item?.Code</span>
+                                    </td>
+                                    <td class="px-2 py-2 text-muted">@Money.Qty(p.Remaining) @item?.UnitOfMeasure</td>
+                                    <td class="px-2 py-2">
+                                        <input type="number" min="0" max="@Money.Qty(p.Remaining)" step="any" class="input input-sm w-28"
+                                               value="@(_receive.TryGetValue(pid, out var q) ? Money.Qty(q) : "")"
+                                               @onchange="e => SetReceive(pid, e.Value)" />
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div class="mt-3 flex items-center justify-between text-xs text-muted">
+                        <span>@ReceivableLines.Count line(s) still to receive &middot; @_receive.Count(r => r.Value > 0) entered</span>
+                        <div class="flex items-center gap-2">
+                            <button type="button" @onclick="() => _receivePage--" disabled="@(_receivePage <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                            <span>Page @_receivePage of @Math.Max(1, (int)Math.Ceiling(ReceivableLines.Count / (double)ReceivePageSize))</span>
+                            <button type="button" @onclick="() => _receivePage++" disabled="@(_receivePage * ReceivePageSize >= ReceivableLines.Count)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+                        </div>
+                    </div>
+
+                    @if (_deliveryError is not null)
+                    {
+                        <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_deliveryError</div>
+                    }
+                    <div class="mt-4">
+                        <button @onclick="SaveDelivery" disabled="@_busy" class="btn btn-primary">Save delivery</button>
+                    </div>
+                </div>
+            }
+
+            @if (_deliveries.Count == 0)
+            {
+                <p class="text-sm text-muted">Nothing received yet. Record a delivery when the goods arrive on board or at the warehouse.</p>
+            }
+            else
+            {
+                <div class="space-y-2">
+                    @foreach (var d in _deliveries)
+                    {
+                        var delivery = d;
+                        <details class="rounded-xl border border-line bg-surface">
+                            <summary class="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
+                                <span class="font-semibold text-ink">@d.DoNumber</span>
+                                <span class="text-muted">@d.ReceivedDate.ToString("dd MMM yyyy")</span>
+                                @if (d.Place != "") { <span class="text-muted">@d.Place</span> }
+                                <span class="text-muted">@d.Lines.Count line(s)</span>
+                                <span class="text-xs text-muted">by @d.RecordedByName</span>
+                                @if (d.InvoiceId.HasValue) { <span class="chip chip-plain" data-tone="neutral">Locked: invoiced</span> }
+                            </summary>
+                            <div class="border-t border-line px-4 py-3">
+                                @if (d.Remarks != "") { <p class="mb-2 text-sm text-muted">@d.Remarks</p> }
+                                <ul class="space-y-1 text-sm">
+                                    @foreach (var l in d.Lines)
+                                    {
+                                        var li = _itemsById.GetValueOrDefault(l.ItemId);
+                                        <li class="flex justify-between gap-4"><span class="text-ink">@li?.Name <span class="text-xs text-muted">@li?.Code</span></span><span class="tabular-nums text-muted">@Money.Qty(l.Quantity) @li?.UnitOfMeasure</span></li>
+                                    }
+                                </ul>
+                                @if (!d.InvoiceId.HasValue)
+                                {
+                                    <button @onclick="() => DeleteDelivery(delivery)" disabled="@_busy" class="mt-3 text-xs font-medium text-rose-600 hover:text-rose-700">Delete this delivery</button>
+                                }
+                            </div>
+                        </details>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    @* Approval *@
+    @if (_approvals.Count > 0)
+    {
+        <div class="mt-6 card p-6 print:hidden">
+            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Approval</h2>
+            @foreach (var level in _approvals.GroupBy(a => a.Approval.Level).OrderBy(g => g.Key))
+            {
+                <div class="mb-3 flex flex-wrap items-center gap-3 text-sm">
+                    <span class="w-16 text-xs font-semibold uppercase text-slate-400">Level @level.Key</span>
+                    @foreach (var a in level)
+                    {
+                        <span class="@DecisionClasses(a.Approval.Decision) rounded-lg px-3 py-1.5">
+                            @a.ApproverName
+                            @if (a.Approval.Decision != ApprovalDecision.Pending)
+                            {
+                                <span class="ml-1 text-xs">· @a.Approval.Decision@(a.DecidedByName != a.ApproverName && a.DecidedByName != "" ? " by " + a.DecidedByName : "") @a.Approval.DecidedAt?.ToString("dd MMM HH:mm")</span>
+                            }
+                            @if (a.Approval.Comment != "")
+                            {
+                                <span class="ml-1 text-xs italic">“@a.Approval.Comment”</span>
+                            }
+                        </span>
+                    }
+                </div>
+            }
+
+            @if (_canDecide)
+            {
+                <div class="mt-4 border-t border-slate-100 pt-4">
+                    <p class="mb-2 text-sm text-slate-600">It is your turn to approve this purchase order (total @Money.Format(_po.Total, _po.Currency)).</p>
+                    <input @bind="_comment" placeholder="Comment (required when rejecting)" class="mb-3 w-full max-w-xl rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
+                    <div class="flex gap-3">
+                        <button @onclick="() => Decide(true)" disabled="@_busy" class="btn btn-success">Approve</button>
+                        <button @onclick="() => Decide(false)" disabled="@_busy" class="btn btn-danger">Reject</button>
+                    </div>
+                </div>
+            }
+            @if (_error is not null)
+            {
+                <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+            }
+        </div>
+    }
+
+    <div class="mt-6 flex gap-3 print:hidden">
+        <button onclick="window.print()" class="btn btn-secondary">Print</button>
+    </div>
+
+    <div class="mt-6">
+        <AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.PurchaseOrder" EntityId="_po.Id" Version="_auditVersion" />
+    </div>
+}
+
+@code {
+    [Parameter] public int PoId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private Actor _actor = Actor.System;
+    private PurchaseOrder? _po;
+    private Supplier? _supplier;
+    private Rfq? _rfq;
+    private Dictionary<int, Item> _itemsById = new();
+    private List<PoApprovalRow> _approvals = new();
+    private bool _canDecide;
+    private bool _busy;
+    private string _comment = "";
+    private string? _error;
+    private int _auditVersion;
+
+    private string _vesselName = "";
+    private string _portName = "";
+
+    // Deliveries
+    private const int ReceivePageSize = 15;
+    private List<DeliveryOrder> _deliveries = new();
+    private Dictionary<int, DeliveryProgress> _progress = new();
+    private DeliveryStatus _deliveryStatus;
+    private bool _receiving;
+    private int _receivePage = 1;
+    private string? _deliveryError;
+    private NewDelivery _newDelivery = new();
+    private readonly Dictionary<int, decimal> _receive = new();
+
+    private bool ShowDelivery => _po?.Status == PoStatus.Approved;
+    private int FooterSpan => ShowDelivery ? 5 : 3;
+    private List<DeliveryProgress> ReceivableLines => _progress.Values.Where(p => p.Remaining > 0).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
+
+        _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
+        if (_po is not null)
+        {
+            _supplier = await Procurement.GetSupplierAsync(_po.SupplierId);
+            _rfq = _po.RfqId.HasValue ? await Procurement.GetRfqAsync(_companyId, _po.RfqId.Value) : null;
+            if (_po.VesselId is { } vesselId)
+                _vesselName = (await Procurement.GetVesselsAsync(_companyId)).FirstOrDefault(v => v.Id == vesselId)?.Name ?? "";
+            if (_po.OrderPortId is { } portId)
+            {
+                var port = (await Procurement.GetPortsAsync()).FirstOrDefault(p => p.Id == portId);
+                _portName = port is null ? "" : $"{port.Name}, {port.Country}";
+            }
+            var items = await Procurement.GetItemsByIdsAsync(_po.Lines.Select(l => l.ItemId));
+            _itemsById = items.ToDictionary(i => i.Id);
+            await LoadApprovals();
+            await LoadDeliveries();
+        }
+    }
+
+    private async Task LoadDeliveries()
+    {
+        _deliveries = await Deliveries.GetForPoAsync(_companyId, PoId);
+        var progress = DeliveryService.Progress(_po!, _deliveries);
+        _progress = progress.ToDictionary(p => p.ItemId);
+        _deliveryStatus = DeliveryService.StatusFor(progress);
+        if (_po!.DeliveryStatus != _deliveryStatus) _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
+        var missing = _deliveries.SelectMany(d => d.Lines).Select(l => l.ItemId).Where(id => !_itemsById.ContainsKey(id)).Distinct().ToList();
+        foreach (var item in await Procurement.GetItemsByIdsAsync(missing)) _itemsById[item.Id] = item;
+        _auditVersion++;
+    }
+
+    private void ToggleReceive()
+    {
+        _receiving = !_receiving;
+        _deliveryError = null;
+        if (_receiving)
+        {
+            _newDelivery = new NewDelivery();
+            _receive.Clear();
+            _receivePage = 1;
+        }
+    }
+
+    private void SetReceive(int itemId, object? value)
+    {
+        if (decimal.TryParse(value?.ToString(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var qty) && qty > 0)
+            _receive[itemId] = qty;
+        else
+            _receive.Remove(itemId);
+    }
+
+    private void ReceiveAll()
+    {
+        foreach (var p in ReceivableLines) _receive[p.ItemId] = p.Remaining;
+    }
+
+    private async Task SaveDelivery()
+    {
+        _deliveryError = null;
+        _busy = true;
+        try
+        {
+            _newDelivery.Lines = _receive.Where(r => r.Value > 0).Select(r => new DeliveryOrderLine { ItemId = r.Key, Quantity = r.Value }).ToList();
+            var delivery = await Deliveries.RecordAsync(_companyId, PoId, _newDelivery, _actor);
+            _receiving = false;
+            _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
+            await LoadDeliveries();
+            await Toasts.Success($"{delivery.DoNumber} recorded");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _deliveryError = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteDelivery(DeliveryOrder delivery)
+    {
+        _busy = true;
+        try
+        {
+            await Deliveries.DeleteAsync(_companyId, delivery.Id, _actor);
+            _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
+            await LoadDeliveries();
+            await Toasts.Success($"{delivery.DoNumber} deleted");
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Toasts.Error(ex.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadApprovals()
+    {
+        _approvals = await Approvals.GetApprovalsAsync(_companyId, PoId);
+        var current = ApprovalService.CurrentLevel(_approvals.Select(a => a.Approval));
+        _canDecide = _po!.Status == PoStatus.PendingApproval && current is not null && _actor.UserId is { } uid
+            && _approvals.Any(a => a.Approval.Level == current && a.Approval.ApproverUserId == uid && a.Approval.Decision == ApprovalDecision.Pending);
+        _auditVersion++;
+    }
+
+    private async Task Decide(bool approve)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            await Approvals.DecideAsync(_companyId, PoId, _actor, approve, _comment);
+            _comment = "";
+            _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
+            await LoadApprovals();
+            await LoadDeliveries();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string StatusLabel(PoStatus s) => s switch
+    {
+        PoStatus.PendingApproval => "Pending approval",
+        PoStatus.Approved => "Approved",
+        PoStatus.Rejected => "Rejected",
+        _ => s.ToString()
+    };
+
+    private static string StatusClasses(PoStatus s) => s switch
+    {
+        PoStatus.PendingApproval => "bg-amber-50 text-amber-600",
+        PoStatus.Approved => "bg-emerald-50 text-emerald-600",
+        PoStatus.Rejected => "bg-rose-50 text-rose-600",
+        _ => "bg-slate-100 text-slate-500"
+    };
+
+    private static string DecisionClasses(ApprovalDecision d) => d switch
+    {
+        ApprovalDecision.Approved => "bg-emerald-50 text-emerald-700",
+        ApprovalDecision.Rejected => "bg-rose-50 text-rose-700",
+        _ => "bg-slate-100 text-slate-600"
+    };
+}

@@ -1,0 +1,134 @@
+@inherits LayoutComponentBase
+
+<div class="app-backdrop"></div>
+<div class="drawer-overlay"></div>
+
+<aside class="sidebar print:hidden">
+    <div class="flex h-16 shrink-0 items-center gap-3 px-5">
+        <div class="brand-mark">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6"/></svg>
+        </div>
+        <div class="brand-text">
+            <p class="font-display text-lg font-extrabold leading-none text-ink">Chandlery</p>
+            <p class="mt-1 text-[11px] font-medium text-muted">Procurement workspace</p>
+        </div>
+    </div>
+
+    <div class="min-h-0 flex-1 overflow-y-auto pb-4">
+        <NavMenu />
+    </div>
+
+    <div class="hidden shrink-0 border-t border-line p-3 lg:block">
+        <button type="button" data-toggle-nav class="nav-link w-full" title="Collapse or expand the menu" style="margin:0;width:100%">
+            <span class="nav-icon nav-collapse-icon transition-transform">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg>
+            </span>
+            <span class="nav-label">Collapse menu</span>
+        </button>
+    </div>
+</aside>
+
+<div class="app-main">
+    <header class="topbar glass print:hidden">
+        <button type="button" data-toggle-drawer class="btn btn-ghost btn-sm lg:hidden" aria-label="Open menu">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+
+        <AuthorizeView>
+            <Authorized>
+                <button type="button" data-open-palette class="ml-2 hidden w-full max-w-sm items-center gap-3 rounded-xl border border-line bg-surface-2 px-3 py-2 text-left text-sm text-muted transition hover:border-accent-300 md:flex" title="Search everything (Ctrl+K)">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                    <span class="flex-1">Search or jump to…</span>
+                    <kbd class="rounded-md border border-line bg-surface px-1.5 py-0.5 text-[11px] font-semibold">Ctrl K</kbd>
+                </button>
+                <button type="button" data-open-palette class="btn btn-ghost btn-sm md:hidden" aria-label="Search">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+                </button>
+                <CommandPalette @rendermode="InteractiveServer" />
+            </Authorized>
+        </AuthorizeView>
+
+        <div class="ml-auto flex items-center gap-2">
+            @* Theme and mode picker *@
+            <details class="menu">
+                <summary class="btn btn-secondary btn-sm" title="Appearance">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 22a10 10 0 1 1 10-10c0 2.5-2 3-3.5 3H16a2 2 0 0 0-1.4 3.4c.6.6.5 1.3.2 1.9-.5.9-1.5 1.7-2.8 1.7Z"/></svg>
+                    <span class="hidden sm:inline">Appearance</span>
+                </summary>
+                <div class="menu-panel" style="min-width:16rem">
+                    <p class="px-2 pb-1 pt-1 text-[11px] font-bold uppercase tracking-wider text-muted">Mode</p>
+                    <div class="grid grid-cols-3 gap-1">
+                        <button type="button" data-set-mode="light" class="menu-item justify-center">Light</button>
+                        <button type="button" data-set-mode="dark" class="menu-item justify-center">Dark</button>
+                        <button type="button" data-set-mode="system" class="menu-item justify-center">Auto</button>
+                    </div>
+                    <p class="px-2 pb-1 pt-3 text-[11px] font-bold uppercase tracking-wider text-muted">Theme</p>
+                    @foreach (var (key, label, gradient) in Themes)
+                    {
+                        <button type="button" data-set-theme="@key" class="menu-item">
+                            <span class="swatch" style="background-image:@gradient"></span>
+                            @label
+                        </button>
+                    }
+                </div>
+            </details>
+
+            @* User menu *@
+            <AuthorizeView>
+                <Authorized>
+                    <details class="menu">
+                        <summary class="flex items-center gap-2 rounded-xl px-1.5 py-1 hover:bg-surface-2">
+                            <span class="grid h-8 w-8 place-items-center rounded-full text-xs font-bold text-white" style="background-image:linear-gradient(135deg,var(--accent-from),var(--accent-to))">@Initials(context.User.Identity?.Name)</span>
+                            <span class="hidden text-left sm:block">
+                                <span class="block text-sm font-semibold leading-tight text-ink">@context.User.Identity?.Name</span>
+                                <span class="block text-xs leading-tight text-muted">@RoleLabel(context.User)</span>
+                            </span>
+                        </summary>
+                        <div class="menu-panel">
+                            <div class="px-2 pb-2 pt-1">
+                                <p class="text-sm font-semibold text-ink">@context.User.Identity?.Name</p>
+                                <p class="text-xs text-muted">@context.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value</p>
+                            </div>
+                            <div class="my-1 border-t border-line"></div>
+                            <form method="post" action="account/logout">
+                                <AntiforgeryToken />
+                                <button type="submit" class="menu-item">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                                    Sign out
+                                </button>
+                            </form>
+                        </div>
+                    </details>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+    </header>
+
+    <main class="app-content rise">
+        @Body
+    </main>
+</div>
+
+@code {
+    private static readonly (string Key, string Label, string Gradient)[] Themes =
+    {
+        ("aurora", "Aurora", "linear-gradient(135deg,#06b6d4,#6366f1)"),
+        ("sunset", "Sunset", "linear-gradient(135deg,#f97316,#ec4899)"),
+        ("forest", "Forest", "linear-gradient(135deg,#10b981,#0ea5e9)"),
+        ("orchid", "Orchid", "linear-gradient(135deg,#8b5cf6,#d946ef)"),
+        ("graphite", "Graphite", "linear-gradient(135deg,#52525b,#18181b)"),
+    };
+
+    private static string Initials(string? name) =>
+        string.IsNullOrWhiteSpace(name)
+            ? "?"
+            : string.Concat(name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => p[0])).ToUpper();
+
+    private static string RoleLabel(System.Security.Claims.ClaimsPrincipal user) => user switch
+    {
+        _ when user.IsInRole("CompanyAdmin") => "Company Admin",
+        _ when user.IsInRole("CompanyUser") => "Company",
+        _ when user.IsInRole("SupplierAdmin") => "Supplier Admin",
+        _ => "Supplier"
+    };
+}

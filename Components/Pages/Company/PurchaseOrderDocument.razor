@@ -1,0 +1,47 @@
+@page "/company/purchase-orders/{PoId:int}/document"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject PoDocumentService Documents
+
+<PageTitle>@(_doc?.Po.PoNumber ?? "Purchase order") document · Chandlery</PageTitle>
+
+@if (_loaded && _doc is null)
+{
+    <EmptyState Title="Purchase order not found" Message="It may belong to another company or have been removed." />
+}
+else if (_doc is not null)
+{
+    <PageHeader Title="Purchase order document" Parent="@(new Crumb(_doc.Po.PoNumber, $"/company/purchase-orders/{PoId}"))"
+                Subtitle="The formal order for the supplier, built from the approved record. Download the PDF to send it.">
+        <Actions>
+            <a href="/company/purchase-orders/@PoId" class="btn btn-secondary">Back to order</a>
+            <button onclick="window.print()" class="btn btn-secondary">Print</button>
+            <a href="/company/purchase-orders/@PoId/pdf" download class="btn btn-primary">Download PDF</a>
+        </Actions>
+    </PageHeader>
+
+    @if (_doc.Po.Status != PoStatus.Approved)
+    {
+        <div class="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700 print:hidden">
+            This order is not approved yet, so the document is marked as a draft. Send the document only after it is approved.
+        </div>
+    }
+
+    <PoDocumentView Doc="_doc" />
+}
+
+@code {
+    [Parameter] public int PoId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private PoDocument? _doc;
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _doc = await Documents.GetForCompanyAsync(companyId, PoId);
+        _loaded = true;
+    }
+}

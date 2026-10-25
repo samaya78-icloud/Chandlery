@@ -1,0 +1,174 @@
+@page "/supplier/rfqs"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject NavigationManager Navigation
+
+<PageTitle>RFQs · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Your work" Title="Requests for Quote" Subtitle="RFQs you've been invited to quote on.">
+    <Actions>
+        <div class="flex items-end gap-2">
+            <div>
+                <label class="label">Notification emails</label>
+                <input @bind="_emails" placeholder="a@example.com; b@example.com"
+                       class="input w-72" />
+            </div>
+            <button @onclick="SaveEmails" class="btn btn-secondary btn-sm">Save</button>
+            @if (_emailsSaved)
+            {
+                <span class="pb-2 text-xs text-emerald-600">Saved</span>
+            }
+        </div>
+    </Actions>
+</PageHeader>
+
+<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div class="inline-flex rounded-lg border border-slate-200 bg-surface p-1 text-sm">
+        @foreach (var t in new[] { SupplierRfqTab.Pending, SupplierRfqTab.Orders, SupplierRfqTab.Archived })
+        {
+            var tab = t;
+            <button @onclick="() => SelectTab(tab)"
+                    class="@(_tab == tab ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50") rounded-md px-4 py-1.5 font-medium">
+                @tab
+            </button>
+        }
+    </div>
+    <div class="flex items-center gap-2">
+        <input @bind="_search" @bind:after="SearchChanged" placeholder="Search reference or vessel…"
+               class="input w-64" />
+        <a href="@ExportUrl" download class="btn btn-secondary btn-sm">Export CSV</a>
+    </div>
+</div>
+
+@if (_page.Rows.Count == 0)
+{
+    <EmptyState Title="Nothing here" Message="No RFQs match this tab or search." />
+}
+else
+{
+    <div class="card">
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                    <th class="px-4 py-3 font-medium">Reference</th>
+                    <th class="px-4 py-3 font-medium">Vessel</th>
+                    <th class="px-4 py-3 font-medium">Type</th>
+                    <th class="px-4 py-3 font-medium">Created</th>
+                    <th class="px-4 py-3 font-medium">Due</th>
+                    <th class="px-4 py-3 font-medium">Lines</th>
+                    <th class="px-4 py-3 font-medium">Quoted</th>
+                    <th class="px-4 py-3 font-medium">Status</th>
+                    <th class="px-4 py-3"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _page.Rows)
+                {
+                    var rfqId = row.Rfq.Id;
+                    <tr class="cursor-pointer border-b border-slate-50 last:border-0 hover:bg-slate-50" @onclick='() => Navigation.NavigateTo($"/supplier/rfqs/{rfqId}")'>
+                        <td class="px-4 py-3 font-medium text-slate-800">@row.Rfq.RfqNumber</td>
+                        <td class="px-4 py-3 text-slate-600">@row.Rfq.Vessel</td>
+                        <td class="px-4 py-3 text-slate-600">@row.Rfq.Type</td>
+                        <td class="px-4 py-3 text-slate-600">@row.Rfq.CreatedDate.ToString("dd-MMM-yyyy")</td>
+                        <td class="px-4 py-3 text-slate-600">@(row.Rfq.DueDate.HasValue ? row.Rfq.DueDate.Value.ToString("dd-MMM-yyyy") : "—")</td>
+                        <td class="px-4 py-3 text-slate-600">@row.Rfq.Lines.Count</td>
+                        <td class="px-4 py-3 text-slate-600">@row.QuotedLines</td>
+                        <td class="px-4 py-3">
+                            <span class="@StatusClasses(row.Status) rounded-full px-2.5 py-1 text-xs font-medium">@row.StatusLabel</span>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                            <button @onclick="() => ToggleArchive(row)" @onclick:stopPropagation="true"
+                                    class="text-xs font-medium text-indigo-600 hover:text-indigo-700">
+                                @(row.Archived ? "Unarchive" : "Archive")
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+            <span>Showing @(((_pageNo - 1) * PageSize) + 1)&ndash;@(Math.Min(_pageNo * PageSize, _page.Total)) of @_page.Total</span>
+            <div class="flex items-center gap-2">
+                <button @onclick="() => GoTo(_pageNo - 1)" disabled="@(_pageNo <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                <span>Page @_pageNo of @TotalPages</span>
+                <button @onclick="() => GoTo(_pageNo + 1)" disabled="@(_pageNo >= TotalPages)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private const int PageSize = 10;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _supplierId;
+    private SupplierRfqTab _tab = SupplierRfqTab.Pending;
+    private string _search = "";
+    private int _pageNo = 1;
+    private SupplierRfqPage _page = new(new(), 0);
+    private string _emails = "";
+    private bool _emailsSaved;
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_page.Total / (double)PageSize));
+    private string ExportUrl => $"/supplier/rfqs/export?tab={_tab}&q={Uri.EscapeDataString(_search ?? "")}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+
+        var supplier = await Procurement.GetSupplierAsync(_supplierId);
+        _emails = supplier?.NotificationEmails ?? "";
+        await Load();
+    }
+
+    private async Task Load() =>
+        _page = await Procurement.GetSupplierRfqPageAsync(_supplierId, _tab, _search, _pageNo, PageSize);
+
+    private async Task SelectTab(SupplierRfqTab tab)
+    {
+        _tab = tab;
+        _pageNo = 1;
+        await Load();
+    }
+
+    private async Task SearchChanged()
+    {
+        _pageNo = 1;
+        await Load();
+    }
+
+    private async Task GoTo(int pageNo)
+    {
+        _pageNo = Math.Clamp(pageNo, 1, TotalPages);
+        await Load();
+    }
+
+    private async Task ToggleArchive(SupplierRfqRow row)
+    {
+        await Procurement.SetRfqArchivedAsync(_supplierId, row.Rfq.Id, !row.Archived);
+        await Load();
+        if (_page.Rows.Count == 0 && _pageNo > 1)
+        {
+            _pageNo--;
+            await Load();
+        }
+    }
+
+    private async Task SaveEmails()
+    {
+        await Procurement.UpdateSupplierNotificationEmailsAsync(_supplierId, _emails);
+        _emailsSaved = true;
+    }
+
+    private static string StatusClasses(SupplierRfqStatus status) => status switch
+    {
+        SupplierRfqStatus.Pending => "bg-amber-50 text-amber-600",
+        SupplierRfqStatus.QuotationSubmitted => "bg-sky-50 text-sky-600",
+        SupplierRfqStatus.Ordered => "bg-emerald-50 text-emerald-600",
+        _ => "bg-slate-100 text-slate-500"
+    };
+}

@@ -1,0 +1,26 @@
+@* Compact, linked list of RFQs for hub pages. *@
+<DataGrid TItem="RfqBrief" Items="Rfqs" ItemName="RFQs" SyncUrl="false" ExportName="@ExportName" EmptyText="No RFQs.">
+    <GridColumn Title="RFQ #" Text="r => r.Number" Context="r">
+        <DocLink Kind="DocKind.Rfq" Id="r.Id" Text="@r.Number" />
+    </GridColumn>
+    <GridColumn Title="Vessel" Text="r => r.Vessel" Context="r">
+        @if (r.VesselId is { } vesselId)
+        {
+            <DocLink Kind="DocKind.Vessel" Id="vesselId" Text="@r.Vessel" Plain="true" />
+        }
+        else
+        {
+            @r.Vessel
+        }
+    </GridColumn>
+    <GridColumn Title="Created" Date="r => r.Created" />
+    <GridColumn Title="Due" Date="r => r.Due" />
+    <GridColumn Title="Status" Text="r => r.Status.ToString()" Filter="GridFilter.Select" Context="r">
+        <StatusChip Value="r.Status" />
+    </GridColumn>
+</DataGrid>
+
+@code {
+    [Parameter, EditorRequired] public List<RfqBrief> Rfqs { get; set; } = new();
+    [Parameter] public string ExportName { get; set; } = "rfqs";
+}

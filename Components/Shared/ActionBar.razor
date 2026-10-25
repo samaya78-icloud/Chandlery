@@ -1,0 +1,19 @@
+@* A floating bar that sticks to the bottom of the screen so the main actions of a long form are always in reach. *@
+<div class="sticky bottom-4 z-20 mt-8 print:hidden">
+    <div class="glass card flex flex-wrap items-center gap-3 px-4 py-3">
+        @if (Info is not null)
+        {
+            <div class="mr-auto text-sm text-muted">@Info</div>
+        }
+        else
+        {
+            <div class="mr-auto"></div>
+        }
+        @ChildContent
+    </div>
+</div>
+
+@code {
+    [Parameter] public RenderFragment? Info { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

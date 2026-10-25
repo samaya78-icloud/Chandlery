@@ -1,0 +1,18 @@
+@* A clickable reference to any record (RFQ number, supplier name, vessel...). Use it wherever one record mentions another,
+   so a user can jump from anywhere to anything related. *@
+<a href="@Href" class="@(Plain ? "link-plain" : "link")" title="@(Title ?? Text)" @onclick:stopPropagation="true">@Text</a>
+
+@code {
+    [Parameter, EditorRequired] public DocKind Kind { get; set; }
+    [Parameter, EditorRequired] public int Id { get; set; }
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+    [Parameter] public string? Title { get; set; }
+
+    /// <summary>Supplier users see their own pages for RFQs and POs.</summary>
+    [Parameter] public bool SupplierPortal { get; set; }
+
+    /// <summary>Quieter styling for use inside dense tables.</summary>
+    [Parameter] public bool Plain { get; set; }
+
+    private string Href => DocLinks.For(Kind, Id, SupplierPortal);
+}

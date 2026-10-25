@@ -1,0 +1,66 @@
+@page "/login"
+@layout LoginLayout
+@attribute [AllowAnonymous]
+
+<PageTitle>Sign in · Chandlery</PageTitle>
+
+<div class="w-full max-w-md rise">
+    <div class="mb-8 flex items-center gap-3 lg:hidden">
+        <div class="brand-mark">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6"/></svg>
+        </div>
+        <span class="font-display text-xl font-extrabold text-ink">Chandlery</span>
+    </div>
+
+    <h1 class="font-display text-3xl font-extrabold text-ink">Welcome back</h1>
+    <p class="mt-2 text-muted">Sign in to your procurement workspace.</p>
+
+    @if (Error)
+    {
+        <div class="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
+            Invalid email or password.
+        </div>
+    }
+
+    <form method="post" action="account/login" class="mt-8 flex flex-col gap-5">
+        <AntiforgeryToken />
+        <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+
+        <div>
+            <label class="label">Email</label>
+            <input name="email" type="email" required autocomplete="username" placeholder="you@company.com" class="input" />
+        </div>
+        <div>
+            <label class="label">Password</label>
+            <input name="password" type="password" required autocomplete="current-password" placeholder="••••••••" class="input" />
+        </div>
+
+        <button type="submit" class="btn btn-primary mt-1 py-3">Sign in</button>
+    </form>
+
+    <div class="mt-8 rounded-2xl border border-dashed border-line bg-surface-2/60 p-4">
+        <p class="text-xs font-bold uppercase tracking-wider text-muted">Try a demo account</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+            <button type="button" data-fill-email="priya@chandlery.example.com" class="btn btn-secondary btn-sm">Company admin</button>
+            <button type="button" data-fill-email="super@chandlery.example.com" class="btn btn-secondary btn-sm">Superintendent</button>
+            <button type="button" data-fill-email="fleet@chandlery.example.com" class="btn btn-secondary btn-sm">Fleet manager</button>
+            <button type="button" data-fill-email="sales@oceangear.example.com" class="btn btn-secondary btn-sm">Supplier: OceanGear</button>
+            <button type="button" data-fill-email="quotes@poseidon.example.com" class="btn btn-secondary btn-sm">Supplier: Poseidon</button>
+        </div>
+        <p class="mt-3 text-xs text-muted">Click one to fill the form. Password for all demo accounts: <span class="font-mono font-semibold text-ink-2">Passw0rd!</span></p>
+    </div>
+
+    <p class="mt-8 text-sm text-muted">
+        New company? <a href="/register" class="link">Register here</a>
+    </p>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? ErrorFlag { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    private bool Error => ErrorFlag == "1";
+}

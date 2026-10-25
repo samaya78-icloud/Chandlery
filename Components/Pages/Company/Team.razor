@@ -1,0 +1,119 @@
+@page "/company/team"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+
+<PageTitle>Team · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Admin" Title="Team" Subtitle="@($"{_users.Count:N0} users in your company.")">
+    <Actions>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add User</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="mb-6 max-w-md card p-4">
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Name</label>
+            <input @bind="_name" class="input" />
+        </div>
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Email</label>
+            <input @bind="_email" type="email" class="input" />
+        </div>
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Role</label>
+            <select @bind="_role" class="input">
+                <option value="@UserRole.CompanyUser">Company User</option>
+                <option value="@UserRole.CompanyAdmin">Company Admin</option>
+            </select>
+        </div>
+        <div class="mb-4">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Temporary Password</label>
+            <input @bind="_password" type="text" placeholder="Share this with the user directly"
+                   class="input" />
+            <p class="mt-1 text-xs text-slate-400">No email invites yet — share this password with them yourself.</p>
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+
+        <button @onclick="Add" class="btn btn-primary">Save</button>
+    </div>
+}
+
+<div class="card">
+    <table class="w-full text-left text-sm">
+        <thead>
+            <tr class="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                <th class="px-4 py-3 font-medium">Name</th>
+                <th class="px-4 py-3 font-medium">Email</th>
+                <th class="px-4 py-3 font-medium">Role</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var u in _users)
+            {
+                <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50">
+                    <td class="px-4 py-3 font-medium text-slate-800">@u.DisplayName</td>
+                    <td class="px-4 py-3 text-slate-600">@u.Email</td>
+                    <td class="px-4 py-3">
+                        <span class="@(u.Role == UserRole.CompanyAdmin ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500") rounded-full px-2.5 py-1 text-xs font-medium">
+                            @(u.Role == UserRole.CompanyAdmin ? "Admin" : "User")
+                        </span>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private List<AppUser> _users = new();
+    private bool _showForm;
+    private string _name = "";
+    private string _email = "";
+    private string _password = "";
+    private UserRole _role = UserRole.CompanyUser;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _users = await Procurement.GetCompanyUsersAsync(_companyId);
+    }
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(_name) || string.IsNullOrWhiteSpace(_email) || string.IsNullOrWhiteSpace(_password))
+        {
+            _error = "All fields are required.";
+            return;
+        }
+
+        try
+        {
+            await Procurement.AddCompanyUserAsync(_companyId, _email, _name, _password, _role);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            return;
+        }
+
+        _users = await Procurement.GetCompanyUsersAsync(_companyId);
+        _name = "";
+        _email = "";
+        _password = "";
+        _role = UserRole.CompanyUser;
+        _error = null;
+        _showForm = false;
+    }
+}

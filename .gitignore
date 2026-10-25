@@ -1,0 +1,8 @@
+bin/
+obj/
+node_modules/
+wwwroot/css/app.css
+*.user
+.claude/settings.local.json
+appsettings.Development.json
+App_Data/

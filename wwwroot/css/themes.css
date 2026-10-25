@@ -1,0 +1,141 @@
+/*
+  Chandlery design tokens.
+
+  <html data-theme="aurora|sunset|forest|orchid|graphite" data-mode="light|dark"> is set by wwwroot/js/app.js
+  before first paint. Themes only change the accent scale (--accent-*) and the gradient ends;
+  modes change the neutral surfaces. Legacy Tailwind palette variables are re-pointed here so older
+  markup (indigo-*, slate-*, emerald-* ...) follows the selected theme and mode automatically.
+*/
+
+/* ---------- Neutral surfaces: light ---------- */
+:root {
+  --c-canvas: #f4f6fb;
+  --c-surface: #ffffff;
+  --c-surface-2: #f8fafc;
+  --c-line: #e5e9f2;
+  --c-ink: #0f172a;
+  --c-ink-2: #334155;
+  --c-muted: #64748b;
+  --sh-card: 0 1px 2px rgb(15 23 42 / .04), 0 8px 24px -12px rgb(15 23 42 / .10);
+  --sh-pop: 0 12px 40px -8px rgb(15 23 42 / .22), 0 2px 8px rgb(15 23 42 / .08);
+  --backdrop-a: .14;
+  --backdrop-b: 10%;
+}
+
+/* ---------- Neutral surfaces: dark ---------- */
+:root[data-mode="dark"] {
+  --c-canvas: #0a0f1c;
+  --c-surface: #111827;
+  --c-surface-2: #172033;
+  --c-line: #243049;
+  --c-ink: #f1f5f9;
+  --c-ink-2: #cbd5e1;
+  --c-muted: #8b9bb4;
+  --sh-card: 0 1px 2px rgb(0 0 0 / .4), 0 10px 30px -14px rgb(0 0 0 / .7);
+  --sh-pop: 0 16px 48px -8px rgb(0 0 0 / .7), 0 2px 8px rgb(0 0 0 / .4);
+  --backdrop-a: .22;
+  --backdrop-b: 16%;
+
+  /* Legacy slate scale, inverted so existing text-slate-* / bg-slate-* / border-slate-* classes work in dark */
+  --color-slate-50: #172033;
+  --color-slate-100: #1b2540;
+  --color-slate-200: #243049;
+  --color-slate-300: #34425f;
+  --color-slate-400: #7a8aa5;
+  --color-slate-500: #94a3bd;
+  --color-slate-600: #b3bfd3;
+  --color-slate-700: #ccd5e3;
+  --color-slate-800: #e2e8f2;
+  --color-slate-900: #f1f5f9;
+  --color-slate-950: #ffffff;
+
+  /* Status hues: tinted backgrounds, lighter text */
+  --color-emerald-50: #10b98124;
+  --color-emerald-600: #34d399;
+  --color-emerald-700: #6ee7b7;
+  --color-amber-50: #f59e0b24;
+  --color-amber-600: #fbbf24;
+  --color-amber-700: #fcd34d;
+  --color-sky-50: #0ea5e924;
+  --color-sky-600: #38bdf8;
+  --color-sky-700: #7dd3fc;
+  --color-sky-800: #bae6fd;
+  --color-rose-50: #f43f5e24;
+  --color-rose-500: #fb7185;
+  --color-rose-600: #fb7185;
+  --color-rose-700: #fda4af;
+}
+
+/* ---------- Accent themes (light values; dark reuses them with lighter text mapping below) ---------- */
+:root, :root[data-theme="aurora"] {
+  --accent-50: #ecfeff; --accent-100: #cffafe; --accent-200: #a5f3fc; --accent-300: #67e8f9; --accent-400: #22d3ee;
+  --accent-500: #06b6d4; --accent-600: #0891b2; --accent-700: #0e7490; --accent-800: #155e75; --accent-900: #164e63;
+  --accent-from: #06b6d4; --accent-to: #6366f1; --accent-glow: 6 182 212;
+}
+:root[data-theme="sunset"] {
+  --accent-50: #fff7ed; --accent-100: #ffedd5; --accent-200: #fed7aa; --accent-300: #fdba74; --accent-400: #fb923c;
+  --accent-500: #f97316; --accent-600: #ea580c; --accent-700: #c2410c; --accent-800: #9a3412; --accent-900: #7c2d12;
+  --accent-from: #f97316; --accent-to: #ec4899; --accent-glow: 249 115 22;
+}
+:root[data-theme="forest"] {
+  --accent-50: #ecfdf5; --accent-100: #d1fae5; --accent-200: #a7f3d0; --accent-300: #6ee7b7; --accent-400: #34d399;
+  --accent-500: #10b981; --accent-600: #059669; --accent-700: #047857; --accent-800: #065f46; --accent-900: #064e3b;
+  --accent-from: #10b981; --accent-to: #0ea5e9; --accent-glow: 16 185 129;
+}
+:root[data-theme="orchid"] {
+  --accent-50: #f5f3ff; --accent-100: #ede9fe; --accent-200: #ddd6fe; --accent-300: #c4b5fd; --accent-400: #a78bfa;
+  --accent-500: #8b5cf6; --accent-600: #7c3aed; --accent-700: #6d28d9; --accent-800: #5b21b6; --accent-900: #4c1d95;
+  --accent-from: #8b5cf6; --accent-to: #d946ef; --accent-glow: 139 92 246;
+}
+:root[data-theme="graphite"] {
+  --accent-50: #fafafa; --accent-100: #f4f4f5; --accent-200: #e4e4e7; --accent-300: #d4d4d8; --accent-400: #a1a1aa;
+  --accent-500: #71717a; --accent-600: #52525b; --accent-700: #3f3f46; --accent-800: #27272a; --accent-900: #18181b;
+  --accent-from: #52525b; --accent-to: #18181b; --accent-glow: 82 82 91;
+}
+
+/* In dark mode the accent needs to be brighter for text/borders and translucent for tints */
+:root[data-mode="dark"] {
+  --accent-50: color-mix(in srgb, var(--accent-500) 16%, transparent);
+  --accent-100: color-mix(in srgb, var(--accent-500) 24%, transparent);
+  --accent-200: color-mix(in srgb, var(--accent-500) 34%, transparent);
+}
+:root[data-mode="dark"][data-theme="graphite"] {
+  --accent-300: #e4e4e7; --accent-400: #d4d4d8; --accent-500: #a1a1aa; --accent-600: #d4d4d8; --accent-700: #e4e4e7;
+  --accent-from: #d4d4d8; --accent-to: #71717a;
+}
+
+/* ---------- Status tones used by .chip and friends (explicit values, independent of Tailwind's palette) ---------- */
+:root {
+  --tone-success-bg: #dcfce7; --tone-success-fg: #15803d;
+  --tone-warning-bg: #fef3c7; --tone-warning-fg: #b45309;
+  --tone-info-bg: #e0f2fe;    --tone-info-fg: #0369a1;
+  --tone-danger-bg: #ffe4e6;  --tone-danger-fg: #be123c;
+  --tone-neutral-bg: #eef2f7; --tone-neutral-fg: #475569;
+  --tone-accent-bg: var(--accent-100); --tone-accent-fg: var(--accent-700);
+}
+:root[data-mode="dark"] {
+  --tone-success-bg: #10b98124; --tone-success-fg: #6ee7b7;
+  --tone-warning-bg: #f59e0b24; --tone-warning-fg: #fcd34d;
+  --tone-info-bg: #0ea5e924;    --tone-info-fg: #7dd3fc;
+  --tone-danger-bg: #f43f5e24;  --tone-danger-fg: #fda4af;
+  --tone-neutral-bg: #243049;   --tone-neutral-fg: #b3bfd3;
+  --tone-accent-bg: var(--accent-100); --tone-accent-fg: var(--accent-300);
+}
+
+/* ---------- Re-point legacy indigo-* to the accent ---------- */
+:root {
+  --color-indigo-50: var(--accent-50);
+  --color-indigo-100: var(--accent-100);
+  --color-indigo-200: var(--accent-200);
+  --color-indigo-300: var(--accent-300);
+  --color-indigo-400: var(--accent-400);
+  --color-indigo-500: var(--accent-500);
+  --color-indigo-600: var(--accent-600);
+  --color-indigo-700: var(--accent-700);
+  --color-indigo-800: var(--accent-800);
+  --color-indigo-900: var(--accent-900);
+}
+:root[data-mode="dark"] {
+  --color-indigo-600: var(--accent-400);
+  --color-indigo-700: var(--accent-300);
+}

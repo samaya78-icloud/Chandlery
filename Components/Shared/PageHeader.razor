@@ -1,0 +1,95 @@
+@inject NavigationManager Navigation
+
+<div class="mb-7 flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+        @if (_trail.Count > 0)
+        {
+            <nav aria-label="Breadcrumb" class="mb-2 print:hidden">
+                <ol class="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-medium text-muted">
+                    @for (var i = 0; i < _trail.Count; i++)
+                    {
+                        var crumb = _trail[i];
+                        <li class="flex items-center gap-1.5">
+                            @if (i > 0)
+                            {
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                            }
+                            @if (crumb.Href is not null)
+                            {
+                                <a href="@crumb.Href" class="rounded-md px-1 py-0.5 transition hover:bg-accent-50 hover:text-accent-700">
+                                    @if (crumb.Label == "Home")
+                                    {
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-label="Home"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1Z"/></svg>
+                                    }
+                                    else
+                                    {
+                                        @crumb.Label
+                                    }
+                                </a>
+                            }
+                            else if (i == _trail.Count - 1)
+                            {
+                                <span class="max-w-[16rem] truncate px-1 py-0.5 font-semibold text-ink" aria-current="page">@crumb.Label</span>
+                            }
+                            else
+                            {
+                                <span class="px-1 py-0.5">@crumb.Label</span>
+                            }
+                        </li>
+                    }
+                </ol>
+            </nav>
+        }
+        else if (Eyebrow is not null)
+        {
+            <p class="mb-1 text-xs font-bold uppercase tracking-widest text-accent-600">@Eyebrow</p>
+        }
+        <h1 class="flex flex-wrap items-center gap-x-3 gap-y-1 font-display text-3xl font-extrabold text-ink">
+            @Title
+            @Badges
+        </h1>
+        @if (!string.IsNullOrWhiteSpace(Subtitle))
+        {
+            <p class="mt-1.5 max-w-3xl text-sm text-muted">@Subtitle</p>
+        }
+        @if (Facts is not null)
+        {
+            <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">@Facts</div>
+        }
+    </div>
+    @if (Actions is not null)
+    {
+        <div class="flex flex-wrap items-center gap-2 print:hidden">@Actions</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string? Subtitle { get; set; }
+
+    /// <summary>Small caps label above the title for pages that have no breadcrumb (e.g. the dashboard).</summary>
+    [Parameter] public string? Eyebrow { get; set; }
+
+    /// <summary>Chips shown right after the title (status, type, urgency).</summary>
+    [Parameter] public RenderFragment? Badges { get; set; }
+
+    /// <summary>A line of linked facts under the title (vessel, supplier, dates).</summary>
+    [Parameter] public RenderFragment? Facts { get; set; }
+
+    /// <summary>Buttons on the right.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>An extra step between the list and this page, e.g. the order a document belongs to.</summary>
+    [Parameter] public Crumb? Parent { get; set; }
+
+    private List<Crumb> _trail = new();
+
+    protected override void OnParametersSet()
+    {
+        var ancestors = Breadcrumbs.Ancestors("/" + Navigation.ToBaseRelativePath(Navigation.Uri));
+        if (ancestors.Count == 0) { _trail = ancestors; return; }
+        if (Parent is not null) ancestors.Add(Parent);
+        ancestors.Add(new Crumb(Title, null));
+        _trail = ancestors;
+    }
+}

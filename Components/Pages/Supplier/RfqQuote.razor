@@ -1,0 +1,471 @@
+@page "/supplier/rfqs/{RfqId:int}"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+
+<PageTitle>@(_rfq?.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
+
+@if (_rfq is null)
+{
+    <p class="text-sm text-slate-500">RFQ not found.</p>
+}
+else
+{
+    <PageHeader Eyebrow="Request for quote" Title="@_rfq.RfqNumber"
+                Subtitle="@($"Vessel: {_rfq.Vessel} · Received {_rfq.CreatedDate:dd-MMM-yyyy}")">
+        <Badges><span class="chip" data-tone="slate">@_rfq.Type</span></Badges>
+        <Actions><button onclick="window.print()" class="btn btn-secondary btn-sm print:hidden">Print</button></Actions>
+    </PageHeader>
+
+    @if (_lockReason is not null)
+    {
+        <div class="mb-4 rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-600">@_lockReason</div>
+    }
+    else if (_existing is not null)
+    {
+        <div class="mb-4 rounded-lg bg-sky-50 px-4 py-3 text-sm text-sky-700">
+            Quotation submitted @_existing.SubmittedDate.ToString("dd-MMM-yyyy"). You can revise it until @(_rfq.DueDate.HasValue ? _rfq.DueDate.Value.ToString("dd-MMM-yyyy") : "the RFQ is awarded").
+        </div>
+    }
+
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+
+        @* Left: buyer details and supplier terms *@
+        <div class="space-y-6">
+            <div class="card p-4 text-sm">
+                <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Request</h2>
+                <dl class="space-y-2">
+                    <div><dt class="text-xs text-slate-400">Delivery port</dt><dd class="font-medium text-slate-800">@(PortLabel() ?? "—")</dd></div>
+                    <div><dt class="text-xs text-slate-400">Vessel ETA</dt><dd class="font-medium text-slate-800">@Date(_rfq.VesselEta)</dd></div>
+                    <div><dt class="text-xs text-slate-400">Date required</dt><dd class="font-medium text-slate-800">@Date(_rfq.DateRequired)</dd></div>
+                    <div><dt class="text-xs text-slate-400">Quotes due</dt><dd class="font-medium text-slate-800">@Date(_rfq.DueDate)</dd></div>
+                    <div>
+                        <dt class="text-xs text-slate-400">Buyer contact</dt>
+                        <dd class="font-medium text-slate-800">@_rfq.BuyerName</dd>
+                        @if (!string.IsNullOrWhiteSpace(_rfq.BuyerDesignation)) { <dd class="text-slate-500">@_rfq.BuyerDesignation</dd> }
+                        <dd class="text-slate-500">@_rfq.BuyerEmail</dd>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(_rfq.Remarks))
+                    {
+                        <div><dt class="text-xs text-slate-400">Remarks</dt><dd class="text-slate-700">@_rfq.Remarks</dd></div>
+                    }
+                </dl>
+                @if (_rfq.Type == RfqType.Spares)
+                {
+                    <h2 class="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">Equipment</h2>
+                    <dl class="space-y-2">
+                        <div><dt class="text-xs text-slate-400">Description</dt><dd class="font-medium text-slate-800">@_rfq.EquipmentDescription</dd></div>
+                        <div><dt class="text-xs text-slate-400">Maker</dt><dd class="text-slate-700">@_rfq.EquipmentMaker</dd></div>
+                        <div><dt class="text-xs text-slate-400">Particulars</dt><dd class="text-slate-700">@_rfq.EquipmentParticulars</dd></div>
+                        <div><dt class="text-xs text-slate-400">Serial no.</dt><dd class="text-slate-700">@_rfq.EquipmentSerialNo</dd></div>
+                    </dl>
+                }
+            </div>
+
+            <div class="card p-4">
+                <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Your terms</h2>
+                <div class="space-y-3 text-sm">
+                    <div>
+                        <label class="mb-1 block text-xs text-slate-500">Supplier ref.</label>
+                        <input @bind="_input.SupplierRef" disabled="@_locked" class="@InputClass" />
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="mb-1 block text-xs text-slate-500">Delivery time (days)</label>
+                            <input type="number" min="0" @bind="_input.DeliveryDays" disabled="@_locked" class="@InputClass" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-xs text-slate-500">Valid until</label>
+                            <input type="date" @bind="_input.ValidityDate" disabled="@_locked" class="@InputClass" />
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="mb-1 block text-xs text-slate-500">Currency</label>
+                            <select @bind="_input.Currency" disabled="@_locked" class="@InputClass">
+                                @foreach (var c in Money.Currencies)
+                                {
+                                    <option value="@c">@c</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-xs text-slate-500">Discount (%)</label>
+                            <input type="number" min="0" max="100" step="0.01" @bind="_input.DiscountPct" disabled="@_locked" class="@InputClass" />
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="mb-1 block text-xs text-slate-500">Additional charges</label>
+                            <input type="number" min="0" step="0.01" @bind="_input.AdditionalCharges" disabled="@_locked" class="@InputClass" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-xs text-slate-500">Charge description</label>
+                            <input @bind="_input.AdditionalChargeDescription" disabled="@_locked" class="@InputClass" />
+                        </div>
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-xs text-slate-500">Remarks</label>
+                        <textarea @bind="_input.Remarks" rows="2" disabled="@_locked" class="@InputClass"></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @* Right: lines *@
+        <div class="lg:col-span-2">
+            <div class="mb-4 card p-4 text-sm print:hidden">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <span class="font-medium text-slate-700">Quote by spreadsheet</span>
+                    <a href="/supplier/rfqs/@RfqId/worksheet" download class="rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-indigo-600 hover:bg-slate-50">Download Excel worksheet</a>
+                    <a href="/supplier/rfqs/@RfqId/worksheet?format=csv" download class="text-slate-500 underline hover:text-slate-700">or CSV</a>
+                    @if (!_locked)
+                    {
+                        <label class="ml-auto flex items-center gap-2 text-slate-600">
+                            Upload filled worksheet
+                            <InputFile OnChange="OnWorksheetSelected" accept=".xlsx,.csv" class="text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-indigo-700" />
+                        </label>
+                    }
+                </div>
+                @if (_sheetError is not null)
+                {
+                    <p class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-rose-600">@_sheetError</p>
+                }
+                @if (_sheetResult is not null)
+                {
+                    <div class="mt-3 rounded-lg bg-sky-50 px-3 py-2 text-sky-800">
+                        <p>
+                            Loaded @_sheetResult.Lines.Count of @_sheetResult.RowsRead rows from <b>@_sheetFileName</b> (@_sheetResult.Priced priced).
+                            @if (_sheetResult.Terms.HasAny) { <span>Your terms were filled in too.</span> }
+                            <b>Nothing is submitted yet.</b> Check the totals, then press @(_existing is null ? "Submit quotation" : "Update quotation").
+                        </p>
+                        @if (_sheetResult.Warnings.Count > 0)
+                        {
+                            <ul class="mt-2 list-disc pl-5 text-xs text-amber-700">
+                                @foreach (var w in _sheetResult.Warnings) { <li>@w</li> }
+                            </ul>
+                        }
+                    </div>
+                }
+            </div>
+
+            @if (_rfq.Lines.Count > LinePageSize)
+            {
+                <div class="mb-3 flex items-center gap-3 print:hidden">
+                    <input @bind="_lineFilter" @bind:after="() => _linePage = 1" placeholder="Filter lines by code or name…"
+                           class="input w-64" />
+                    <span class="text-sm text-slate-500">@VisibleLines.Count of @_rfq.Lines.Count lines &middot; @QuotedCount priced</span>
+                </div>
+            }
+            <div class="card">
+                <table class="w-full text-left text-sm">
+                    <thead>
+                        <tr class="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                            <th class="px-3 py-3 font-medium">#</th>
+                            <th class="px-3 py-3 font-medium">Item</th>
+                            <th class="px-3 py-3 font-medium">Qty</th>
+                            <th class="px-3 py-3 font-medium">Price</th>
+                            <th class="px-3 py-3 font-medium">Disc %</th>
+                            <th class="px-3 py-3 text-right font-medium">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{ var n = (_linePage - 1) * LinePageSize; }
+                        @foreach (var line in VisibleLines.Skip((_linePage - 1) * LinePageSize).Take(LinePageSize))
+                        {
+                            n++;
+                            var item = _itemsById.GetValueOrDefault(line.ItemId);
+                            var draft = _lines[line.Id];
+                            <tr class="border-b border-slate-50 align-top last:border-0">
+                                <td class="px-3 py-3 text-slate-400">@n</td>
+                                <td class="px-3 py-3">
+                                    <p class="font-medium text-slate-800">@item?.Code &mdash; @item?.Name</p>
+                                    @if (!string.IsNullOrWhiteSpace(line.Description)) { <p class="text-xs text-slate-500">@line.Description</p> }
+                                    @if (!string.IsNullOrWhiteSpace(line.DrawingNo)) { <p class="text-xs text-slate-400">Drawing @line.DrawingNo</p> }
+                                    <input @bind="draft.OfferText" disabled="@_locked" placeholder="Offer (if different from what's requested)"
+                                           class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-fuchsia-800 placeholder:text-slate-400" />
+                                </td>
+                                <td class="px-3 py-3 text-slate-600">
+                                    @Money.Qty(line.Quantity)
+                                    <input @bind="draft.Uom" disabled="@_locked" title="Unit of measure" class="mt-1 block w-16 rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs" />
+                                </td>
+                                <td class="px-3 py-3">
+                                    <input type="number" min="0" step="0.01" @bind="draft.UnitPrice" disabled="@_locked"
+                                           class="w-24 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm" />
+                                </td>
+                                <td class="px-3 py-3">
+                                    <input type="number" min="0" max="100" step="0.01" @bind="draft.DiscountPct" disabled="@_locked"
+                                           class="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm" />
+                                </td>
+                                <td class="px-3 py-3 text-right font-medium text-slate-800">
+                                    @Money.Format(Money.LineNet(line.Quantity, draft.UnitPrice, draft.DiscountPct), _input.Currency)
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        @if (VisibleLines.Count > LinePageSize)
+                        {
+                            <tr>
+                                <td colspan="6" class="px-3 py-3">
+                                    <div class="flex items-center justify-between text-xs text-slate-500 print:hidden">
+                                        <span>Showing @((_linePage - 1) * LinePageSize + 1)–@Math.Min(_linePage * LinePageSize, VisibleLines.Count) of @VisibleLines.Count</span>
+                                        <div class="flex items-center gap-2">
+                                            <button type="button" @onclick="() => _linePage--" disabled="@(_linePage <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                                            <span>Page @_linePage of @((int)Math.Ceiling(VisibleLines.Count / (double)LinePageSize))</span>
+                                            <button type="button" @onclick="() => _linePage++" disabled="@(_linePage * LinePageSize >= VisibleLines.Count)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        <tr><td colspan="5" class="px-3 py-2 text-right text-sm text-slate-500">Subtotal</td><td class="px-3 py-2 text-right text-slate-700">@Money.Format(Subtotal, _input.Currency)</td></tr>
+                        @if (_input.DiscountPct > 0)
+                        {
+                            <tr><td colspan="5" class="px-3 py-2 text-right text-sm text-slate-500">Discount @_input.DiscountPct.ToString("0.##")%</td><td class="px-3 py-2 text-right text-slate-700">&minus;@Money.Format(Money.HeaderDiscount(Subtotal, _input.DiscountPct), _input.Currency)</td></tr>
+                        }
+                        @if (_input.AdditionalCharges > 0)
+                        {
+                            <tr><td colspan="5" class="px-3 py-2 text-right text-sm text-slate-500">@(string.IsNullOrWhiteSpace(_input.AdditionalChargeDescription) ? "Additional charges" : _input.AdditionalChargeDescription)</td><td class="px-3 py-2 text-right text-slate-700">@Money.Format(_input.AdditionalCharges, _input.Currency)</td></tr>
+                        }
+                        <tr><td colspan="5" class="px-3 py-3 text-right text-sm font-medium text-slate-500">Total</td><td class="px-3 py-3 text-right text-lg font-bold text-slate-900">@Money.Format(Money.GrandTotal(Subtotal, _input.DiscountPct, _input.AdditionalCharges), _input.Currency)</td></tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            @if (_error is not null)
+            {
+                <div class="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+            }
+            @if (_saved)
+            {
+                <div class="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Quotation saved.</div>
+            }
+
+            <div class="mt-6 flex gap-3 print:hidden">
+                @if (!_locked)
+                {
+                    <button @onclick="Submit" class="btn btn-primary">
+                        @(_existing is null ? "Submit quotation" : "Update quotation")
+                    </button>
+                }            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private const string InputClass = "w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm disabled:bg-slate-100 disabled:text-slate-500";
+
+    [Parameter] public int RfqId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _supplierId;
+    private Rfq? _rfq;
+    private Quote? _existing;
+    private QuoteInput _input = new();
+    private readonly Dictionary<int, QuoteLine> _lines = new();
+    private Dictionary<int, Item> _itemsById = new();
+    private List<Port> _ports = new();
+    private bool _locked;
+    private string? _lockReason;
+    private string? _error;
+    private bool _saved;
+
+    private const int LinePageSize = 25;
+    private string _lineFilter = "";
+    private int _linePage = 1;
+
+    private int QuotedCount => _lines.Values.Count(l => l.UnitPrice > 0);
+
+    private List<RfqLine> VisibleLines
+    {
+        get
+        {
+            if (_rfq is null) return new();
+            if (string.IsNullOrWhiteSpace(_lineFilter)) return _rfq.Lines;
+            var term = _lineFilter.Trim();
+            return _rfq.Lines.Where(l =>
+            {
+                var item = _itemsById.GetValueOrDefault(l.ItemId);
+                return item is not null && (item.Code.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                            || item.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }).ToList();
+        }
+    }
+
+    private decimal Subtotal =>_rfq?.Lines.Sum(l => Money.LineNet(l.Quantity, _lines[l.Id].UnitPrice, _lines[l.Id].DiscountPct)) ?? 0m;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _rfq = await Procurement.GetRfqForSupplierAsync(_supplierId, RfqId);
+        if (_rfq is null) return;
+
+        _existing = await Procurement.GetQuoteAsync(RfqId, _supplierId);
+        _ports = await Procurement.GetPortsAsync();
+
+        var items = await Procurement.GetItemsByIdsAsync(_rfq.Lines.Select(l => l.ItemId));
+        _itemsById = items.ToDictionary(i => i.Id);
+
+        var myPos = await Procurement.GetPurchaseOrdersForSupplierAsync(_supplierId);
+        var hasPo = myPos.Any(p => p.RfqId == RfqId);
+
+        _locked = !ProcurementService.CanQuote(_rfq, _supplierId, hasPo);
+        _lockReason = !_locked ? null
+            : _rfq.IsPastDue ? "This RFQ is closed — the due date has passed."
+            : "This RFQ has been awarded, so the quotation can no longer be changed.";
+
+        if (_existing is not null)
+        {
+            _input = new QuoteInput
+            {
+                SupplierRef = _existing.SupplierRef,
+                DeliveryDays = _existing.DeliveryDays,
+                ValidityDate = _existing.ValidityDate,
+                Currency = _existing.Currency,
+                DiscountPct = _existing.DiscountPct,
+                AdditionalCharges = _existing.AdditionalCharges,
+                AdditionalChargeDescription = _existing.AdditionalChargeDescription,
+                Remarks = _existing.Remarks
+            };
+        }
+
+        _lines.Clear();
+        foreach (var line in _rfq.Lines)
+        {
+            var q = _existing?.Lines.FirstOrDefault(l => l.RfqLineId == line.Id);
+            _lines[line.Id] = new QuoteLine
+            {
+                RfqLineId = line.Id,
+                UnitPrice = q?.UnitPrice ?? 0m,
+                DiscountPct = q?.DiscountPct ?? 0m,
+                Uom = q?.Uom ?? line.Uom,
+                OfferText = q?.OfferText ?? ""
+            };
+        }
+    }
+
+    private static string Date(DateTime? d) => d.HasValue ? d.Value.ToString("dd-MMM-yyyy") : "—";
+
+    private string? PortLabel()
+    {
+        var port = _ports.FirstOrDefault(p => p.Id == _rfq?.DeliveryPortId);
+        return port is null ? null : $"{port.Name}, {port.Country}";
+    }
+
+    private QuoteSheetResult? _sheetResult;
+    private string? _sheetFileName;
+    private string? _sheetError;
+
+    private async Task OnWorksheetSelected(InputFileChangeEventArgs e)
+    {
+        _sheetResult = null;
+        _sheetError = null;
+        _error = null;
+        _saved = false;
+
+        var file = e.File;
+        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+        if (ext is not (".xlsx" or ".csv"))
+        {
+            _sheetError = "Upload the .xlsx or .csv worksheet downloaded from this page.";
+            return;
+        }
+        if (file.Size > QuoteSheet.MaxBytes)
+        {
+            _sheetError = "That file is larger than 5 MB.";
+            return;
+        }
+
+        QuoteSheetResult result;
+        try
+        {
+            await using var stream = file.OpenReadStream(QuoteSheet.MaxBytes);
+            if (ext == ".csv")
+            {
+                using var reader = new StreamReader(stream);
+                result = QuoteSheet.ParseCsv(await reader.ReadToEndAsync(), _rfq!, _itemsById);
+            }
+            else
+            {
+                using var buffer = new MemoryStream();
+                await stream.CopyToAsync(buffer);
+                buffer.Position = 0;
+                result = QuoteSheet.ParseXlsx(buffer, _rfq!, _itemsById);
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _sheetError = "Couldn't read that file. Download the worksheet again and upload it in .xlsx or .csv format.";
+            return;
+        }
+
+        if (result.RowsRead == 0 && result.Warnings.Count > 0)
+        {
+            // Nothing usable in the file: show the reason on its own rather than a "Loaded 0 of 0" banner.
+            _sheetError = result.Warnings[0];
+            return;
+        }
+
+        // Fill the form only; the supplier still reviews and submits.
+        foreach (var l in result.Lines)
+        {
+            var rfqLine = _rfq!.Lines.First(x => x.Id == l.RfqLineId);
+            var draft = _lines[l.RfqLineId];
+            draft.UnitPrice = l.UnitPrice;
+            draft.DiscountPct = l.DiscountPct;
+            draft.Uom = l.Uom ?? rfqLine.Uom;
+            draft.OfferText = l.OfferText;
+        }
+
+        var t = result.Terms;
+        if (t.SupplierRef is not null) _input.SupplierRef = t.SupplierRef;
+        if (t.DeliveryDays.HasValue) _input.DeliveryDays = t.DeliveryDays;
+        if (t.ValidityDate.HasValue) _input.ValidityDate = t.ValidityDate;
+        if (t.Currency is not null) _input.Currency = t.Currency;
+        if (t.DiscountPct.HasValue) _input.DiscountPct = t.DiscountPct.Value;
+        if (t.AdditionalCharges.HasValue) _input.AdditionalCharges = t.AdditionalCharges.Value;
+        if (t.AdditionalChargeDescription is not null) _input.AdditionalChargeDescription = t.AdditionalChargeDescription;
+        if (t.Remarks is not null) _input.Remarks = t.Remarks;
+
+        _sheetResult = result;
+        _sheetFileName = file.Name;
+    }
+
+    private async Task Submit()
+    {
+        _error = null;
+        _saved = false;
+
+        _input.Lines = _rfq!.Lines
+            .Select(l => (Line: l, Draft: _lines[l.Id]))
+            .Where(x => x.Draft.UnitPrice > 0)
+            .Select(x => new QuoteLine
+            {
+                RfqLineId = x.Line.Id,
+                UnitPrice = x.Draft.UnitPrice,
+                DiscountPct = x.Draft.DiscountPct,
+                Uom = x.Draft.Uom == x.Line.Uom ? null : x.Draft.Uom,
+                OfferText = x.Draft.OfferText ?? ""
+            })
+            .ToList();
+
+        try
+        {
+            await Procurement.SubmitQuoteAsync(RfqId, _supplierId, _input);
+            await Load();
+            _saved = true;
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Keep what the supplier typed so they can correct it; no reload on error.
+            _error = ex.Message;
+        }
+    }
+}

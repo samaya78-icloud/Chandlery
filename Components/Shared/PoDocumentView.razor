@@ -1,0 +1,172 @@
+@* The formal purchase order sent to a supplier. Always black on white (it is a document, not a screen),
+   laid out for A4; the browser's Print / Save as PDF produces the file. *@
+
+@{
+    var po = Doc.Po;
+    var approved = po.Status == PoStatus.Approved;
+    var showPrices = !po.IsDummy;
+}
+
+<article class="po-sheet">
+    <header class="po-head">
+        <div>
+            <p class="po-company">@Doc.Company.Name</p>
+            @if (!string.IsNullOrWhiteSpace(Doc.Company.Address))
+            {
+                @foreach (var line in Doc.Company.Address.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    <p class="po-muted">@line</p>
+                }
+            }
+            @if (!string.IsNullOrWhiteSpace(Doc.Company.ContactEmail))
+            {
+                <p class="po-muted">@Doc.Company.ContactEmail</p>
+            }
+            @if (!string.IsNullOrWhiteSpace(Doc.Company.RegistrationNumber))
+            {
+                <p class="po-muted">Reg. no. @Doc.Company.RegistrationNumber</p>
+            }
+        </div>
+        <div class="po-title">
+            <p class="po-kicker">Purchase order</p>
+            <p class="po-number">@po.PoNumber</p>
+            <p class="@("po-stamp " + (approved ? "po-stamp-ok" : "po-stamp-draft"))">@(approved ? "Approved" : po.Status == PoStatus.Rejected ? "Rejected, not valid" : "Draft, awaiting approval")</p>
+        </div>
+    </header>
+
+    <section class="po-meta">
+        <div><p class="po-label">Issue date</p><p>@po.CreatedDate.ToString("dd MMM yyyy")</p></div>
+        <div><p class="po-label">Currency</p><p>@po.Currency</p></div>
+        <div><p class="po-label">Order basis</p><p>@(po.IsSpot ? "Direct order" : $"Quotation, RFQ {Doc.RfqNumber}")</p></div>
+        <div><p class="po-label">Your reference</p><p>@(string.IsNullOrWhiteSpace(po.SupplierRef) ? "-" : po.SupplierRef)</p></div>
+    </section>
+
+    <section class="po-parties">
+        <div class="po-box">
+            <p class="po-label">Supplier</p>
+            <p class="po-strong">@Doc.Supplier.Name</p>
+            @if (!string.IsNullOrWhiteSpace(Doc.Supplier.ContactEmail))
+            {
+                <p class="po-muted">@Doc.Supplier.ContactEmail</p>
+            }
+        </div>
+        <div class="po-box">
+            <p class="po-label">Supplied for</p>
+            <p class="po-strong">@(string.IsNullOrWhiteSpace(Doc.Vessel) ? "-" : Doc.Vessel)@(string.IsNullOrWhiteSpace(Doc.Imo) ? "" : $" (IMO {Doc.Imo})")</p>
+            @if (Doc.Port is not null)
+            {
+                <p class="po-muted">Delivery port: @Doc.Port</p>
+            }
+            @if (Doc.Department is not null)
+            {
+                <p class="po-muted">Department: @Doc.Department</p>
+            }
+            @if (Doc.RequisitionNumber is not null)
+            {
+                <p class="po-muted">Requisition: @Doc.RequisitionNumber</p>
+            }
+        </div>
+    </section>
+
+    @if (po.IsDummy)
+    {
+        <p class="po-note">This is a nil-value order. It records goods supplied under an arrangement made outside this system, so no prices are shown.</p>
+    }
+
+    <table class="po-lines">
+        <thead>
+            <tr>
+                <th class="po-c">#</th>
+                <th>Code</th>
+                <th>Description</th>
+                <th class="po-r">Qty</th>
+                <th>UOM</th>
+                @if (showPrices)
+                {
+                    <th class="po-r">Unit price</th>
+                    <th class="po-r">Disc.</th>
+                    <th class="po-r">Amount</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var line in Doc.Lines)
+            {
+                <tr>
+                    <td class="po-c">@line.Number</td>
+                    <td class="po-nowrap">@line.Code</td>
+                    <td>@line.Name</td>
+                    <td class="po-r po-nowrap">@Money.Qty(line.Quantity)</td>
+                    <td>@line.Uom</td>
+                    @if (showPrices)
+                    {
+                        <td class="po-r po-nowrap">@line.UnitPrice.ToString("N2")</td>
+                        <td class="po-r">@(line.DiscountPct > 0 ? line.DiscountPct.ToString("0.##") + "%" : "")</td>
+                        <td class="po-r po-nowrap">@line.Amount.ToString("N2")</td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (showPrices)
+    {
+        <div class="po-totals">
+            <div><span>Subtotal</span><span>@Money.Format(po.Subtotal, po.Currency)</span></div>
+            @if (po.DiscountPct > 0)
+            {
+                <div><span>Discount @po.DiscountPct.ToString("0.##")%</span><span>&minus;@Money.Format(Money.HeaderDiscount(po.Subtotal, po.DiscountPct), po.Currency)</span></div>
+            }
+            @if (po.AdditionalCharges > 0)
+            {
+                <div><span>@(string.IsNullOrWhiteSpace(po.AdditionalChargeDescription) ? "Additional charges" : po.AdditionalChargeDescription)</span><span>@Money.Format(po.AdditionalCharges, po.Currency)</span></div>
+            }
+            <div class="po-grand"><span>Total</span><span>@Money.Format(po.Total, po.Currency)</span></div>
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(po.Remarks))
+    {
+        <section class="po-block">
+            <p class="po-label">Instructions and remarks</p>
+            <p>@po.Remarks</p>
+        </section>
+    }
+
+    <section class="po-block po-terms">
+        <p class="po-label">Terms of purchase</p>
+        <ol>
+            @foreach (var term in PoPdf.Terms(po.PoNumber))
+            {
+                <li>@term</li>
+            }
+        </ol>
+    </section>
+
+    <section class="po-sign">
+        <div>
+            <p class="po-label">Approved electronically</p>
+            @if (Doc.Approvers.Count == 0)
+            {
+                <p class="po-muted">@(approved ? "No approval was required for this order." : "Not yet approved.")</p>
+            }
+            else
+            {
+                @foreach (var a in Doc.Approvers)
+                {
+                    <p><span class="po-strong">@a.Name</span> <span class="po-muted">&middot; level @a.Level@(a.At.HasValue ? " · " + a.At.Value.ToString("dd MMM yyyy HH:mm") + " UTC" : "")</span></p>
+                }
+            }
+        </div>
+        <div>
+            <p class="po-label">Supplier acknowledgement</p>
+            <p class="po-muted">Please confirm receipt by replying to @(string.IsNullOrWhiteSpace(Doc.Company.ContactEmail) ? "the buyer" : Doc.Company.ContactEmail), quoting @po.PoNumber.</p>
+        </div>
+    </section>
+
+    <footer class="po-foot">@Doc.Company.Name &middot; @po.PoNumber &middot; generated by Chandlery from the approved record</footer>
+</article>
+
+@code {
+    [Parameter, EditorRequired] public PoDocument Doc { get; set; } = default!;
+}

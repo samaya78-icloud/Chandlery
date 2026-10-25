@@ -1,0 +1,64 @@
+@page "/company/departments/{DepartmentId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject HubService Hub
+@inject ApprovalService ApprovalSvc
+
+<PageTitle>@(_hub?.Department.Name ?? "Department") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_hub is null)
+{
+    <EmptyState Title="Department not found" />
+}
+else
+{
+    <PageHeader Eyebrow="Department" Title="@_hub.Department.Name" Subtitle="Everything raised for this department, and who approves its purchase orders." />
+
+    <div class="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-3">
+        <StatCard Label="Requisitions" Value="@_hub.Requisitions.Count.ToString("N0")" Hint="@($"{_hub.Requisitions.Count(r => r.Status == RequisitionStatus.Open)} open")" />
+        <StatCard Label="Purchase orders" Value="@_hub.Pos.Count.ToString("N0")" Tone="warning" />
+        <StatCard Label="Approval rules" Value="@_hub.Rules.Count.ToString("N0")" Hint="@(_hub.Rules.Count == 0 ? "Uses the 'All departments' rules" : "Specific to this department")" Tone="info" Href="/company/approval-matrix" />
+    </div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Requisitions</h2>
+    <div class="mb-8"><ReqnTable Requisitions="_hub.Requisitions" ShowDepartment="false" ExportName="@(_hub.Department.Name + "-requisitions")" /></div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Purchase orders</h2>
+    <div class="mb-8"><PoTable Pos="_hub.Pos" ExportName="@(_hub.Department.Name + "-pos")" /></div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Approval rules <a href="/company/approval-matrix" class="link ml-2 text-sm">Open matrix &rarr;</a></h2>
+    @if (_hub.Rules.Count == 0)
+    {
+        <p class="text-sm text-muted">No department-specific rules, so the "All departments" rules apply.</p>
+    }
+    else
+    {
+        <DataGrid TItem="ApprovalRuleRow" Items="_hub.Rules" ItemName="rules" SyncUrl="false" EmptyText="No rules.">
+            <GridColumn Title="Up to amount" Text="r => UpTo(r)" Filter="GridFilter.None" SortBy="r => r.Rule.UpToAmount ?? decimal.MaxValue" />
+            <GridColumn Title="Level" Text="r => r.Rule.Level.ToString()" Filter="GridFilter.Select" />
+            <GridColumn Title="Approver" Text="r => r.Approver" Filter="GridFilter.Select" />
+        </DataGrid>
+    }
+}
+
+@code {
+    [Parameter] public int DepartmentId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private DepartmentHub? _hub;
+    private bool _loaded;
+
+    private static string UpTo(ApprovalRuleRow row) => row.Rule.UpToAmount.HasValue ? row.Rule.UpToAmount.Value.ToString("N2") : "No limit";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _hub = await Hub.GetDepartmentAsync(companyId, DepartmentId, ApprovalSvc);
+        _loaded = true;
+    }
+}

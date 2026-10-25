@@ -1,0 +1,75 @@
+@page "/company/ports"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+
+<PageTitle>Ports · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Ports" Subtitle="Shared port list, visible to every company on Chandlery.">
+    <Actions>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add Port</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="mb-6 max-w-md card p-4">
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Port Name</label>
+            <input @bind="_name" class="input" />
+        </div>
+        <div class="mb-4">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Country</label>
+            <input @bind="_country" class="input" />
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+
+        <button @onclick="Add" class="btn btn-primary">Save</button>
+    </div>
+}
+
+<DataGrid @ref="_grid" TItem="Port" ItemsProvider="LoadPage" ItemName="ports" ExportName="ports" PageSize="25" EmptyText="No ports match these filters.">
+    <GridColumn Title="Port" Key="port" Text="p => p.Name" CellClass="font-semibold text-ink" />
+    <GridColumn Title="Country" Key="country" Text="p => p.Country" Filter="GridFilter.Select" OptionsLoader="LoadCountryOptions" />
+</DataGrid>
+
+@code {
+    private DataGrid<Port>? _grid;
+    private bool _showForm;
+    private string _name = "";
+    private string _country = "";
+    private string? _error;
+
+    private Task<GridResult<Port>> LoadPage(GridRequest request) => Procurement.GetPortPageAsync(request);
+
+    private async Task<IEnumerable<string>> LoadCountryOptions() => await Procurement.GetPortCountryOptionsAsync();
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(_name) || string.IsNullOrWhiteSpace(_country))
+        {
+            _error = "Port name and country are required.";
+            return;
+        }
+
+        try
+        {
+            await Procurement.AddPortAsync(_name.Trim(), _country.Trim());
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            return;
+        }
+
+        _name = "";
+        _country = "";
+        _error = null;
+        _showForm = false;
+        if (_grid is not null) await _grid.ReloadAsync();
+    }
+}

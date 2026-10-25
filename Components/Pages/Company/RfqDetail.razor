@@ -1,0 +1,395 @@
+@page "/company/rfqs/{RfqId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject RequisitionService Requisitions
+@inject NavigationManager Navigation
+
+<PageTitle>@(_rfq?.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
+
+@if (_rfq is null)
+{
+    <p class="text-sm text-slate-500">RFQ not found.</p>
+}
+else
+{
+    <PageHeader Eyebrow="Request for quote" Title="@_rfq.RfqNumber">
+        <Badges>
+            <StatusChip Value="_rfq.Status" />
+            <StatusChip Value="_rfq.Type" />
+        </Badges>
+        <Facts>
+            @if (_rfq.VesselId is { } vesselId)
+            {
+                <DocLink Kind="DocKind.Vessel" Id="vesselId" Text="@_rfq.Vessel" />
+            }
+            else
+            {
+                <span>@_rfq.Vessel</span>
+            }
+            <span>&middot; Created @_rfq.CreatedDate.ToString("MMM d, yyyy")</span>
+            @if (_requisition is not null)
+            {
+                <span>&middot; From requisition</span>
+                <DocLink Kind="DocKind.Requisition" Id="_requisition.Id" Text="@_requisition.ReqnNumber" />
+            }
+        </Facts>
+        <Actions>
+            <button onclick="window.print()" class="btn btn-secondary btn-sm">Print</button>
+        </Actions>
+    </PageHeader>
+
+    <RelatedDocuments CompanyId="_companyId" Kind="DocKind.Rfq" Id="_rfq.Id" Version="_auditVersion" />
+
+    <div class="mb-6 grid grid-cols-2 gap-4 card p-4 text-sm md:grid-cols-4">
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Delivery port</p><p class="font-medium text-slate-800">@(PortLabel() ?? "—")</p></div>
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Quotes due</p><p class="font-medium text-slate-800">@Date(_rfq.DueDate)@(_rfq.IsPastDue ? " (closed)" : "")</p></div>
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Date required</p><p class="font-medium text-slate-800">@Date(_rfq.DateRequired)</p></div>
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Vessel ETA</p><p class="font-medium text-slate-800">@Date(_rfq.VesselEta)</p></div>
+        <div class="col-span-2"><p class="text-xs uppercase tracking-wide text-slate-400">Buyer contact</p><p class="font-medium text-slate-800">@_rfq.BuyerName @(string.IsNullOrWhiteSpace(_rfq.BuyerDesignation) ? "" : "· " + _rfq.BuyerDesignation)</p><p class="text-slate-500">@_rfq.BuyerEmail</p></div>
+        @if (_rfq.Type == RfqType.Spares)
+        {
+            <div class="col-span-2"><p class="text-xs uppercase tracking-wide text-slate-400">Equipment</p><p class="font-medium text-slate-800">@_rfq.EquipmentDescription</p><p class="text-slate-500">@_rfq.EquipmentMaker @_rfq.EquipmentParticulars @(string.IsNullOrWhiteSpace(_rfq.EquipmentSerialNo) ? "" : "· S/N " + _rfq.EquipmentSerialNo)</p></div>
+        }
+        @if (!string.IsNullOrWhiteSpace(_rfq.Remarks))
+        {
+            <div class="col-span-2 md:col-span-4"><p class="text-xs uppercase tracking-wide text-slate-400">Remarks</p><p class="text-slate-700">@_rfq.Remarks</p></div>
+        }
+    </div>
+
+    @if (_newlyRaisedPos.Count > 0)
+    {
+        <div class="mb-6 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            Raised @_newlyRaisedPos.Count purchase order(s):
+            @foreach (var raised in _newlyRaisedPos)
+            {
+                <a href="/company/purchase-orders/@raised.Id" class="link mr-2">@raised.PoNumber</a>
+            }
+            @if (_newlyRaisedPos.Any(p => p.Status == PoStatus.PendingApproval))
+            {
+                <span>&mdash; waiting for approval before they are released to the supplier.</span>
+            }
+        </div>
+    }
+    @if (_error is not null)
+    {
+        <div class="mb-6 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-600">@_error</div>
+    }
+
+    @* Supplier terms and totals *@
+    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Suppliers</h2>
+    <div class="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+        @foreach (var supplierId in _rfq.InvitedSupplierIds)
+        {
+            var supplier = _suppliersById.GetValueOrDefault(supplierId);
+            var quote = _quotes.FirstOrDefault(q => q.SupplierId == supplierId);
+            <div class="card p-4">
+                <div class="flex items-center justify-between">
+                    @if (supplier is not null)
+                    {
+                        <DocLink Kind="DocKind.Supplier" Id="supplier.Id" Text="@supplier.Name" />
+                    }
+                    @if (quote is null)
+                    {
+                        <StatusChip Label="No quote yet" Tone="warning" />
+                    }
+                    else
+                    {
+                        <StatusChip Label="Quoted" Tone="info" />
+                    }
+                </div>
+                @if (quote is not null)
+                {
+                    <p class="mt-2 text-xl font-bold text-slate-900">@Money.Format(quote.GrandTotal(_rfq.Lines), quote.Currency)</p>
+                    <dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-500">
+                        <dt>Delivery</dt><dd class="text-slate-700">@(quote.DeliveryDays.HasValue ? quote.DeliveryDays + " days" : "—")</dd>
+                        <dt>Valid until</dt><dd class="text-slate-700">@Date(quote.ValidityDate)</dd>
+                        <dt>Discount</dt><dd class="text-slate-700">@quote.DiscountPct.ToString("0.##")%</dd>
+                        <dt>Additional charges</dt><dd class="text-slate-700">@Money.Format(quote.AdditionalCharges, quote.Currency)@(string.IsNullOrWhiteSpace(quote.AdditionalChargeDescription) ? "" : " (" + quote.AdditionalChargeDescription + ")")</dd>
+                        <dt>Supplier ref</dt><dd class="text-slate-700">@(string.IsNullOrWhiteSpace(quote.SupplierRef) ? "—" : quote.SupplierRef)</dd>
+                    </dl>
+                    @if (!string.IsNullOrWhiteSpace(quote.Remarks))
+                    {
+                        <p class="mt-2 text-xs text-slate-500">@quote.Remarks</p>
+                    }
+                }
+            </div>
+        }
+    </div>
+
+    @* Line comparison *@
+    var visibleLines = VisibleLines;
+    @if (_rfq.Lines.Count > LinePageSize)
+    {
+        <div class="mb-3 flex items-center gap-3 print:hidden">
+            <input @bind="_lineFilter" @bind:after="() => _linePage = 1" placeholder="Filter lines by code or name…"
+                   class="input w-64" />
+            <span class="text-sm text-slate-500">@visibleLines.Count of @_rfq.Lines.Count lines</span>
+        </div>
+    }
+    <div class="flex flex-col gap-4">
+        @foreach (var line in visibleLines.Skip((_linePage - 1) * LinePageSize).Take(LinePageSize))
+        {
+            var item = _itemsById.GetValueOrDefault(line.ItemId);
+            var isPoRaised = _poItemIds.Contains(line.ItemId);
+            <div class="card">
+                <div class="flex items-center justify-between border-b border-slate-100 p-4">
+                    <div>
+                        <p class="font-semibold text-slate-800">@item?.Name</p>
+                        <p class="text-xs text-slate-400">@item?.Code &middot; Qty @Money.Qty(line.Quantity) @line.Uom@(string.IsNullOrWhiteSpace(line.DrawingNo) ? "" : " · Drawing " + line.DrawingNo)</p>
+                        @if (!string.IsNullOrWhiteSpace(line.Description))
+                        {
+                            <p class="mt-1 text-xs text-slate-500">@line.Description</p>
+                        }
+                    </div>
+                    @if (isPoRaised)
+                    {
+                        <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-600">PO Raised</span>
+                    }
+                    else if (line.WinningSupplierId.HasValue)
+                    {
+                        <span class="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-600">Awarded &middot; pending PO</span>
+                    }
+                </div>
+
+                <div class="grid grid-cols-1 divide-y divide-slate-50 md:grid-cols-2 md:divide-x md:divide-y-0">
+                    @foreach (var supplierId in _rfq.InvitedSupplierIds)
+                    {
+                        var supplier = _suppliersById.GetValueOrDefault(supplierId);
+                        var quote = _quotes.FirstOrDefault(q => q.SupplierId == supplierId);
+                        var quoteLine = quote?.Lines.FirstOrDefault(ql => ql.RfqLineId == line.Id);
+                        var isWinner = line.WinningSupplierId == supplierId;
+
+                        <div class="p-4">
+                            <div class="mb-2 flex items-center justify-between">
+                                <p class="text-sm font-medium text-slate-700">@supplier?.Name</p>
+                                @if (quote is not null && quoteLine is not null && IsLowest(line.Id, quote, quoteLine))
+                                {
+                                    <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600">Lowest</span>
+                                }
+                            </div>
+                            @if (quote is null || quoteLine is null)
+                            {
+                                <p class="text-sm text-slate-400">No quote yet</p>
+                            }
+                            else
+                            {
+                                <p class="text-lg font-bold text-slate-800">@Money.Format(NetUnit(quoteLine), quote.Currency)</p>
+                                <p class="text-xs text-slate-400">
+                                    List @Money.Format(quoteLine.UnitPrice, quote.Currency)@(quoteLine.DiscountPct > 0 ? $" less {quoteLine.DiscountPct:0.##}%" : "")
+                                    &middot; line total @Money.Format(Money.LineNet(line.Quantity, quoteLine.UnitPrice, quoteLine.DiscountPct), quote.Currency)
+                                </p>
+                                @if (!string.IsNullOrWhiteSpace(quoteLine.OfferText))
+                                {
+                                    <p class="mt-1 text-xs italic text-fuchsia-700">Offer: @quoteLine.OfferText</p>
+                                }
+                                <label class="mt-3 flex items-center gap-2 text-sm @(isPoRaised ? "text-slate-300" : "text-slate-600") print:hidden">
+                                    <input type="radio" name="@($"award-{line.Id}")" disabled="@isPoRaised"
+                                           checked="@isWinner" @onchange="() => Award(line.Id, supplierId)" />
+                                    Select as winner
+                                </label>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (visibleLines.Count > LinePageSize)
+    {
+        <div class="mt-4 flex items-center justify-between text-xs text-slate-500 print:hidden">
+            <span>Showing @((_linePage - 1) * LinePageSize + 1)–@Math.Min(_linePage * LinePageSize, visibleLines.Count) of @visibleLines.Count</span>
+            <div class="flex items-center gap-2">
+                <button @onclick="() => _linePage--" disabled="@(_linePage <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                <span>Page @_linePage of @((int)Math.Ceiling(visibleLines.Count / (double)LinePageSize))</span>
+                <button @onclick="() => _linePage++" disabled="@(_linePage * LinePageSize >= visibleLines.Count)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+            </div>
+        </div>
+    }
+
+    <div class="mt-6 flex items-center gap-3 print:hidden">
+        <button @onclick="RaisePurchaseOrders" disabled="@(!_rfq.Lines.Any(l => l.WinningSupplierId.HasValue))"
+                class="btn btn-primary">
+            Raise Purchase Order(s)
+        </button>
+    </div>
+
+    @if (_rfq.Status != RfqStatus.Awarded && _uninvited.Count > 0)
+    {
+        <div class="mt-8 max-w-md card p-4 print:hidden">
+            <h2 class="text-sm font-semibold text-slate-800">Invite more suppliers</h2>
+            <p class="mb-3 mt-1 text-xs text-slate-400">They'll receive this same RFQ &mdash; no need to enter the items again.</p>
+            <div class="flex flex-col gap-2">
+                @foreach (var s in _uninvited)
+                {
+                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" checked="@_toInvite.Contains(s.Id)" @onchange="e => ToggleInvite(s.Id, (bool)e.Value!)" />
+                        @s.Name
+                    </label>
+                }
+            </div>
+            <button @onclick="InviteSelected" disabled="@(_toInvite.Count == 0)"
+                    class="mt-3 btn btn-primary btn-sm">
+                Send to selected
+            </button>
+        </div>
+    }
+
+    <div class="mt-8">
+        <AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.Rfq" EntityId="_rfq.Id" Version="_auditVersion" />
+    </div>
+}
+
+@code {
+    [Parameter] public int RfqId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private Actor _actor = Actor.System;
+    private int _auditVersion;
+    private Requisition? _requisition;
+    private Rfq? _rfq;
+    private List<Quote> _quotes = new();
+    private HashSet<int> _poItemIds = new();
+    private List<PurchaseOrder> _newlyRaisedPos = new();
+    private Dictionary<int, Item> _itemsById = new();
+    private Dictionary<int, Supplier> _suppliersById = new();
+    private List<Port> _ports = new();
+    private List<Supplier> _uninvited = new();
+    private HashSet<int> _toInvite = new();
+    private string? _error;
+
+    private const int LinePageSize = 25;
+    private string _lineFilter = "";
+    private int _linePage = 1;
+
+    private List<RfqLine> VisibleLines
+    {
+        get
+        {
+            if (_rfq is null) return new();
+            if (string.IsNullOrWhiteSpace(_lineFilter)) return _rfq.Lines;
+            var term = _lineFilter.Trim();
+            return _rfq.Lines.Where(l =>
+            {
+                var item = _itemsById.GetValueOrDefault(l.ItemId);
+                return item is not null && (item.Code.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                            || item.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }).ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _rfq = await Procurement.GetRfqAsync(_companyId, RfqId);
+        if (_rfq is null) return;
+
+        _requisition = _rfq.RequisitionId.HasValue ? await Requisitions.GetAsync(_companyId, _rfq.RequisitionId.Value) : null;
+        _auditVersion++;
+
+        _quotes = await Procurement.GetQuotesForRfqAsync(_companyId, RfqId);
+
+        var pos = await Procurement.GetPurchaseOrdersAsync(_companyId);
+        _poItemIds = pos.Where(po => po.RfqId == RfqId).SelectMany(po => po.Lines).Select(l => l.ItemId).ToHashSet();
+
+        var items = await Procurement.GetItemsByIdsAsync(_rfq.Lines.Select(l => l.ItemId));
+        _itemsById = items.ToDictionary(i => i.Id);
+
+        var suppliers = await Procurement.GetSuppliersByIdsAsync(_rfq.InvitedSupplierIds);
+        _suppliersById = suppliers.ToDictionary(s => s.Id);
+
+        _ports = await Procurement.GetPortsAsync();
+
+        var linked = await Procurement.GetCompanySuppliersAsync(_companyId);
+        _uninvited = linked.Where(s => !_rfq.InvitedSupplierIds.Contains(s.Id)).ToList();
+        _toInvite.Clear();
+    }
+
+    private static string Date(DateTime? d) => d.HasValue ? d.Value.ToString("MMM d, yyyy") : "—";
+
+    private string? PortLabel()
+    {
+        var port = _ports.FirstOrDefault(p => p.Id == _rfq?.DeliveryPortId);
+        return port is null ? null : $"{port.Name}, {port.Country}";
+    }
+
+    private static decimal NetUnit(QuoteLine ql) => Money.Round(ql.UnitPrice * (1 - ql.DiscountPct / 100m));
+
+    /// <summary>Lowest net unit price, compared only against quotes in the same currency (no FX conversion).</summary>
+    private bool IsLowest(int rfqLineId, Quote quote, QuoteLine quoteLine)
+    {
+        var comparable = _quotes
+            .Where(q => q.Currency == quote.Currency)
+            .Select(q => q.Lines.FirstOrDefault(l => l.RfqLineId == rfqLineId))
+            .Where(l => l is not null)
+            .Select(l => NetUnit(l!))
+            .ToList();
+        return comparable.Count >= 2 && NetUnit(quoteLine) == comparable.Min();
+    }
+
+    private async Task Award(int rfqLineId, int supplierId)
+    {
+        _error = null;
+        try
+        {
+            await Procurement.AwardLineAsync(_companyId, RfqId, rfqLineId, supplierId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        await Load();
+    }
+
+    private async Task RaisePurchaseOrders()
+    {
+        _error = null;
+        try
+        {
+            _newlyRaisedPos = await Procurement.RaisePurchaseOrdersAsync(_companyId, RfqId, _actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        await Load();
+    }
+
+    private void ToggleInvite(int supplierId, bool selected)
+    {
+        if (selected) _toInvite.Add(supplierId);
+        else _toInvite.Remove(supplierId);
+    }
+
+    private async Task InviteSelected()
+    {
+        _error = null;
+        try
+        {
+            await Procurement.AddSuppliersToRfqAsync(_companyId, RfqId, _toInvite);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        await Load();
+    }
+
+    private static string StatusClasses(RfqStatus status) => status switch
+    {
+        RfqStatus.Draft => "bg-slate-100 text-slate-500",
+        RfqStatus.Sent => "bg-amber-50 text-amber-600",
+        RfqStatus.QuotesReceived => "bg-sky-50 text-sky-600",
+        RfqStatus.Awarded => "bg-emerald-50 text-emerald-600",
+        _ => "bg-slate-100 text-slate-500"
+    };
+}

@@ -1,0 +1,44 @@
+@inherits LayoutComponentBase
+
+<div class="app-backdrop"></div>
+
+<div class="grid min-h-screen lg:grid-cols-[1.05fr_1fr]">
+    @* Brand panel *@
+    <section class="relative hidden overflow-hidden text-white lg:block" style="background-image:linear-gradient(135deg,var(--accent-from),var(--accent-to))">
+        <div class="absolute -left-24 -top-24 h-96 w-96 rounded-full bg-white/10 blur-2xl"></div>
+        <div class="absolute -bottom-32 -right-20 h-[28rem] w-[28rem] rounded-full bg-black/10 blur-3xl"></div>
+        <div class="absolute inset-0 opacity-60" style="background-image:radial-gradient(rgb(255 255 255 / .22) 1px,transparent 1px);background-size:24px 24px"></div>
+
+        <div class="relative flex h-full flex-col justify-between p-12 xl:p-16">
+            <div class="flex items-center gap-3">
+                <div class="grid h-11 w-11 place-items-center rounded-2xl bg-white/20 backdrop-blur">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6"/></svg>
+                </div>
+                <span class="font-display text-2xl font-extrabold tracking-tight">Chandlery</span>
+            </div>
+
+            <div class="max-w-lg">
+                <h2 class="font-display text-4xl font-extrabold leading-[1.1] xl:text-5xl">Keep every vessel supplied, without the paperwork maze.</h2>
+                <p class="mt-5 text-lg text-white/80">One workspace from requisition to approved purchase order and delivery, shared with your suppliers.</p>
+                <ul class="mt-8 space-y-3 text-white/90">
+                    @foreach (var point in new[] { "Enter items once, quote many suppliers", "Approvals that follow your own matrix", "Every document linked to the next" })
+                    {
+                        <li class="flex items-center gap-3">
+                            <span class="grid h-6 w-6 place-items-center rounded-full bg-white/20">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"/></svg>
+                            </span>
+                            @point
+                        </li>
+                    }
+                </ul>
+            </div>
+
+            <p class="text-sm text-white/60">&copy; Chandlery &middot; marine procurement</p>
+        </div>
+    </section>
+
+    @* Form panel *@
+    <section class="flex items-center justify-center px-6 py-12">
+        @Body
+    </section>
+</div>

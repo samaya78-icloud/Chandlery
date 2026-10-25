@@ -1,0 +1,86 @@
+@page "/company/purchase-orders"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject NavigationManager Navigation
+
+<PageTitle>Purchase Orders · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Procurement" Title="Purchase Orders" Subtitle="@($"{_count:N0} purchase orders — from awarded RFQs and direct spot orders.")">
+    <Actions>
+        <a href="/company/purchase-orders/new-spot" class="btn btn-primary">+ New spot PO</a>
+    </Actions>
+</PageHeader>
+
+@if (_companyId == 0)
+{
+    <Skeleton Rows="5" />
+}
+else if (_count == 0)
+{
+    <EmptyState Title="No purchase orders yet" Message="Award the quotes on an RFQ, or raise a spot PO straight to a supplier.">
+        <Action>
+            <a href="/company/rfqs" class="btn btn-secondary">Go to RFQs</a>
+            <a href="/company/purchase-orders/new-spot" class="btn btn-primary">New spot PO</a>
+        </Action>
+    </EmptyState>
+}
+else
+{
+    <DataGrid TItem="PoListRow" ItemsProvider="LoadPage" ItemName="purchase orders" ExportName="purchase-orders" PageSize="25" EmptyText="No purchase orders match these filters." OnRowClick="Open">
+        <GridColumn Title="PO #" Key="po" Text="p => p.Po.PoNumber" Context="row">
+            <DocLink Kind="DocKind.PurchaseOrder" Id="row.Po.Id" Text="@row.Po.PoNumber" />
+        </GridColumn>
+        <GridColumn Title="Supplier" Key="supplier" Text="p => p.SupplierName" Context="row">
+            <DocLink Kind="DocKind.Supplier" Id="row.Po.SupplierId" Text="@row.SupplierName" Plain="true" />
+        </GridColumn>
+        <GridColumn Title="Source" Key="type" Text="p => SourceText(p)" Filter="GridFilter.Select" Options="SourceOptions" Context="row">
+            @if (row.Po.RfqId is { } rfqId)
+            {
+                <DocLink Kind="DocKind.Rfq" Id="rfqId" Text="@row.RfqNumber" Plain="true" />
+            }
+            else
+            {
+                <span class="chip chip-plain" data-tone="accent">Spot PO</span>
+            }
+        </GridColumn>
+        <GridColumn Title="Created" Key="created" Date="p => p.Po.CreatedDate" />
+        <GridColumn Title="Lines" Key="lines" Text="p => p.Po.Lines.Count.ToString()" Filter="GridFilter.Select" OptionsLoader="LoadLineOptions" SortBy="p => p.Po.Lines.Count" />
+        @* Total is computed in code (line rounding, discount, charges), so it can't be filtered or sorted in SQL. *@
+        <GridColumn Title="Total" Text="p => Money.Format(p.Po.Total, p.Po.Currency)" Filter="GridFilter.None" Sortable="false" CellClass="font-semibold text-ink" />
+        <GridColumn Title="Delivery" Key="delivery" Text="p => p.Po.DeliveryStatus.ToString()" Filter="GridFilter.Select" Options="DeliveryOptions" Context="row">
+            <StatusChip Value="row.Po.DeliveryStatus" />
+        </GridColumn>
+        <GridColumn Title="Status" Key="status" Text="p => p.Po.Status.ToString()" Filter="GridFilter.Select" Chips="true" Options="StatusOptions" Context="row">
+            <StatusChip Value="row.Po.Status" />
+        </GridColumn>
+        <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
+    </DataGrid>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly string[] StatusOptions = Enum.GetNames<PoStatus>();
+    private static readonly string[] DeliveryOptions = Enum.GetNames<DeliveryStatus>();
+    private static readonly string[] SourceOptions = { "RFQ", "Spot" };
+
+    private static string SourceText(PoListRow row) => row.Po.IsSpot ? "Spot" : "RFQ";
+
+    private int _companyId;
+    private int _count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _count = await Procurement.GetPurchaseOrderCountAsync(companyId);
+        _companyId = companyId; // the grid is only rendered once this is set
+    }
+
+    private Task<GridResult<PoListRow>> LoadPage(GridRequest request) => Procurement.GetPurchaseOrderPageAsync(_companyId, request);
+
+    private async Task<IEnumerable<string>> LoadLineOptions() => await Procurement.GetPurchaseOrderLineCountOptionsAsync(_companyId);
+
+    private void Open(PoListRow row) => Navigation.NavigateTo($"/company/purchase-orders/{row.Po.Id}");
+}

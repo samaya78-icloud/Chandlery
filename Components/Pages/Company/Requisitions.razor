@@ -1,0 +1,73 @@
+@page "/company/requisitions"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject RequisitionService ReqnService
+@inject NavigationManager Navigation
+
+<PageTitle>Requisitions · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Procurement" Title="Requisitions" Subtitle="@($"{_count:N0} requisitions — enter the items once, then send an RFQ to as many suppliers as you like.")">
+    <Actions>
+        <a href="/company/requisitions/new" class="btn btn-primary">+ New Requisition</a>
+    </Actions>
+</PageHeader>
+
+@if (_companyId != 0)
+{
+    <DataGrid TItem="RequisitionListRow" ItemsProvider="LoadPage" ItemName="requisitions" ExportName="requisitions" PageSize="25" EmptyText="No requisitions match these filters." OnRowClick="Open">
+        <GridColumn Title="Reqn #" Key="reqn" Text="r => r.Requisition.ReqnNumber" Context="row">
+            <DocLink Kind="DocKind.Requisition" Id="row.Requisition.Id" Text="@row.Requisition.ReqnNumber" />
+        </GridColumn>
+        <GridColumn Title="Vessel" Key="vessel" Text="r => r.Vessel" Context="row">
+            <DocLink Kind="DocKind.Vessel" Id="row.Requisition.VesselId" Text="@row.Vessel" Plain="true" />
+        </GridColumn>
+        <GridColumn Title="Department" Key="department" Text="r => r.Department" Context="row">
+            @if (row.Requisition.DepartmentId is { } departmentId)
+            {
+                <DocLink Kind="DocKind.Department" Id="departmentId" Text="@row.Department" Plain="true" />
+            }
+            else
+            {
+                <span class="text-muted">—</span>
+            }
+        </GridColumn>
+        <GridColumn Title="Type" Key="type" Text="r => r.Requisition.Type.ToString()" Filter="GridFilter.Select" Options="TypeOptions" Context="row">
+            <StatusChip Value="row.Requisition.Type" />
+        </GridColumn>
+        <GridColumn Title="Urgency" Key="urgency" Text="r => r.Requisition.Urgency.ToString()" Filter="GridFilter.Select" Options="UrgencyOptions" Context="row">
+            <StatusChip Value="row.Requisition.Urgency" />
+        </GridColumn>
+        <GridColumn Title="Date" Key="date" Date="r => r.Requisition.ReqnDate" />
+        <GridColumn Title="Lines" Key="lines" Filter="GridFilter.None" Text="r => r.LineCount.ToString()" SortBy="r => r.LineCount" />
+        <GridColumn Title="RFQs" Key="rfqs" Text="r => r.RfqCount.ToString()" Filter="GridFilter.Select" OptionsLoader="LoadRfqOptions" SortBy="r => r.RfqCount" />
+        <GridColumn Title="Status" Key="status" Text="r => r.Requisition.Status.ToString()" Filter="GridFilter.Select" Chips="true" Options="StatusOptions" Context="row">
+            <StatusChip Value="row.Requisition.Status" />
+        </GridColumn>
+        <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
+    </DataGrid>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly string[] TypeOptions = Enum.GetNames<RfqType>();
+    private static readonly string[] UrgencyOptions = Enum.GetNames<Urgency>();
+    private static readonly string[] StatusOptions = Enum.GetNames<RequisitionStatus>();
+
+    private int _companyId;
+    private int _count;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _count = await ReqnService.GetCountAsync(companyId);
+        _companyId = companyId; // the grid is only rendered once this is set
+    }
+
+    private Task<GridResult<RequisitionListRow>> LoadPage(GridRequest request) => ReqnService.GetPageAsync(_companyId, request);
+
+    private async Task<IEnumerable<string>> LoadRfqOptions() => await ReqnService.GetRfqCountOptionsAsync(_companyId);
+
+    private void Open(RequisitionListRow row) => Navigation.NavigateTo($"/company/requisitions/{row.Requisition.Id}");
+}

@@ -1,0 +1,104 @@
+@page "/supplier/purchase-orders"
+@attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject DeliveryService Deliveries
+
+<PageTitle>Purchase Orders · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Your orders" Title="Purchase Orders" Subtitle="@($"{_pos.Count:N0} purchase orders won")" />
+
+@if (_pos.Count == 0)
+{
+    <EmptyState Title="No purchase orders yet" Message="When a buyer approves an order for you it will show up here." />
+}
+else
+{
+    <div class="flex flex-col gap-4">
+        @foreach (var po in _pos)
+        {
+            var rfq = po.RfqId.HasValue ? _rfqsById.GetValueOrDefault(po.RfqId.Value) : null;
+            <div class="card">
+                <div class="flex items-center justify-between border-b border-slate-100 p-4">
+                    <div>
+                        <p class="font-semibold text-slate-800">@po.PoNumber</p>
+                        <p class="text-xs text-slate-400">
+                            @(po.IsSpot ? "Spot PO" : $"RFQ {rfq?.RfqNumber}")
+                            @if (po.SupplierRef != "") { <span>&middot; Your ref @po.SupplierRef</span> }
+                            @if (rfq is not null) { <span>&middot; Vessel @rfq.Vessel</span> }
+                            &middot; @po.CreatedDate.ToString("MMM d, yyyy")
+                        </p>
+                    </div>
+                    <div class="text-right">
+                        <p class="mb-1 flex items-center justify-end gap-2">
+                            <StatusChip Value="po.DeliveryStatus" />
+                            <a href="/supplier/purchase-orders/@po.Id/document" class="btn btn-secondary btn-sm">PO document</a>
+                        </p>
+                        <p class="text-lg font-bold text-slate-900">@Money.Format(po.Total, po.Currency)</p>
+                        @if (po.DiscountPct > 0 || po.AdditionalCharges > 0)
+                        {
+                            <p class="text-xs text-slate-400">
+                                @(po.DiscountPct > 0 ? $"after {po.DiscountPct:0.##}% discount" : "")
+                                @(po.AdditionalCharges > 0 ? $"incl. {Money.Format(po.AdditionalCharges, po.Currency)} {po.AdditionalChargeDescription}" : "")
+                            </p>
+                        }
+                    </div>
+                </div>
+                <table class="w-full text-left text-sm">
+                    <tbody>
+                        @foreach (var line in po.Lines)
+                        {
+                            var item = _itemsById.GetValueOrDefault(line.ItemId);
+                            <tr class="border-b border-slate-50 last:border-0">
+                                <td class="px-4 py-2 text-slate-700">@item?.Name</td>
+                                <td class="px-4 py-2 text-slate-500">@Money.Qty(line.Quantity) @item?.UnitOfMeasure</td>
+                                <td class="px-4 py-2 text-slate-500">@Money.Format(line.UnitPrice, po.Currency)@(line.DiscountPct > 0 ? $" (less {line.DiscountPct:0.##}%)" : "")</td>
+                                <td class="px-4 py-2 text-right font-medium text-slate-700">@Money.Format(Money.LineNet(line.Quantity, line.UnitPrice, line.DiscountPct), po.Currency)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (_deliveriesByPo.TryGetValue(po.Id, out var dos))
+                {
+                    <div class="border-t border-line px-4 py-3">
+                        <p class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Deliveries received</p>
+                        <ul class="space-y-1 text-sm">
+                            @foreach (var d in dos)
+                            {
+                                <li class="flex flex-wrap items-center gap-x-4 text-muted">
+                                    <span class="font-semibold text-ink">@d.DoNumber</span>
+                                    <span>@d.ReceivedDate.ToString("dd MMM yyyy")</span>
+                                    @if (d.Place != "") { <span>@d.Place</span> }
+                                    <span>@d.Lines.Count line(s), @Money.Qty(d.Lines.Sum(l => l.Quantity)) units</span>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private List<PurchaseOrder> _pos = new();
+    private Dictionary<int, Rfq> _rfqsById = new();
+    private Dictionary<int, Item> _itemsById = new();
+    private Dictionary<int, List<DeliveryOrder>> _deliveriesByPo = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _pos = await Procurement.GetPurchaseOrdersForSupplierAsync(supplierId);
+        _deliveriesByPo = await Deliveries.GetForSupplierPosAsync(supplierId, _pos.Select(p => p.Id));
+
+        var rfqs = await Procurement.GetRfqsByIdsAsync(_pos.Where(p => p.RfqId.HasValue).Select(p => p.RfqId!.Value));
+        _rfqsById = rfqs.ToDictionary(r => r.Id);
+
+        var items = await Procurement.GetItemsByIdsAsync(_pos.SelectMany(p => p.Lines).Select(l => l.ItemId));
+        _itemsById = items.ToDictionary(i => i.Id);
+    }
+}

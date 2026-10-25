@@ -1,0 +1,75 @@
+@page "/company/items/{ItemId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject HubService Hub
+
+<PageTitle>@(_hub?.Item.Code ?? "Item") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_hub is null)
+{
+    <EmptyState Title="Item not found" />
+}
+else
+{
+    <PageHeader Eyebrow="Item" Title="@_hub.Item.Code" Subtitle="@_hub.Item.Name">
+        <Badges>
+            <span class="chip chip-plain" data-tone="accent">@_hub.Item.UnitOfMeasure</span>
+        </Badges>
+        <Facts>
+            <span>@_hub.CategoryPath</span>
+        </Facts>
+    </PageHeader>
+
+    var latest = _hub.Prices.OrderByDescending(p => p.Date).FirstOrDefault();
+    var cheapest = _hub.Prices.Where(p => latest is not null && p.Currency == latest.Currency).OrderBy(p => p.UnitPrice).FirstOrDefault();
+    <div class="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard Label="Last price paid" Value="@(latest is null ? "—" : Money.Format(latest.UnitPrice, latest.Currency))" Hint="@(latest?.Supplier)" />
+        <StatCard Label="Lowest price paid" Value="@(cheapest is null ? "—" : Money.Format(cheapest.UnitPrice, cheapest.Currency))" Hint="@(cheapest?.Supplier)" Tone="success" />
+        <StatCard Label="Times ordered" Value="@_hub.Prices.Count.ToString("N0")" Tone="info" />
+        <StatCard Label="On requisitions / RFQs" Value="@($"{_hub.Requisitions.Count} / {_hub.Rfqs.Count}")" Tone="warning" />
+    </div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Price history</h2>
+    <div class="mb-8">
+        <DataGrid TItem="PriceRow" Items="_hub.Prices" ItemName="orders" SyncUrl="false" ExportName="@(_hub.Item.Code + "-prices")" EmptyText="Not ordered yet.">
+            <GridColumn Title="Date" Date="p => p.Date" />
+            <GridColumn Title="PO #" Text="p => p.PoNumber" Context="p">
+                <DocLink Kind="DocKind.PurchaseOrder" Id="p.PoId" Text="@p.PoNumber" />
+            </GridColumn>
+            <GridColumn Title="Supplier" Text="p => p.Supplier" Context="p">
+                <DocLink Kind="DocKind.Supplier" Id="p.SupplierId" Text="@p.Supplier" Plain="true" />
+            </GridColumn>
+            <GridColumn Title="Quantity" Text="p => Money.Qty(p.Quantity)" Filter="GridFilter.None" SortBy="p => p.Quantity" />
+            <GridColumn Title="Unit price" Text="p => Money.Format(p.UnitPrice, p.Currency)" Filter="GridFilter.None" SortBy="p => p.UnitPrice" CellClass="font-semibold text-ink" />
+            <GridColumn Title="Discount" Text="p => DiscountText(p)" Filter="GridFilter.None" SortBy="p => p.DiscountPct" />
+        </DataGrid>
+    </div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">Requisitions</h2>
+    <div class="mb-8"><ReqnTable Requisitions="_hub.Requisitions" ExportName="@(_hub.Item.Code + "-requisitions")" /></div>
+
+    <h2 class="mb-3 font-display text-lg font-bold text-ink">RFQs</h2>
+    <div class="mb-8"><RfqTable Rfqs="_hub.Rfqs" ExportName="@(_hub.Item.Code + "-rfqs")" /></div>
+}
+
+@code {
+    [Parameter] public int ItemId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private ItemHub? _hub;
+    private bool _loaded;
+
+    private static string DiscountText(PriceRow row) => row.DiscountPct > 0 ? row.DiscountPct.ToString("0.##") + "%" : "—";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _hub = await Hub.GetItemAsync(companyId, ItemId);
+        _loaded = true;
+    }
+}

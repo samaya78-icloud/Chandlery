@@ -1,0 +1,159 @@
+@page "/company/items"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+
+<PageTitle>Items Catalog · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Items Catalog" Subtitle="@($"{_count:N0} items in your catalog — the single list every requisition, RFQ and PO draws from.")">
+    <Actions>
+        <a href="/company/items/import" class="btn btn-secondary">Import CSV</a>
+        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add Item</button>
+    </Actions>
+</PageHeader>
+
+@if (_showForm)
+{
+    <div class="mb-6 max-w-md card p-4">
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Code</label>
+            <input @bind="_code" class="input" />
+        </div>
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Name</label>
+            <input @bind="_name" class="input" />
+        </div>
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Category</label>
+            @if (_tree.Count == 0)
+            {
+                <p class="text-xs text-slate-400">No categories yet — add one on the Categories page first.</p>
+            }
+            else
+            {
+                <select @bind="_categoryId" class="input">
+                    <option value="0">Select category...</option>
+                    @foreach (var (category, path, _) in _tree)
+                    {
+                        <option value="@category.Id">@path</option>
+                    }
+                </select>
+            }
+        </div>
+        <div class="mb-4">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Unit of Measure</label>
+            <input @bind="_uom" placeholder="e.g. Pcs, Drum, Litre" class="input" />
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+
+        <button @onclick="Add" class="btn btn-primary">Save</button>
+    </div>
+}
+
+<div class="mb-4 flex flex-wrap items-center gap-3">
+    <select @bind="_filterCategoryId" @bind:after="CategoryChanged" class="select max-w-md">
+        <option value="0">All categories</option>
+        @foreach (var (category, path, _) in _tree)
+        {
+            <option value="@category.Id">@path</option>
+        }
+    </select>
+    <span class="text-sm text-muted">Includes sub-categories</span>
+</div>
+
+@if (_companyId != 0)
+{
+    <DataGrid @ref="_grid" TItem="Item" ItemsProvider="LoadPage" ItemName="items" ExportName="items" PageSize="25" EmptyText="No items match these filters.">
+        <GridColumn Title="Code" Key="code" Text="i => i.Code" Context="item">
+            <DocLink Kind="DocKind.Item" Id="item.Id" Text="@item.Code" />
+        </GridColumn>
+        <GridColumn Title="Name" Key="name" Text="i => i.Name" CellClass="text-ink" />
+        <GridColumn Title="Category" Key="category" Text="i => CategoryPath(i.CategoryId)" Sortable="false" CellClass="text-muted" />
+        <GridColumn Title="UOM" Key="uom" Text="i => i.UnitOfMeasure" Filter="GridFilter.Select" OptionsLoader="LoadUomOptions" />
+    </DataGrid>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private DataGrid<Item>? _grid;
+    private int _companyId;
+    private int _count;
+    private List<Category> _categories = new();
+    private List<(Category Category, string Path, int Depth)> _tree = new();
+    private Dictionary<int, string> _pathById = new();
+    private bool _showForm;
+    private string _code = "";
+    private string _name = "";
+    private string _uom = "";
+    private int _categoryId;
+    private string? _error;
+
+    private int _filterCategoryId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+
+        _categories = await Procurement.GetCategoriesAsync();
+        _tree = Category.BuildTree(_categories);
+        _pathById = _tree.ToDictionary(t => t.Category.Id, t => t.Path);
+        _count = await Procurement.GetItemCountAsync(companyId);
+        _companyId = companyId; // the grid is only rendered once categories and the company are known
+    }
+
+    private string CategoryPath(int categoryId) => _pathById.GetValueOrDefault(categoryId, "—");
+
+    private async Task<IEnumerable<string>> LoadUomOptions() => await Procurement.GetItemUomOptionsAsync(_companyId);
+
+    /// <summary>
+    /// The category dropdown (with its sub-categories) and the Category column's text filter both narrow the
+    /// item query to a set of category ids, because the category path is built from the tree, not stored on the item.
+    /// </summary>
+    private Task<GridResult<Item>> LoadPage(GridRequest request)
+    {
+        HashSet<int>? allowed = _filterCategoryId == 0 ? null : CategoryIds.Descendants(_categories, _filterCategoryId);
+
+        var term = request.Text("category");
+        if (term != "")
+        {
+            var matching = _tree.Where(t => t.Path.Contains(term, StringComparison.OrdinalIgnoreCase))
+                .Select(t => t.Category.Id).ToHashSet();
+            if (allowed is not null) matching.IntersectWith(allowed);
+            allowed = matching;
+        }
+
+        return Procurement.GetItemPageAsync(_companyId, request, allowed);
+    }
+
+    private Task CategoryChanged() => _grid is null ? Task.CompletedTask : _grid.ReloadAsync(resetPage: true);
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(_code) || string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "Code and name are required.";
+            return;
+        }
+        if (_categoryId == 0)
+        {
+            _error = "Select a category.";
+            return;
+        }
+
+        await Procurement.AddItemAsync(_companyId, _code, _name, _categoryId, _uom);
+        _count = await Procurement.GetItemCountAsync(_companyId);
+        _code = "";
+        _name = "";
+        _uom = "";
+        _categoryId = 0;
+        _error = null;
+        _showForm = false;
+        if (_grid is not null) await _grid.ReloadAsync();
+    }
+}

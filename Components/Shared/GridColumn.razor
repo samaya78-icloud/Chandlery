@@ -1,0 +1,151 @@
+@typeparam TItem
+@* Declares one column of a DataGrid; renders nothing itself. *@
+
+@code {
+    [CascadingParameter] private DataGrid<TItem>? Grid { get; set; }
+
+    [Parameter] public string Title { get; set; } = "";
+
+    /// <summary>Identifies the column's filter and sort in a server-side GridRequest. Defaults to the title.</summary>
+    [Parameter] public string? Key { get; set; }
+
+    /// <summary>The column's value as text — shown by default and used by the Text/Select filters (client-side mode).</summary>
+    [Parameter] public Func<TItem, string>? Text { get; set; }
+
+    /// <summary>For date columns: shown as "MMM d, yyyy" ("—" when null) and used by the DateRange filter.</summary>
+    [Parameter] public Func<TItem, DateTime?>? Date { get; set; }
+
+    /// <summary>Overrides the default filter (DateRange for date columns, Text otherwise, None with no value).</summary>
+    [Parameter] public GridFilter? Filter { get; set; }
+
+    /// <summary>For a Select filter: show the choices as chips above the table instead of a drop-down under the header.</summary>
+    [Parameter] public bool Chips { get; set; }
+
+    /// <summary>Fixed drop-down choices for a Select filter. Required in server-side mode unless OptionsLoader is used.</summary>
+    [Parameter] public IEnumerable<string>? Options { get; set; }
+
+    /// <summary>Loads the drop-down choices (e.g. distinct values from the database) when the grid starts or reloads.</summary>
+    [Parameter] public Func<Task<IEnumerable<string>>>? OptionsLoader { get; set; }
+
+    /// <summary>Custom cell content; defaults to the plain text value.</summary>
+    [Parameter] public RenderFragment<TItem>? ChildContent { get; set; }
+
+    [Parameter] public string CellClass { get; set; } = "text-ink-2";
+
+    /// <summary>Clickable header sorting. Defaults to on for columns that have a Key and a value. In server mode the service must understand the key.</summary>
+    [Parameter] public bool? Sortable { get; set; }
+
+    /// <summary>Client-side sort value (numbers, dates); defaults to the date or the cell text.</summary>
+    [Parameter] public Func<TItem, IComparable?>? SortBy { get; set; }
+
+    // Filter state, edited by the grid.
+    public string FilterText { get; set; } = "";
+    public string FilterSelect { get; set; } = "";
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+
+    private IEnumerable<string>? _loadedOptions;
+
+    public string EffectiveKey => Key ?? Title;
+
+    public bool IsSortable => Sortable ?? (!string.IsNullOrEmpty(Title) && (Text is not null || Date is not null));
+
+    /// <summary>Real data column (not an action column like "View →").</summary>
+    public bool IsDataColumn => !string.IsNullOrEmpty(Title) && (Text is not null || Date is not null);
+
+    public IEnumerable<string>? OptionList => _loadedOptions ?? Options;
+
+    public GridFilter EffectiveFilter => Filter ?? (Date is not null ? GridFilter.DateRange : Text is not null ? GridFilter.Text : GridFilter.None);
+
+    public bool IsChipFilter => Chips && EffectiveFilter == GridFilter.Select;
+
+    public bool IsFiltered => !string.IsNullOrWhiteSpace(FilterText) || FilterSelect != "" || From.HasValue || To.HasValue;
+
+    /// <summary>Changes whenever any filter value changes (the grid uses it to reset client-side paging).</summary>
+    public string FilterKey => $"{FilterText}|{FilterSelect}|{From:O}|{To:O}";
+
+    /// <summary>The filter as it appears in the URL: text, selected option, or "from..to".</summary>
+    public string? UrlValue => EffectiveFilter switch
+    {
+        GridFilter.Text when !string.IsNullOrWhiteSpace(FilterText) => FilterText.Trim(),
+        GridFilter.Select when FilterSelect != "" => FilterSelect,
+        GridFilter.DateRange when From.HasValue || To.HasValue => $"{From:yyyy-MM-dd}..{To:yyyy-MM-dd}",
+        _ => null
+    };
+
+    public void ApplyUrlValue(string value)
+    {
+        switch (EffectiveFilter)
+        {
+            case GridFilter.Text: FilterText = value; break;
+            case GridFilter.Select: FilterSelect = value; break;
+            case GridFilter.DateRange:
+                var parts = value.Split("..");
+                if (parts.Length == 2)
+                {
+                    From = DateTime.TryParse(parts[0], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var f) ? f : null;
+                    To = DateTime.TryParse(parts[1], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t) ? t : null;
+                }
+                break;
+        }
+    }
+
+    public void ClearFilter()
+    {
+        FilterText = FilterSelect = "";
+        From = To = null;
+    }
+
+    public async Task LoadOptionsAsync()
+    {
+        if (OptionsLoader is not null)
+            _loadedOptions = (await OptionsLoader()).ToList();
+    }
+
+    public string CellText(TItem item)
+    {
+        if (Date is not null) return Date(item)?.ToString("MMM d, yyyy") ?? "—";
+        return Text?.Invoke(item) ?? "";
+    }
+
+    /// <summary>Value used for client-side sorting: custom, else the date, else the text (numbers compare as numbers).</summary>
+    public IComparable? SortValue(TItem item)
+    {
+        if (SortBy is not null) return SortBy(item);
+        if (Date is not null) return Date(item);
+        var text = Text?.Invoke(item) ?? "";
+        return decimal.TryParse(text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var number)
+            ? number
+            : text.ToLowerInvariant();
+    }
+
+    public bool Matches(TItem item)
+    {
+        switch (EffectiveFilter)
+        {
+            case GridFilter.Text:
+                var needle = FilterText.Trim();
+                return needle == "" || CellText(item).Contains(needle, StringComparison.OrdinalIgnoreCase);
+            case GridFilter.Select:
+                return FilterSelect == "" || CellText(item) == FilterSelect;
+            case GridFilter.DateRange:
+                if (!From.HasValue && !To.HasValue) return true;
+                var d = Date?.Invoke(item);
+                if (!d.HasValue) return false;
+                return (!From.HasValue || d.Value.Date >= From.Value.Date)
+                    && (!To.HasValue || d.Value.Date <= To.Value.Date);
+            default:
+                return true;
+        }
+    }
+
+    // Register synchronously so columns keep their declared order, then fetch any drop-down options.
+    protected override void OnInitialized() => Grid?.AddColumn(this);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (OptionsLoader is null) return;
+        await LoadOptionsAsync();
+        Grid?.Refresh();
+    }
+}

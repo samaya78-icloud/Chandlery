@@ -1,0 +1,459 @@
+@page "/company/requisitions/{RequisitionId:int}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject RequisitionService Requisitions
+@inject NavigationManager Navigation
+
+<PageTitle>@(_reqn?.ReqnNumber ?? "Requisition") · Chandlery</PageTitle>
+
+@if (_loaded && _reqn is null)
+{
+    <p class="text-sm text-slate-500">Requisition not found.</p>
+}
+else if (_reqn is not null)
+{
+    <PageHeader Eyebrow="Requisition" Title="@_reqn.ReqnNumber">
+        <Badges>
+            <StatusChip Value="_reqn.Status" />
+            <StatusChip Value="_reqn.Type" />
+            @if (_reqn.Urgency == Urgency.Urgent) { <StatusChip Value="_reqn.Urgency" /> }
+            @if (_reqn.IsBreakdown) { <StatusChip Label="Breakdown" Tone="warning" /> }
+        </Badges>
+        <Facts>
+            <DocLink Kind="DocKind.Vessel" Id="_reqn.VesselId" Text="@VesselName" />
+            @if (_reqn.DepartmentId is { } deptId)
+            {
+                <span>&middot;</span>
+                <DocLink Kind="DocKind.Department" Id="deptId" Text="@DepartmentName" />
+            }
+            <span>&middot; Raised @_reqn.ReqnDate.ToString("MMM d, yyyy") by @(_reqn.CreatedByName == "" ? "—" : _reqn.CreatedByName)</span>
+        </Facts>
+        <Actions>
+            @if (CanChange)
+            {
+                @if (_confirmCancel)
+                {
+                    <button @onclick="Cancel" class="btn btn-danger">Confirm cancel</button>
+                    <button @onclick="() => _confirmCancel = false" class="btn btn-secondary btn-sm">Keep</button>
+                }
+                else
+                {
+                    <button @onclick="() => _confirmCancel = true" class="btn btn-secondary btn-sm">Cancel requisition</button>
+                }
+            }
+        </Actions>
+    </PageHeader>
+
+    <RelatedDocuments CompanyId="_companyId" Kind="DocKind.Requisition" Id="_reqn.Id" Version="_auditVersion" />
+
+    <div class="mb-6 grid grid-cols-2 gap-4 card p-5 md:grid-cols-4">
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Delivery port</p><p class="text-sm font-medium text-slate-800">@PortName</p></div>
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Est. delivery</p><p class="text-sm font-medium text-slate-800">@Date(_reqn.EstDeliveryDate)</p></div>
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Vessel ETA</p><p class="text-sm font-medium text-slate-800">@Date(_reqn.VesselEta)</p></div>
+        <div><p class="text-xs uppercase tracking-wide text-slate-400">Vessel ETD</p><p class="text-sm font-medium text-slate-800">@Date(_reqn.VesselEtd)</p></div>
+        @if (_reqn.Remarks != "")
+        {
+            <div class="col-span-2 md:col-span-4"><p class="text-xs uppercase tracking-wide text-slate-400">Remarks</p><p class="text-sm text-slate-700">@_reqn.Remarks</p></div>
+        }
+    </div>
+
+    @* Lines *@
+    <div class="mb-6 card p-6">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">
+                Lines <span class="ml-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium normal-case text-indigo-600">@_reqn.Lines.Count</span>
+            </h2>
+            <input @bind="_lineFilter" @bind:after="() => _linePage = 1" placeholder="Filter lines…" class="ml-4 w-56 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm" />
+            <span class="text-sm text-slate-500">@FilteredLines.Count of @_reqn.Lines.Count</span>
+            @if (CanChange && _approvedChanged)
+            {
+                <button @onclick="SaveApproved" disabled="@_busy" class="ml-auto btn btn-primary btn-sm">Save approved quantities</button>
+            }
+        </div>
+
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                    @if (CanChange)
+                    {
+                        <th class="w-8 px-2 py-2 print:hidden"><input type="checkbox" title="Include all shown lines in the RFQ" checked="@AllShownSelected" @onchange="e => SelectShown((bool)e.Value!)" /></th>
+                    }
+                    <th class="px-2 py-2 font-medium">Item</th>
+                    <th class="px-2 py-2 font-medium">Requested</th>
+                    <th class="px-2 py-2 font-medium">Approved</th>
+                    <th class="px-2 py-2 font-medium">UOM</th>
+                    <th class="px-2 py-2 font-medium">Description / notes</th>
+                    @if (_reqn.Type == RfqType.Spares) { <th class="px-2 py-2 font-medium">Drawing no.</th> }
+                    <th class="px-2 py-2 font-medium">RFQ</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in FilteredLines.Skip((_linePage - 1) * LinePageSize).Take(LinePageSize))
+                {
+                    var item = _items.GetValueOrDefault(line.ItemId);
+                    var onRfq = _lineRfq.GetValueOrDefault(line.Id);
+                    <tr class="border-b border-slate-50 last:border-0">
+                        @if (CanChange)
+                        {
+                            <td class="px-2 py-2 print:hidden"><input type="checkbox" checked="@_selected.Contains(line.Id)" @onchange="e => ToggleLine(line.Id, (bool)e.Value!)" /></td>
+                        }
+                        <td class="px-2 py-2">
+                            @if (item is not null)
+                            {
+                                <DocLink Kind="DocKind.Item" Id="item.Id" Text="@item.Code" />
+                                <p class="text-xs text-muted">@item.Name</p>
+                            }
+                        </td>
+                        <td class="px-2 py-2 text-slate-600">@Money.Qty(line.Quantity)</td>
+                        <td class="px-2 py-2">
+                            @if (CanChange)
+                            {
+                                <input type="number" min="0" step="any" value="@Money.Qty(_approved[line.Id])" @onchange="e => SetApproved(line.Id, e.Value)" class="w-24 input input-sm" />
+                            }
+                            else
+                            {
+                                @Money.Qty(line.ApprovedQuantity)
+                            }
+                        </td>
+                        <td class="px-2 py-2 text-slate-600">@line.Uom</td>
+                        <td class="px-2 py-2 text-slate-600">@line.Description</td>
+                        @if (_reqn.Type == RfqType.Spares) { <td class="px-2 py-2 text-slate-600">@line.DrawingNo</td> }
+                        <td class="px-2 py-2 text-xs">
+                            @if (onRfq is not null)
+                            {
+                                <DocLink Kind="DocKind.Rfq" Id="onRfq.Id" Text="@onRfq.Name" Plain="true" />
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="mt-3 flex items-center justify-between text-xs text-slate-500">
+            <span>Showing @(FilteredLines.Count == 0 ? 0 : (_linePage - 1) * LinePageSize + 1)–@Math.Min(_linePage * LinePageSize, FilteredLines.Count) of @FilteredLines.Count</span>
+            <div class="flex items-center gap-2 print:hidden">
+                <button type="button" @onclick="() => _linePage--" disabled="@(_linePage <= 1)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                <span>Page @_linePage of @Math.Max(1, (int)Math.Ceiling(FilteredLines.Count / (double)LinePageSize))</span>
+                <button type="button" @onclick="() => _linePage++" disabled="@(_linePage * LinePageSize >= FilteredLines.Count)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+            </div>
+        </div>
+    </div>
+
+    @* Create RFQ *@
+    @if (CanChange)
+    {
+        <div class="mb-6 card p-6 print:hidden">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Create RFQ</h2>
+            <p class="mb-4 text-xs text-slate-400">Tick the lines above, choose the suppliers and post. Each supplier quotes against the same lines &mdash; nothing is re-entered. Lines with approved quantity 0 are left out.</p>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-slate-700">Quotes due by <span class="text-rose-500">*</span></label>
+                    <input type="date" @bind="_rfqDue" class="@InputClass" />
+                </div>
+                <div class="md:col-span-2">
+                    <label class="mb-1 block text-sm font-medium text-slate-700">RFQ remarks</label>
+                    <input @bind="_rfqRemarks" class="@InputClass" />
+                </div>
+            </div>
+
+            @if (_reqn.Type == RfqType.Spares)
+            {
+                <h3 class="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Equipment</h3>
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <input @bind="_equipDescription" placeholder="Equipment, e.g. Main Engine No.1" class="@InputClass" />
+                    <input @bind="_equipMaker" placeholder="Maker" class="@InputClass" />
+                    <input @bind="_equipParticulars" placeholder="Particulars / model" class="@InputClass" />
+                    <input @bind="_equipSerial" placeholder="Serial no." class="@InputClass" />
+                </div>
+            }
+
+            <h3 class="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Suppliers</h3>
+            @if (_suppliers.Count == 0)
+            {
+                <p class="text-sm text-slate-400">No suppliers yet &mdash; add one on the Suppliers page first.</p>
+            }
+            else
+            {
+                <div class="flex flex-wrap gap-x-6 gap-y-2">
+                    @foreach (var supplier in _suppliers)
+                    {
+                        <label class="flex items-center gap-2 text-sm text-slate-700">
+                            <input type="checkbox" checked="@_invited.Contains(supplier.Id)" @onchange="e => ToggleSupplier(supplier.Id, (bool)e.Value!)" />
+                            @supplier.Name
+                        </label>
+                    }
+                </div>
+            }
+
+            @if (_error is not null)
+            {
+                <div class="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+            }
+            @if (_message is not null)
+            {
+                <div class="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_message</div>
+            }
+
+            <button @onclick="PostRfq" disabled="@_busy" class="mt-5 btn btn-primary">
+                @(_busy ? "Posting…" : $"Post RFQ ({SelectedPostable} lines to {_invited.Count} suppliers)")
+            </button>
+        </div>
+    }
+
+    <AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.Requisition" EntityId="_reqn.Id" Version="_auditVersion" />
+}
+
+@code {
+    private const string InputClass = "input";
+    private const int LinePageSize = 25;
+
+    [Parameter] public int RequisitionId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private Actor _actor = Actor.System;
+    private string _buyerName = "";
+    private string _buyerEmail = "";
+    private bool _loaded;
+    private bool _busy;
+    private bool _confirmCancel;
+    private int _auditVersion;
+
+    private Requisition? _reqn;
+    private List<Rfq> _rfqs = new();
+    private Dictionary<int, NameRef> _lineRfq = new();
+    private Dictionary<int, Item> _items = new();
+    private List<Vessel> _vessels = new();
+    private List<Department> _departments = new();
+    private List<Port> _ports = new();
+    private List<Supplier> _suppliers = new();
+
+    private readonly Dictionary<int, decimal> _approved = new();
+    private readonly HashSet<int> _selected = new();
+    private readonly HashSet<int> _invited = new();
+    private bool _approvedChanged;
+    private string _lineFilter = "";
+    private int _linePage = 1;
+
+    private DateTime? _rfqDue;
+    private string _rfqRemarks = "";
+    private string _equipDescription = "", _equipMaker = "", _equipParticulars = "", _equipSerial = "";
+    private string? _error;
+    private string? _message;
+
+    private bool CanChange => _reqn is { Status: RequisitionStatus.Open or RequisitionStatus.RfqPosted };
+    private string VesselName => _vessels.FirstOrDefault(v => v.Id == _reqn!.VesselId)?.Name ?? "—";
+    private string DepartmentName => _reqn!.DepartmentId is { } id ? _departments.FirstOrDefault(d => d.Id == id)?.Name ?? "" : "";
+    private string PortName
+    {
+        get
+        {
+            var port = _reqn!.DeliveryPortId is { } id ? _ports.FirstOrDefault(p => p.Id == id) : null;
+            return port is null ? "—" : $"{port.Name}, {port.Country}";
+        }
+    }
+
+    private List<RequisitionLine> FilteredLines
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_lineFilter)) return _reqn!.Lines;
+            var term = _lineFilter.Trim();
+            return _reqn!.Lines.Where(l =>
+            {
+                var item = _items.GetValueOrDefault(l.ItemId);
+                return item is not null && (item.Code.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                            || item.Name.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }).ToList();
+        }
+    }
+
+    private int SelectedPostable => _reqn!.Lines.Count(l => _selected.Contains(l.Id) && _approved.GetValueOrDefault(l.Id) > 0);
+
+    private bool AllShownSelected
+    {
+        get
+        {
+            var shown = FilteredLines.Skip((_linePage - 1) * LinePageSize).Take(LinePageSize).ToList();
+            return shown.Count > 0 && shown.All(l => _selected.Contains(l.Id));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
+        _buyerName = authState.User.Identity?.Name ?? "";
+        _buyerEmail = authState.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "";
+
+        _vessels = await Procurement.GetVesselsAsync(_companyId);
+        _departments = await Procurement.GetDepartmentsAsync(_companyId);
+        _ports = await Procurement.GetPortsAsync();
+        _suppliers = await Procurement.GetCompanySuppliersAsync(_companyId);
+        await Load(initialSelection: true);
+        _loaded = true;
+    }
+
+    private async Task Load(bool initialSelection)
+    {
+        _reqn = await Requisitions.GetAsync(_companyId, RequisitionId);
+        if (_reqn is null) return;
+
+        _rfqs = await Requisitions.GetRfqsAsync(_companyId, _reqn.Id);
+        _lineRfq = await Requisitions.GetLineRfqNumbersAsync(_companyId, _reqn.Id);
+        _items = (await Procurement.GetItemsByIdsAsync(_reqn.Lines.Select(l => l.ItemId))).ToDictionary(i => i.Id);
+
+        _approved.Clear();
+        foreach (var l in _reqn.Lines) _approved[l.Id] = l.ApprovedQuantity;
+        _approvedChanged = false;
+
+        if (initialSelection)
+        {
+            _selected.Clear();
+            foreach (var l in _reqn.Lines.Where(l => l.ApprovedQuantity > 0 && !_lineRfq.ContainsKey(l.Id)))
+                _selected.Add(l.Id);
+        }
+        else
+        {
+            _selected.RemoveWhere(id => _lineRfq.ContainsKey(id));
+        }
+        _auditVersion++;
+    }
+
+    private static string Date(DateTime? d) => d.HasValue ? d.Value.ToString("MMM d, yyyy") : "—";
+
+    private void SetApproved(int lineId, object? value)
+    {
+        if (decimal.TryParse(value?.ToString(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var qty) && qty >= 0)
+        {
+            _approved[lineId] = qty;
+            _approvedChanged = _reqn!.Lines.Any(l => _approved[l.Id] != l.ApprovedQuantity);
+        }
+    }
+
+    private void ToggleLine(int lineId, bool on)
+    {
+        if (on) _selected.Add(lineId); else _selected.Remove(lineId);
+    }
+
+    private void SelectShown(bool on)
+    {
+        foreach (var l in FilteredLines.Skip((_linePage - 1) * LinePageSize).Take(LinePageSize))
+            ToggleLine(l.Id, on);
+    }
+
+    private void ToggleSupplier(int supplierId, bool on)
+    {
+        if (on) _invited.Add(supplierId); else _invited.Remove(supplierId);
+    }
+
+    private async Task SaveApproved()
+    {
+        _error = _message = null;
+        _busy = true;
+        try
+        {
+            await Requisitions.SetApprovedQuantitiesAsync(_companyId, _reqn!.Id, new Dictionary<int, decimal>(_approved), _actor);
+            await Load(initialSelection: false);
+            _message = "Approved quantities saved.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task Cancel()
+    {
+        _error = _message = null;
+        try
+        {
+            await Requisitions.CancelAsync(_companyId, _reqn!.Id, _actor);
+            _confirmCancel = false;
+            await Load(initialSelection: false);
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task PostRfq()
+    {
+        _error = _message = null;
+
+        if (_approvedChanged)
+        {
+            _error = "Save the approved quantities first.";
+            return;
+        }
+        if (!_rfqDue.HasValue)
+        {
+            _error = "Set the date quotes are due by.";
+            return;
+        }
+        if (_rfqDue.Value.Date < DateTime.UtcNow.Date)
+        {
+            _error = "The due date can't be in the past.";
+            return;
+        }
+
+        var lines = _reqn!.Lines
+            .Where(l => _selected.Contains(l.Id) && l.ApprovedQuantity > 0)
+            .Select(l => new NewRfqLine
+            {
+                ItemId = l.ItemId,
+                Quantity = l.ApprovedQuantity,
+                Description = l.Description ?? "",
+                DrawingNo = l.DrawingNo ?? "",
+                RequisitionLineId = l.Id
+            }).ToList();
+
+        var request = new NewRfq
+        {
+            RequisitionId = _reqn.Id,
+            Type = _reqn.Type,
+            VesselId = _reqn.VesselId,
+            DeliveryPortId = _reqn.DeliveryPortId,
+            VesselEta = _reqn.VesselEta,
+            DateRequired = _reqn.EstDeliveryDate,
+            DueDate = _rfqDue,
+            BuyerName = _buyerName,
+            BuyerEmail = _buyerEmail,
+            Remarks = string.Join(" ", new[] { _reqn.Remarks, _rfqRemarks }.Where(s => !string.IsNullOrWhiteSpace(s))),
+            EquipmentDescription = _equipDescription,
+            EquipmentMaker = _equipMaker,
+            EquipmentParticulars = _equipParticulars,
+            EquipmentSerialNo = _equipSerial,
+            Lines = lines,
+            InvitedSupplierIds = _invited.ToList()
+        };
+
+        _busy = true;
+        try
+        {
+            var rfq = await Procurement.CreateRfqAsync(_companyId, request, _actor);
+            await Load(initialSelection: false);
+            _message = $"{rfq.RfqNumber} posted to {rfq.InvitedSupplierIds.Count} supplier(s) with {rfq.Lines.Count} lines.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string StatusClasses(RequisitionStatus status) => status switch
+    {
+        RequisitionStatus.Open => "bg-slate-100 text-slate-600",
+        RequisitionStatus.RfqPosted => "bg-amber-50 text-amber-600",
+        RequisitionStatus.Ordered => "bg-emerald-50 text-emerald-600",
+        RequisitionStatus.Cancelled => "bg-rose-50 text-rose-500",
+        _ => "bg-slate-100 text-slate-500"
+    };
+}

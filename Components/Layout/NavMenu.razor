@@ -1,0 +1,115 @@
+@inject ApprovalService ApprovalSvc
+
+<nav class="flex flex-col pt-1">
+    <AuthorizeView Roles="CompanyAdmin,CompanyUser">
+        <Authorized>
+            @Group("Work", _workItems)
+            @Group("Procurement", _procurementItems)
+            @Group("Master data", _masterItems)
+        </Authorized>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="CompanyAdmin">
+        <Authorized>
+            @Group("Admin", _adminItems)
+        </Authorized>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="SupplierAdmin,SupplierUser">
+        <Authorized>
+            @Group("Workspace", _supplierItems)
+        </Authorized>
+    </AuthorizeView>
+</nav>
+
+@code {
+    private record NavItem(string Href, string Label, MarkupString Icon, int Badge = 0);
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _pendingApprovals;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthStateTask!).User;
+        if ((user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser"))
+            && int.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
+            && int.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId))
+        {
+            _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId);
+        }
+    }
+
+    private RenderFragment Group(string title, IEnumerable<NavItem> items) => __builder =>
+    {
+        <p class="nav-group-title">@title</p>
+        foreach (var item in items)
+        {
+            var badge = item.Href == "/company/approvals" ? _pendingApprovals : item.Badge;
+            <NavLink href="@item.Href" Match="@(item.Href == "/" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
+                <span class="nav-icon">@item.Icon</span>
+                <span class="nav-label">@item.Label</span>
+                @if (badge > 0)
+                {
+                    <span class="nav-badge">@badge</span>
+                }
+            </NavLink>
+        }
+    };
+
+    private static MarkupString Icon(string path) =>
+        (MarkupString)$"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'>{path}</svg>";
+
+    private static readonly MarkupString ReqnIcon = Icon("<path d='M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2'/><path d='M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2Z'/><path d='m9 13 2 2 4-4'/>");
+    private static readonly MarkupString RfqIcon = Icon("<path d='M9 12h6M9 16h6M9 8h1M7 3h10a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V5a2 2 0 0 1 2-2Z'/>");
+    private static readonly MarkupString PoIcon = Icon("<rect x='4' y='3' width='16' height='18' rx='2'/><path d='M8 8h8M8 12h8M8 16h5'/>");
+    private static readonly MarkupString ApprovalIcon = Icon("<circle cx='12' cy='12' r='9'/><path d='m8 12 3 3 5-6'/>");
+    private static readonly MarkupString SupplierIcon = Icon("<path d='M3 21V8l9-5 9 5v13M3 21h18M9 21v-6h6v6'/>");
+    private static readonly MarkupString ItemIcon = Icon("<path d='M20.5 7.3 12 12l-8.5-4.7M12 12v9M3.5 7.3 12 3l8.5 4.3v9.4L12 21l-8.5-4.3Z'/>");
+    private static readonly MarkupString CategoryIcon = Icon("<path d='M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z'/>");
+    private static readonly MarkupString VesselIcon = Icon("<path d='M3 17l2 3h14l2-3M5 17l-1-6h16l-1 6M12 11V4m0 0 4 3-4 2'/>");
+    private static readonly MarkupString DepartmentIcon = Icon("<path d='M4 21V7l8-4 8 4v14M9 21v-6h6v6M9 10h.01M15 10h.01'/>");
+    private static readonly MarkupString PortIcon = Icon("<circle cx='12' cy='5' r='2'/><path d='M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6'/>");
+    private static readonly MarkupString MatrixIcon = Icon("<rect x='3' y='3' width='18' height='18' rx='2'/><path d='M3 9h18M3 15h18M9 3v18M15 3v18'/>");
+    private static readonly MarkupString ProfileIcon = Icon("<rect x='3' y='4' width='18' height='16' rx='2'/><path d='M7 9h10M7 13h6'/>");
+    private static readonly MarkupString TeamIcon = Icon("<circle cx='9' cy='8' r='3'/><path d='M2 20c0-3.3 3.1-6 7-6s7 2.7 7 6'/><circle cx='17' cy='8' r='2.5'/><path d='M17.5 14c2.6.4 4.5 2.5 4.5 6'/>");
+
+    private static readonly MarkupString HomeIcon = Icon("<path d='m3 11 9-8 9 8M5 10v10h5v-6h4v6h5V10'/>");
+
+    private readonly List<NavItem> _workItems = new()
+    {
+        new("/", "Dashboard", HomeIcon),
+        new("/company/approvals", "My Approvals", ApprovalIcon),
+    };
+
+    private readonly List<NavItem> _procurementItems = new()
+    {
+        new("/company/requisitions", "Requisitions", ReqnIcon),
+        new("/company/rfqs", "RFQs", RfqIcon),
+        new("/company/purchase-orders", "Purchase Orders", PoIcon),
+    };
+
+    private readonly List<NavItem> _masterItems = new()
+    {
+        new("/company/suppliers", "Suppliers", SupplierIcon),
+        new("/company/items", "Items Catalog", ItemIcon),
+        new("/company/categories", "Categories", CategoryIcon),
+        new("/company/vessels", "Vessels", VesselIcon),
+        new("/company/departments", "Departments", DepartmentIcon),
+        new("/company/ports", "Ports", PortIcon),
+    };
+
+    private readonly List<NavItem> _adminItems = new()
+    {
+        new("/company/approval-matrix", "Approval Matrix", MatrixIcon),
+        new("/company/profile", "Company Profile", ProfileIcon),
+        new("/company/team", "Team", TeamIcon),
+    };
+
+    private readonly List<NavItem> _supplierItems = new()
+    {
+        new("/", "Dashboard", HomeIcon),
+        new("/supplier/rfqs", "RFQs", RfqIcon),
+        new("/supplier/purchase-orders", "Purchase Orders", PoIcon),
+    };
+}

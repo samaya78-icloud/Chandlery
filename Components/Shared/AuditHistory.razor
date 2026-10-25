@@ -1,0 +1,38 @@
+@inject AuditService Audit
+
+@* The audit trail of one record: who did what and when (times in UTC). Reloads whenever the parent re-renders it. *@
+<div class="card p-6 print:hidden">
+    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Audit history</h2>
+    @if (_entries.Count == 0)
+    {
+        <p class="text-sm text-slate-400">No history yet.</p>
+    }
+    else
+    {
+        <ul class="divide-y divide-slate-100">
+            @foreach (var e in _entries)
+            {
+                <li class="py-2 text-sm">
+                    <p class="text-xs text-slate-400">@e.At.ToString("dd MMM yyyy HH:mm") UTC · @(e.UserName == "" ? "System" : e.UserName)</p>
+                    <p class="text-slate-700">@e.Text</p>
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int CompanyId { get; set; }
+    [Parameter, EditorRequired] public string EntityType { get; set; } = "";
+    [Parameter, EditorRequired] public int EntityId { get; set; }
+
+    /// <summary>Change this to force a reload after the parent has changed the record.</summary>
+    [Parameter] public int Version { get; set; }
+
+    private List<AuditEntry> _entries = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _entries = await Audit.GetAsync(CompanyId, EntityType, EntityId);
+    }
+}

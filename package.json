@@ -1,0 +1,12 @@
+{
+  "name": "saas-dashboard",
+  "private": true,
+  "scripts": {
+    "css:build": "tailwindcss -i ./wwwroot/css/input.css -o ./wwwroot/css/app.css --minify",
+    "css:watch": "tailwindcss -i ./wwwroot/css/input.css -o ./wwwroot/css/app.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.0.0",
+    "tailwindcss": "^4.0.0"
+  }
+}
