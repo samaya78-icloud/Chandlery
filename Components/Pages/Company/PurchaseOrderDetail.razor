@@ -119,7 +119,7 @@ else
     @* Deliveries *@
     @if (_po.Status == PoStatus.Approved)
     {
-        <div class="mt-6 card p-6 print:hidden">
+        <div id="deliveries" class="mt-6 card p-6 print:hidden">
             <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">
                     Deliveries <span class="ml-1 chip chip-plain" data-tone="accent">@_deliveries.Count</span>

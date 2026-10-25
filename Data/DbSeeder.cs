@@ -24,6 +24,7 @@ public static class DbSeeder
         if (await db.Companies.AnyAsync())
         {
             await EnsureApprovalDemoAsync(db);
+            await EnsureSpotDemoAsync(db);
             return;
         }
 
@@ -194,6 +195,63 @@ public static class DbSeeder
 
         await db.SaveChangesAsync();
         await EnsureApprovalDemoAsync(db);
+        await EnsureSpotDemoAsync(db);
+    }
+
+    /// <summary>
+    /// One approved spot PO to Poseidon with a part delivery, so the Source and Delivery columns and the Deliveries panel have
+    /// something to show on a fresh database. Idempotent: skipped once the company has any spot PO.
+    /// </summary>
+    private static async Task EnsureSpotDemoAsync(ChandleryDbContext db)
+    {
+        var admin = await db.Users.FirstOrDefaultAsync(u => u.Email == "priya@chandlery.example.com" && u.CompanyId != null);
+        if (admin?.CompanyId is not { } companyId) return;
+        if (await db.PurchaseOrders.IgnoreQueryFilters().AnyAsync(p => p.CompanyId == companyId && p.IsSpot)) return;
+
+        var poseidon = await db.Suppliers.FirstOrDefaultAsync(s => s.Name == "Poseidon Ship Stores");
+        var vessel = await db.Vessels.IgnoreQueryFilters().FirstOrDefaultAsync(v => v.CompanyId == companyId);
+        var items = await db.Items.IgnoreQueryFilters().Where(i => i.CompanyId == companyId).OrderBy(i => i.Id).Take(3).ToListAsync();
+        if (poseidon is null || vessel is null || items.Count < 2) return;
+
+        var nextPo = 5001 + await db.PurchaseOrders.IgnoreQueryFilters().CountAsync();
+        var po = new PurchaseOrder
+        {
+            CompanyId = companyId,
+            PoNumber = $"PO-{nextPo}",
+            SupplierId = poseidon.Id,
+            CreatedDate = DateTime.UtcNow.AddDays(-2),
+            IsSpot = true,
+            SupplierRef = "PSD-SPOT-01",
+            VesselId = vessel.Id,
+            Remarks = "Urgent top-up before departure.",
+            Status = PoStatus.Approved,
+            Currency = "USD",
+            Lines = items.Select((item, index) => new PoLine { ItemId = item.Id, Quantity = 10 * (index + 1), UnitPrice = 12m + index * 7.5m }).ToList()
+        };
+        po.DeliveryStatus = DeliveryStatus.Partial;
+        db.PurchaseOrders.Add(po);
+        await db.SaveChangesAsync();
+
+        var nextDo = 1001 + (await db.DeliveryOrders.IgnoreQueryFilters().MaxAsync(d => (int?)d.Id) ?? 0);
+        db.DeliveryOrders.Add(new DeliveryOrder
+        {
+            CompanyId = companyId,
+            DoNumber = $"DO-{nextDo}",
+            PurchaseOrderId = po.Id,
+            SupplierId = poseidon.Id,
+            ReceivedDate = DateTime.SpecifyKind(DateTime.UtcNow.Date.AddDays(-1), DateTimeKind.Utc),
+            Place = "Singapore anchorage",
+            RecordedByUserId = admin.Id,
+            RecordedByName = admin.DisplayName,
+            CreatedAt = DateTime.UtcNow,
+            Lines = [new DeliveryOrderLine { ItemId = items[0].Id, Quantity = po.Lines[0].Quantity }]
+        });
+        db.AuditEntries.Add(new AuditEntry
+        {
+            CompanyId = companyId, EntityType = "PurchaseOrder", EntityId = po.Id, UserId = admin.Id, UserName = admin.DisplayName,
+            At = DateTime.UtcNow, Text = $"CREATED spot PO {po.PoNumber} for {poseidon.Name} (demo data)"
+        });
+        await db.SaveChangesAsync();
     }
 
     /// <summary>

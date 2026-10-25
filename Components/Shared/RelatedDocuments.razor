@@ -19,7 +19,7 @@
             }
             @if (_graph.Rfqs.Count > 0)
             {
-                @if (_graph.Requisition is not null) { <span class="self-center text-lg text-muted">&rsaquo;</span> }
+                @if (_graph.Requisition is not null) { <span class="hidden self-center text-lg text-muted sm:inline">&rsaquo;</span> }
                 <div class="rounded-xl border border-line px-3 py-2">
                     <p class="text-[11px] font-bold uppercase tracking-wider text-muted">RFQ@(_graph.Rfqs.Count > 1 ? "s" : "")</p>
                     <div class="mt-1 flex flex-col gap-1">
@@ -36,7 +36,7 @@
             }
             @if (_graph.Pos.Count > 0)
             {
-                @if (_graph.Rfqs.Count > 0 || _graph.Requisition is not null) { <span class="self-center text-lg text-muted">&rsaquo;</span> }
+                @if (_graph.Rfqs.Count > 0 || _graph.Requisition is not null) { <span class="hidden self-center text-lg text-muted sm:inline">&rsaquo;</span> }
                 <div class="rounded-xl border border-line px-3 py-2">
                     <p class="text-[11px] font-bold uppercase tracking-wider text-muted">Purchase order@(_graph.Pos.Count > 1 ? "s" : "")</p>
                     <div class="mt-1 flex flex-col gap-1">
@@ -47,6 +47,26 @@
                                 <StatusChip Value="po.Status" />
                                 <span class="text-xs text-muted">@po.Supplier · @Money.Format(po.Total, po.Currency)</span>
                             </div>
+                        }
+                    </div>
+                </div>
+            }
+            @if (_graph.Dos.Count > 0)
+            {
+                <span class="hidden self-center text-lg text-muted sm:inline">&rsaquo;</span>
+                <div class="rounded-xl border border-line px-3 py-2">
+                    <p class="text-[11px] font-bold uppercase tracking-wider text-muted">Deliver@(_graph.Dos.Count > 1 ? "ies" : "y")</p>
+                    <div class="mt-1 flex flex-col gap-1">
+                        @foreach (var d in _graph.Dos.Take(6))
+                        {
+                            <div class="flex items-center gap-2 px-1.5">
+                                <DocLink Kind="DocKind.DeliveryOrder" Id="d.PoId" Text="@d.Number" />
+                                <span class="text-xs text-muted">@d.PoNumber · @d.Received.ToString("dd MMM") · @d.Lines lines@(d.Locked ? " · invoiced" : "")</span>
+                            </div>
+                        }
+                        @if (_graph.Dos.Count > 6)
+                        {
+                            <span class="px-1.5 text-xs text-muted">and @(_graph.Dos.Count - 6) more</span>
                         }
                     </div>
                 </div>
@@ -72,6 +92,6 @@
     protected override async Task OnParametersSetAsync()
     {
         _graph = await Hub.GetRelatedAsync(CompanyId, Kind, Id);
-        _stages = (_graph.Requisition is null ? 0 : 1) + (_graph.Rfqs.Count > 0 ? 1 : 0) + (_graph.Pos.Count > 0 ? 1 : 0);
+        _stages = (_graph.Requisition is null ? 0 : 1) + (_graph.Rfqs.Count > 0 ? 1 : 0) + (_graph.Pos.Count > 0 ? 1 : 0) + (_graph.Dos.Count > 0 ? 1 : 0);
     }
 }

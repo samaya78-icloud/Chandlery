@@ -22,7 +22,7 @@ public static class DocLinks
         DocKind.Requisition => $"/company/requisitions/{id}",
         DocKind.Rfq => supplierPortal ? $"/supplier/rfqs/{id}" : $"/company/rfqs/{id}",
         DocKind.PurchaseOrder => supplierPortal ? "/supplier/purchase-orders" : $"/company/purchase-orders/{id}",
-        DocKind.DeliveryOrder => $"/company/purchase-orders/{id}",
+        DocKind.DeliveryOrder => $"/company/purchase-orders/{id}#deliveries", // id is the PO the delivery belongs to
         DocKind.Invoice => supplierPortal ? $"/supplier/invoices/{id}" : $"/company/invoices/{id}",
         DocKind.Supplier => $"/company/suppliers/{id}",
         DocKind.Vessel => $"/company/vessels/{id}",

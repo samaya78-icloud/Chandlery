@@ -6,6 +6,7 @@ namespace Chandlery.Services;
 
 // Light summaries used by the hub pages, the lineage strip and the shared mini-tables.
 public record RfqBrief(int Id, string Number, string Vessel, int? VesselId, DateTime Created, DateTime? Due, RfqStatus Status, int SupplierCount);
+public record DoBrief(int Id, string Number, int PoId, string PoNumber, DateTime Received, int Lines, bool Locked);
 public record PoBrief(int Id, string Number, int SupplierId, string Supplier, DateTime Created, string Currency, decimal Total, PoStatus Status, DeliveryStatus Delivery, bool IsSpot);
 public record ReqnBrief(int Id, string Number, int VesselId, string Vessel, int? DepartmentId, string Department, DateTime Date, RequisitionStatus Status, int Lines);
 public record PriceRow(DateTime Date, int PoId, string PoNumber, int SupplierId, string Supplier, decimal Quantity, decimal UnitPrice, decimal DiscountPct, string Currency);
@@ -15,10 +16,10 @@ public record VesselHub(Vessel Vessel, List<ReqnBrief> Requisitions, List<RfqBri
 public record ItemHub(Item Item, string CategoryPath, List<PriceRow> Prices, List<RfqBrief> Rfqs, List<ReqnBrief> Requisitions);
 public record DepartmentHub(Department Department, List<ReqnBrief> Requisitions, List<PoBrief> Pos, List<ApprovalRuleRow> Rules);
 
-/// <summary>The document chain around one record: Requisition -> RFQs -> POs.</summary>
-public record RelatedGraph(ReqnBrief? Requisition, List<RfqBrief> Rfqs, List<PoBrief> Pos)
+/// <summary>The document chain around one record: Requisition -> RFQs -> POs -> deliveries.</summary>
+public record RelatedGraph(ReqnBrief? Requisition, List<RfqBrief> Rfqs, List<PoBrief> Pos, List<DoBrief> Dos)
 {
-    public bool IsEmpty => Requisition is null && Rfqs.Count == 0 && Pos.Count == 0;
+    public bool IsEmpty => Requisition is null && Rfqs.Count == 0 && Pos.Count == 0 && Dos.Count == 0;
 }
 
 /// <summary>Read-only look-ups that connect records to everything related to them, so no page is a dead end.</summary>
@@ -144,13 +145,13 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
                 break;
             case DocKind.Rfq:
                 var rfq = await db.Rfqs.FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId);
-                if (rfq is null) return new RelatedGraph(null, new(), new());
+                if (rfq is null) return new RelatedGraph(null, new(), new(), new());
                 requisitionId = rfq.RequisitionId;
                 if (requisitionId is null) rfqIds.Add(rfq.Id);
                 break;
             case DocKind.PurchaseOrder:
                 var po = await db.PurchaseOrders.FirstOrDefaultAsync(p => p.Id == id && p.CompanyId == companyId);
-                if (po is null) return new RelatedGraph(null, new(), new());
+                if (po is null) return new RelatedGraph(null, new(), new(), new());
                 if (po.RfqId is { } poRfqId)
                 {
                     var parent = await db.Rfqs.FirstOrDefaultAsync(r => r.Id == poRfqId);
@@ -176,6 +177,15 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
             : await BriefsAsync(db, db.PurchaseOrders.Where(p => p.CompanyId == companyId
                 && ((p.RfqId != null && rfqIds.Contains(p.RfqId.Value)) || directPoIds.Contains(p.Id))));
 
-        return new RelatedGraph(requisition, rfqs.OrderBy(r => r.Created).ToList(), pos.OrderBy(p => p.Created).ToList());
+        var poIds = pos.Select(p => p.Id).ToList();
+        var poNumbers = pos.ToDictionary(p => p.Id, p => p.Number);
+        var deliveries = poIds.Count == 0
+            ? new List<DoBrief>()
+            : (await db.DeliveryOrders.Where(d => d.CompanyId == companyId && poIds.Contains(d.PurchaseOrderId))
+                    .OrderBy(d => d.ReceivedDate).ThenBy(d => d.Id).ToListAsync())
+                .Select(d => new DoBrief(d.Id, d.DoNumber, d.PurchaseOrderId, poNumbers.GetValueOrDefault(d.PurchaseOrderId) ?? "",
+                    d.ReceivedDate, d.Lines.Count, d.InvoiceId.HasValue)).ToList();
+
+        return new RelatedGraph(requisition, rfqs.OrderBy(r => r.Created).ToList(), pos.OrderBy(p => p.Created).ToList(), deliveries);
     }
 }
