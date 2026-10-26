@@ -101,6 +101,7 @@ else
                 @if (quote is not null)
                 {
                     <p class="mt-2 text-xl font-bold text-slate-900">@Money.Format(quote.GrandTotal(_rfq.Lines), quote.Currency)</p>
+                    <p><UsdEquivalent Amount="quote.GrandTotal(_rfq.Lines)" Currency="@quote.Currency" /></p>
                     <dl class="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-500">
                         <dt>Delivery</dt><dd class="text-slate-700">@(quote.DeliveryDays.HasValue ? quote.DeliveryDays + " days" : "—")</dd>
                         <dt>Valid until</dt><dd class="text-slate-700">@Date(quote.ValidityDate)</dd>

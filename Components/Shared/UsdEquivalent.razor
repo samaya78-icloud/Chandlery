@@ -1,0 +1,49 @@
+@inject FxService FxSvc
+
+@if (_usd is not null)
+{
+    <span class="@Class text-xs font-normal text-muted tabular-nums" title="@_title">&asymp; USD @_usd.Value.ToString("#,##0.00")</span>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    [Parameter] public decimal Amount { get; set; }
+    [Parameter] public string? Currency { get; set; }
+
+    /// <summary>The rate saved on the document when it was sent for approval; when absent the current rate is used.</summary>
+    [Parameter] public decimal? StoredRate { get; set; }
+
+    /// <summary>The day to take the rate for (defaults to today).</summary>
+    [Parameter] public DateTime? Date { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    private decimal? _usd;
+    private string _title = "";
+    private (decimal, string?, DateTime?, decimal?) _last;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = (Amount, Currency, Date, StoredRate);
+        if (key == _last && _usd is not null) return;
+        _last = key;
+
+        var code = (Currency ?? "USD").Trim().ToUpperInvariant();
+        if (code == "USD") { _usd = null; return; }
+
+        if (StoredRate is > 0)
+        {
+            _usd = Fx.ToUsd(Amount, StoredRate.Value);
+            _title = $"Rate saved on this document: 1 USD = {StoredRate.Value:#,##0.######} {code}";
+            return;
+        }
+
+        int? companyId = null;
+        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("CompanyId")?.Value, out var id)) companyId = id;
+        var rate = (await FxSvc.GetRatesAsync(companyId, new[] { code }, Date)).GetValueOrDefault(code);
+        if (rate is null) { _usd = null; return; }
+        _usd = Fx.ToUsd(Amount, rate.UnitsPerUsd);
+        _title = $"1 USD = {rate.UnitsPerUsd:#,##0.######} {code} ({rate.Source}, {rate.RateDate:dd MMM yyyy})";
+    }
+}

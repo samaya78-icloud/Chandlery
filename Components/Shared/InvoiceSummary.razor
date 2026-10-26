@@ -66,7 +66,7 @@
             @if (inv.AdditionalItemsCost > 0) { <div class="flex justify-between gap-4"><dt class="text-muted">Additional items</dt><dd class="tabular-nums">@Money.Format(inv.AdditionalItemsCost, inv.Currency)</dd></div> }
             @if (inv.AdditionalDeliveryCost > 0) { <div class="flex justify-between gap-4"><dt class="text-muted">Delivery cost</dt><dd class="tabular-nums">@Money.Format(inv.AdditionalDeliveryCost, inv.Currency)</dd></div> }
             @if (inv.DiscountOrCredit > 0) { <div class="flex justify-between gap-4"><dt class="text-muted">Discount / credit</dt><dd class="tabular-nums">&minus;@Money.Format(inv.DiscountOrCredit, inv.Currency)</dd></div> }
-            <div class="flex justify-between gap-4 border-t border-line pt-2 font-semibold text-ink"><dt>Total before tax</dt><dd class="tabular-nums">@Money.Format(inv.TotalExclTax, inv.Currency)</dd></div>
+            <div class="flex justify-between gap-4 border-t border-line pt-2 font-semibold text-ink"><dt>Total before tax</dt><dd class="text-right tabular-nums">@Money.Format(inv.TotalExclTax, inv.Currency)<br /><UsdEquivalent Amount="inv.TotalExclTax" Currency="@inv.Currency" StoredRate="inv.UsdRate" Date="inv.InvoiceDate" /></dd></div>
             @if (Detail.Tax is not null || inv.TaxRatePct > 0)
             {
                 <div class="flex justify-between gap-4"><dt class="text-muted">Tax @(Detail.Tax?.Code) @inv.TaxRatePct.ToString("0.##")%</dt><dd class="tabular-nums">@Money.Format(inv.TaxAmount, inv.Currency)</dd></div>

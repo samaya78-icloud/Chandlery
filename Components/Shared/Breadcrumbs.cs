@@ -18,6 +18,8 @@ public static class Breadcrumbs
         ("/company/purchase-orders", "Procurement", "Purchase Orders"),
         ("/company/invoices", "Procurement", "Invoices"),
         ("/company/tax-codes", "Admin", "Tax Codes"),
+        ("/company/currencies", "Admin", "Currencies"),
+        ("/company/exchange-rates", "Admin", "Exchange Rates"),
         ("/company/suppliers", "Master data", "Suppliers"),
         ("/company/items", "Master data", "Catalog"),
         ("/company/vessels", "Master data", "Vessels"),

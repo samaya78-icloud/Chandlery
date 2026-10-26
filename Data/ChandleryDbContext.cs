@@ -37,6 +37,9 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<SupplierBankAccount> SupplierBankAccounts => Set<SupplierBankAccount>();
     public DbSet<TaxCode> TaxCodes => Set<TaxCode>();
     public DbSet<DepartmentCategory> DepartmentCategories => Set<DepartmentCategory>();
+    public DbSet<Currency> Currencies => Set<Currency>();
+    public DbSet<CompanyCurrency> CompanyCurrencies => Set<CompanyCurrency>();
+    public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -141,6 +144,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.Ignore(p => p.Subtotal);
             b.Property(p => p.DiscountPct).HasPrecision(5, 2);
             b.Property(p => p.AdditionalCharges).HasPrecision(18, 2);
+            b.Property(p => p.UsdRate).HasPrecision(18, 8);
             b.OwnsMany(p => p.Lines, lb =>
             {
                 lb.WithOwner().HasForeignKey("PurchaseOrderId");
@@ -211,6 +215,33 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.HasQueryFilter(x => CurrentCompanyId == null || x.CompanyId == CurrentCompanyId);
         });
 
+        modelBuilder.Entity<Currency>(b =>
+        {
+            b.HasKey(c => c.Code);
+            b.Property(c => c.Code).HasMaxLength(3);
+            b.Property(c => c.Name).HasMaxLength(80);
+        });
+
+        modelBuilder.Entity<CompanyCurrency>(b =>
+        {
+            b.HasKey(c => new { c.CompanyId, c.CurrencyCode });
+            b.Property(c => c.CurrencyCode).HasMaxLength(3);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<ExchangeRate>(b =>
+        {
+            b.Property(r => r.CurrencyCode).HasMaxLength(3);
+            b.Property(r => r.UnitsPerUsd).HasPrecision(18, 8);
+            b.Property(r => r.Source).HasMaxLength(40);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            // One shared market rate per currency and day, and one company rate per company, currency and day.
+            b.HasIndex(r => new { r.CurrencyCode, r.RateDate }).IsUnique().HasFilter("\"CompanyId\" IS NULL");
+            b.HasIndex(r => new { r.CompanyId, r.CurrencyCode, r.RateDate }).IsUnique().HasFilter("\"CompanyId\" IS NOT NULL");
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<SupplierBankAccount>(b =>
         {
             b.HasOne<Supplier>().WithMany().HasForeignKey(a => a.SupplierId).OnDelete(DeleteBehavior.Cascade);
@@ -242,6 +273,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.Property(i => i.AdditionalDeliveryCost).HasPrecision(18, 2);
             b.Property(i => i.DiscountOrCredit).HasPrecision(18, 2);
             b.Property(i => i.TaxRatePct).HasPrecision(5, 2);
+            b.Property(i => i.UsdRate).HasPrecision(18, 8);
             b.OwnsMany(i => i.Lines, lb =>
             {
                 lb.WithOwner().HasForeignKey("InvoiceId");

@@ -78,6 +78,8 @@
 
     private static readonly MarkupString InvoiceIcon = Icon("<path d='M6 3h12v18l-3-2-3 2-3-2-3 2Z'/><path d='M9 8h6M9 12h6'/>");
     private static readonly MarkupString TaxIcon = Icon("<path d='M19 5 5 19'/><circle cx='7' cy='7' r='2'/><circle cx='17' cy='17' r='2'/>");
+    private static readonly MarkupString CurrencyIcon = Icon("<circle cx='12' cy='12' r='9'/><path d='M14.5 9.2c-.5-.8-1.4-1.2-2.5-1.2-1.4 0-2.5.7-2.5 1.8 0 2.6 5 1.2 5 3.8 0 1.1-1.1 1.9-2.5 1.9-1.2 0-2.2-.5-2.7-1.4M12 6.5V8m0 8v1.5'/>");
+    private static readonly MarkupString RatesIcon = Icon("<path d='M3 17l6-6 4 4 8-8M14 7h7v7'/>");
     private static readonly MarkupString BankIcon = Icon("<path d='M3 10 12 4l9 6M5 10v8M9 10v8M15 10v8M19 10v8M3 20h18'/>");
 
     private static readonly MarkupString HomeIcon = Icon("<path d='m3 11 9-8 9 8M5 10v10h5v-6h4v6h5V10'/>");
@@ -109,6 +111,8 @@
     {
         new("/company/approval-matrix", "Approval Matrix", MatrixIcon),
         new("/company/tax-codes", "Tax Codes", TaxIcon),
+        new("/company/currencies", "Currencies", CurrencyIcon),
+        new("/company/exchange-rates", "Exchange Rates", RatesIcon),
         new("/company/profile", "Company Profile", ProfileIcon),
         new("/company/team", "Team", TeamIcon),
     };

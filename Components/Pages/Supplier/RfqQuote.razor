@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject FxService FxSvc
 
 <PageTitle>@(_rfq?.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
 
@@ -82,7 +83,7 @@ else
                     <div class="grid grid-cols-2 gap-3">
                         <div>
                             <label class="mb-1 block text-xs text-slate-500">Currency</label>
-                            <SelectBox TValue="string" @bind-Value="_input.Currency" Options="CurrencyOptions" Disabled="@_locked" Searchable="false" />
+                            <SelectBox TValue="string" @bind-Value="_input.Currency" Options="CurrencyOptions" Disabled="@_locked" SearchPlaceholder="Search currencies…" />
                         </div>
                         <div>
                             <label class="mb-1 block text-xs text-slate-500">Discount (%)</label>
@@ -250,7 +251,7 @@ else
 
 @code {
     private const string InputClass = "w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm disabled:bg-slate-100 disabled:text-slate-500";
-    private static readonly List<SelectOption<string>> CurrencyOptions = Money.Currencies.Select(c => new SelectOption<string>(c, c)).ToList();
+    private List<SelectOption<string>> CurrencyOptions = new();
 
     [Parameter] public int RfqId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
@@ -295,6 +296,7 @@ else
     {
         var authState = await AuthStateTask!;
         _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        CurrencyOptions = await FxSvc.GetAllCurrencyOptionsAsync();
         await Load();
     }
 

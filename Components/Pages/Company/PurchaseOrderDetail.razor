@@ -110,7 +110,7 @@ else
                 }
                 <tr>
                     <td colspan="@FooterSpan" class="px-4 py-3 text-right text-sm font-medium text-slate-500">Total</td>
-                    <td class="px-4 py-3 text-lg font-bold text-slate-900">@Money.Format(_po.Total, _po.Currency)</td>
+                    <td class="px-4 py-3 text-lg font-bold text-slate-900">@Money.Format(_po.Total, _po.Currency)<br /><UsdEquivalent Amount="_po.Total" Currency="@_po.Currency" StoredRate="_po.UsdRate" Date="_po.CreatedDate" /></td>
                 </tr>
             </tfoot>
         </table>

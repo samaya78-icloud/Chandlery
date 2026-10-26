@@ -70,6 +70,9 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         db.Companies.Add(company);
         await db.SaveChangesAsync();
         await StarterCategories.CreateAsync(db, company.Id);
+        foreach (var code in CurrencyCatalog.DefaultForCompany)
+            db.CompanyCurrencies.Add(new CompanyCurrency { CompanyId = company.Id, CurrencyCode = code });
+        await db.SaveChangesAsync();
 
         var admin = new AppUser
         {
@@ -878,7 +881,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (!CanQuote(rfq, supplierId, hasPo))
             throw new InvalidOperationException("This RFQ has already been awarded, so the quote can no longer be changed.");
 
-        if (!Money.Currencies.Contains(input.Currency))
+        if (!CurrencyCatalog.Contains(input.Currency))
             throw new InvalidOperationException("Choose a valid currency.");
         if (input.DiscountPct < 0 || input.DiscountPct > 100)
             throw new InvalidOperationException("Discount must be between 0 and 100%.");

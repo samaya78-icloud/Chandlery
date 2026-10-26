@@ -29,6 +29,13 @@ builder.Services.AddScoped<DeliveryService>();
 builder.Services.AddScoped<PoDocumentService>();
 builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddSingleton<IFileStore, DiskFileStore>();
+builder.Services.AddHttpClient<FxFeed>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Chandlery/1.0 (exchange rate sync)");
+});
+builder.Services.AddScoped<FxService>();
+builder.Services.AddHostedService<FxRefreshWorker>();
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthorization();

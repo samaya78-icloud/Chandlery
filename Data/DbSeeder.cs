@@ -26,6 +26,7 @@ public static class DbSeeder
             await EnsureApprovalDemoAsync(db);
             await EnsureSpotDemoAsync(db);
             await EnsureTaxCodesAsync(db);
+            await EnsureCurrenciesAsync(db);
             return;
         }
 
@@ -200,6 +201,27 @@ public static class DbSeeder
         await EnsureApprovalDemoAsync(db);
         await EnsureSpotDemoAsync(db);
         await EnsureTaxCodesAsync(db);
+        await EnsureCurrenciesAsync(db);
+    }
+
+    /// <summary>
+    /// Fills the shared currency master with the standard currencies and gives every company that has no currency list yet the
+    /// usual starting set. Idempotent.
+    /// </summary>
+    private static async Task EnsureCurrenciesAsync(ChandleryDbContext db)
+    {
+        var have = (await db.Currencies.Select(c => c.Code).ToListAsync()).ToHashSet();
+        var missing = CurrencyCatalog.All().Where(c => !have.Contains(c.Code)).ToList();
+        if (missing.Count > 0) db.Currencies.AddRange(missing);
+
+        var withList = (await db.CompanyCurrencies.IgnoreQueryFilters().Select(c => c.CompanyId).Distinct().ToListAsync()).ToHashSet();
+        foreach (var companyId in await db.Companies.Select(c => c.Id).ToListAsync())
+        {
+            if (withList.Contains(companyId)) continue;
+            foreach (var code in CurrencyCatalog.DefaultForCompany)
+                db.CompanyCurrencies.Add(new CompanyCurrency { CompanyId = companyId, CurrencyCode = code });
+        }
+        await db.SaveChangesAsync();
     }
 
     /// <summary>Illustrative tax codes for the first company (rates are examples, not tax advice). Idempotent.</summary>

@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject FxService FxSvc
 @inject NavigationManager Navigation
 
 <PageTitle>New Spot PO · Chandlery</PageTitle>
@@ -35,7 +36,7 @@
             </div>
             <div>
                 <label class="label">Currency</label>
-                <input @bind="_po.Currency" maxlength="3" class="input uppercase" />
+                <SelectBox TValue="string" @bind-Value="_po.Currency" Options="_currencyOptions" Placeholder="Currency" SearchPlaceholder="Search currencies…" />
             </div>
             <div>
                 <label class="label">Order port</label>
@@ -116,6 +117,7 @@
     private int _departmentId;
     private int _supplierId;
     private int _portId;
+    private List<SelectOption<string>> _currencyOptions = new();
     private List<SelectOption<int>> _vesselOptions = new(), _departmentOptions = new(), _portOptions = new();
     private readonly NewSpotPo _po = new();
     private List<Vessel> _vessels = new();
@@ -140,6 +142,7 @@
         _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);
         _departmentOptions = SelectOptions.From(_departments, d => d.Id, d => d.Name);
         _portOptions = SelectOptions.From(_ports, p => p.Id, p => $"{p.Name}, {p.Country}");
+        _currencyOptions = await FxSvc.GetCompanyCurrencyOptionsAsync(companyId);
 
         _companyId = companyId; // the form is only rendered once everything above is loaded
     }

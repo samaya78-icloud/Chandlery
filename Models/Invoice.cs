@@ -34,6 +34,9 @@ public class Invoice
     public DateTime? DueDate { get; set; }
     public string Currency { get; set; } = "USD";
 
+    /// <summary>Units of Currency per 1 USD when the invoice was verified or entered (null = USD or no rate was available).</summary>
+    public decimal? UsdRate { get; set; }
+
     /// <summary>Goods or services value: the delivered value for a PO invoice, the sum of the lines for a spot invoice.</summary>
     public decimal InvoiceAmount { get; set; }
     public decimal AdditionalItemsCost { get; set; }

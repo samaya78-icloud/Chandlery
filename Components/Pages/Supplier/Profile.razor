@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject InvoiceService InvoiceSvc
+@inject FxService FxSvc
 @inject ToastService Toasts
 
 <PageTitle>Bank Accounts · Chandlery</PageTitle>
@@ -21,7 +22,7 @@
             <div><label class="label">Account holder</label><input @bind="_new.AccountName" class="input" /></div>
             <div><label class="label">Account number / IBAN</label><input @bind="_new.AccountNumber" class="input" /></div>
             <div><label class="label">SWIFT / BIC</label><input @bind="_new.SwiftCode" class="input uppercase" /></div>
-            <div><label class="label">Currency</label><input @bind="_new.Currency" maxlength="3" class="input uppercase" /></div>
+            <div><label class="label">Currency</label><SelectBox TValue="string" @bind-Value="_new.Currency" Options="_currencyOptions" Placeholder="Currency" SearchPlaceholder="Search currencies…" /></div>
         </div>
         @if (_error is not null)
         {
@@ -78,9 +79,12 @@ else
     {
         var authState = await AuthStateTask!;
         _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _currencyOptions = await FxSvc.GetAllCurrencyOptionsAsync();
         await Load();
         _loaded = true;
     }
+
+    private List<SelectOption<string>> _currencyOptions = new();
 
     private async Task Load() => _accounts = await InvoiceSvc.GetBankAccountsAsync(_supplierId);
 

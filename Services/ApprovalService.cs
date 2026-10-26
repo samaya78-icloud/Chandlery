@@ -40,6 +40,21 @@ public static class ApprovalEngine
         return chain.GroupBy(r => (r.Level, r.ApproverUserId)).Select(g => g.First()).ToList();
     }
 
+    /// <summary>
+    /// The amount to hold against the matrix limits, which are in US dollars: an amount in another currency is converted at the
+    /// rate for its date. Returns the amount, the rate used (units per USD) and a short note for the history. When no rate exists the
+    /// amount is compared as entered and the note says so.
+    /// </summary>
+    public static async Task<(decimal Amount, decimal? Rate, string Note)> ComparableAsync(ChandleryDbContext db, int companyId, string currency, DateTime date, decimal total)
+    {
+        var rate = await Fx.LookupAsync(db, companyId, currency, date);
+        if (rate is null)
+            return (total, null, $"no exchange rate for {currency} was found, so the amount was compared as entered");
+        if (rate.Currency == "USD") return (total, 1m, "");
+        var usd = Fx.ToUsd(total, rate.UnitsPerUsd);
+        return (usd, rate.UnitsPerUsd, $"compared as USD {usd:N2} at 1 USD = {rate.UnitsPerUsd:0.####} {rate.Currency}");
+    }
+
     /// <summary>The lowest level nobody has approved yet; null once every level is approved.</summary>
     public static int? CurrentLevel(IEnumerable<(int Level, ApprovalDecision Decision)> slots)
     {
@@ -58,7 +73,9 @@ public static class ApprovalEngine
     public static async Task RouteAsync(ChandleryDbContext db, PurchaseOrder po, Actor actor)
     {
         var rules = await db.ApprovalRules.Where(r => r.CompanyId == po.CompanyId).ToListAsync();
-        var chain = ResolveChain(rules, po.DepartmentId, po.Total);
+        var comparable = await ComparableAsync(db, po.CompanyId, po.Currency, po.CreatedDate, po.Total);
+        po.UsdRate = comparable.Rate;
+        var chain = ResolveChain(rules, po.DepartmentId, comparable.Amount);
         if (chain.Count == 0)
         {
             po.Status = PoStatus.Approved;
@@ -85,7 +102,7 @@ public static class ApprovalEngine
         var levels = chain.GroupBy(r => r.Level).OrderBy(g => g.Key)
             .Select(g => $"{levelNames.Name(g.Key)}: {string.Join(" or ", g.Select(r => names.GetValueOrDefault(r.ApproverUserId) ?? "?"))}");
         AuditLog.Add(db, po.CompanyId, AuditEntityTypes.PurchaseOrder, po.Id, actor,
-            $"SENT for approval ({string.Join("; ", levels)})");
+            $"SENT for approval ({string.Join("; ", levels)})" + (comparable.Note == "" ? "" : $"; {comparable.Note}"));
     }
 }
 

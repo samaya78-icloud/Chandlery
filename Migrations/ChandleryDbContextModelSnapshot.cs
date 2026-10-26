@@ -218,6 +218,20 @@ namespace Chandlery.Migrations
                     b.ToTable("Companies");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.CompanyCurrency", b =>
+                {
+                    b.Property<int>("CompanyId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CurrencyCode")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.HasKey("CompanyId", "CurrencyCode");
+
+                    b.ToTable("CompanyCurrencies");
+                });
+
             modelBuilder.Entity("Chandlery.Models.CompanySupplier", b =>
                 {
                     b.Property<int>("Id")
@@ -243,6 +257,25 @@ namespace Chandlery.Migrations
                         .IsUnique();
 
                     b.ToTable("CompanySuppliers");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.Currency", b =>
+                {
+                    b.Property<string>("Code")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<int>("DecimalPlaces")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.HasKey("Code");
+
+                    b.ToTable("Currencies");
                 });
 
             modelBuilder.Entity("Chandlery.Models.DeliveryOrder", b =>
@@ -347,6 +380,54 @@ namespace Chandlery.Migrations
                     b.ToTable("DepartmentCategories");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.ExchangeRate", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("CompanyId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CurrencyCode")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime>("RateDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<decimal>("UnitsPerUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CurrencyCode", "RateDate")
+                        .IsUnique()
+                        .HasFilter("\"CompanyId\" IS NULL");
+
+                    b.HasIndex("CompanyId", "CurrencyCode", "RateDate")
+                        .IsUnique()
+                        .HasFilter("\"CompanyId\" IS NOT NULL");
+
+                    b.ToTable("ExchangeRates");
+                });
+
             modelBuilder.Entity("Chandlery.Models.Invoice", b =>
                 {
                     b.Property<int>("Id")
@@ -442,6 +523,10 @@ namespace Chandlery.Migrations
                     b.Property<decimal>("TaxRatePct")
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
+
+                    b.Property<decimal?>("UsdRate")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
 
                     b.Property<string>("VarianceReason")
                         .IsRequired()
@@ -742,6 +827,10 @@ namespace Chandlery.Migrations
                     b.Property<string>("SupplierRef")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<decimal?>("UsdRate")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
 
                     b.Property<int?>("VesselId")
                         .HasColumnType("integer");
@@ -1268,6 +1357,15 @@ namespace Chandlery.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("Chandlery.Models.CompanyCurrency", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Chandlery.Models.CompanySupplier", b =>
                 {
                     b.HasOne("Chandlery.Models.Company", null)
@@ -1365,6 +1463,14 @@ namespace Chandlery.Migrations
                         .HasForeignKey("DepartmentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.ExchangeRate", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("Chandlery.Models.Invoice", b =>

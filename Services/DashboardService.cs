@@ -57,14 +57,26 @@ public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, App
         var awaitingDelivery = await db.PurchaseOrders.CountAsync(p => p.CompanyId == companyId && p.Status == PoStatus.Approved
             && p.DeliveryStatus != DeliveryStatus.Delivered);
 
-        // Spend: approved POs of the last 30 days, in the currency used most (amounts in different currencies are not added).
+        // Spend: approved POs of the last 30 days, each converted to US dollars at the rate stored on it (or the rate for its date).
         var since = DateTime.UtcNow.AddDays(-30);
         var recentPos = await db.PurchaseOrders.Where(p => p.CompanyId == companyId && p.Status == PoStatus.Approved && p.CreatedDate >= since).ToListAsync();
-        var currency = recentPos.GroupBy(p => p.Currency).OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault() ?? "USD";
-        var inCurrency = recentPos.Where(p => p.Currency == currency).ToList();
-        var supplierNames = await db.Suppliers.Where(s => inCurrency.Select(p => p.SupplierId).Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
-        var top = inCurrency.GroupBy(p => p.SupplierId)
-            .Select(g => new SpendRow(g.Key, supplierNames.GetValueOrDefault(g.Key) ?? "", g.Sum(p => p.Total)))
+        var currency = "USD";
+        var rateCache = new Dictionary<(string, DateTime), decimal?>();
+        var usdByPo = new Dictionary<int, decimal>();
+        foreach (var p in recentPos)
+        {
+            decimal? rate = p.Currency == "USD" ? 1m : p.UsdRate;
+            if (rate is null)
+            {
+                var key = (p.Currency, p.CreatedDate.Date);
+                if (!rateCache.TryGetValue(key, out rate))
+                    rateCache[key] = rate = (await Fx.LookupAsync(db, companyId, p.Currency, p.CreatedDate))?.UnitsPerUsd;
+            }
+            usdByPo[p.Id] = rate is null ? p.Total : Fx.ToUsd(p.Total, rate.Value);
+        }
+        var supplierNames = await db.Suppliers.Where(s => recentPos.Select(p => p.SupplierId).Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
+        var top = recentPos.GroupBy(p => p.SupplierId)
+            .Select(g => new SpendRow(g.Key, supplierNames.GetValueOrDefault(g.Key) ?? "", g.Sum(p => usdByPo[p.Id])))
             .OrderByDescending(s => s.Total).Take(5).ToList();
 
         var noRfq = await db.Requisitions.Where(r => r.CompanyId == companyId && r.Status == RequisitionStatus.Open
@@ -83,7 +95,7 @@ public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, App
         var activity = await GetActivityAsync(db, companyId);
 
         return new CompanyDashboard(
-            openReqns, awaiting, withQuotesCount, pending.Count + invoiceApprovals.Count, awaitingDelivery, currency, inCurrency.Sum(p => p.Total),
+            openReqns, awaiting, withQuotesCount, pending.Count + invoiceApprovals.Count, awaitingDelivery, currency, usdByPo.Values.Sum(),
             pending.Take(5).ToList(),
             withQuotes.Select(r => new RfqBrief(r.Id, r.RfqNumber, r.Vessel, r.VesselId, r.CreatedDate, r.DueDate, r.Status, r.InvitedSupplierIds.Count)).ToList(),
             reqnBriefs, top, activity, invoiceApprovals.Take(5).ToList(), toVerify.Rows, toFinalize);

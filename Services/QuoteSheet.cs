@@ -431,8 +431,8 @@ public static class QuoteSheet
                     break;
                 case "currency":
                     var code = text.Trim().ToUpperInvariant();
-                    if (Money.Currencies.Contains(code)) t.Currency = code;
-                    else result.Warnings.Add($"Terms: currency '{text}' isn't supported ({string.Join(", ", Money.Currencies)}), ignored.");
+                    if (CurrencyCatalog.Contains(code)) t.Currency = code;
+                    else result.Warnings.Add($"Terms: currency '{text}' isn't a recognised currency code, ignored.");
                     break;
                 case "discount %":
                     if (TryDecimal(text, out var d) && d >= 0 && d <= 100) t.DiscountPct = d;

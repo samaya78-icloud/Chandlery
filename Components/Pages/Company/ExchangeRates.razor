@@ -1,0 +1,163 @@
+@page "/company/exchange-rates"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject FxService FxSvc
+@inject ToastService Toasts
+
+<PageTitle>Exchange Rates · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Admin" Title="Exchange Rates"
+            Subtitle="How many units of each currency equal 1 USD. Market rates are fetched daily from public feeds; you can add your own rate for a currency and day, and it is used instead of the market rate.">
+    <Actions>
+        @if (_isAdmin)
+        {
+            <button @onclick="Refresh" disabled="@_busy" class="btn btn-secondary">Refresh now</button>
+            <button @onclick="Backfill" disabled="@_busy" class="btn btn-secondary" title="Fills in the last 90 days for the ECB currencies">Backfill 90 days</button>
+        }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else
+{
+    <div class="mb-6 flex flex-wrap items-center gap-3 text-sm text-muted">
+        @if (_latest is null)
+        {
+            <span class="chip" data-tone="warning">No market rates yet</span>
+            <span>Use "Refresh now" to fetch them. Until then amounts are compared as entered.</span>
+        }
+        else
+        {
+            <span class="chip" data-tone="@(_latest.Value.Date >= DateTime.UtcNow.Date.AddDays(-1) ? "success" : "warning")">Market rates dated @_latest.Value.ToString("dd MMM yyyy")</span>
+            <span>@_count currencies &middot; updated daily from <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener" class="link">Rates by Exchange Rate API</a></span>
+        }
+    </div>
+
+    @if (_isAdmin)
+    {
+        <div class="card mb-6 max-w-3xl p-6">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Add your own rate</h2>
+            <p class="mb-4 text-xs text-muted">For example a month-end or budget rate. It applies to that currency from that date, until a newer rate is added.</p>
+            <div class="grid grid-cols-1 items-end gap-4 md:grid-cols-4">
+                <div><label class="label">Currency</label><SelectBox TValue="string" @bind-Value="_code" Options="_currencyOptions" Placeholder="Choose…" SearchPlaceholder="Search…" /></div>
+                <div><label class="label">Date</label><input type="date" @bind="_date" class="input" /></div>
+                <div><label class="label">Units per 1 USD</label><input type="number" min="0" step="any" @bind="_rate" class="input" placeholder="e.g. 1.2785" /></div>
+                <button @onclick="Add" disabled="@_busy" class="btn btn-primary">Save rate</button>
+            </div>
+            @if (_error is not null)
+            {
+                <div class="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+            }
+        </div>
+    }
+
+    <DataGrid @ref="_grid" TItem="ExchangeRateRow" ItemsProvider="LoadPage" ItemName="rates" ExportName="exchange-rates" PageSize="25" EmptyText="No rates match these filters.">
+        <GridColumn Title="Currency" Key="currency" Text="r => r.Rate.CurrencyCode" CellClass="font-semibold text-ink" />
+        <GridColumn Title="Name" Text="r => r.CurrencyName" Filter="GridFilter.None" Sortable="false" CellClass="text-muted" />
+        <GridColumn Title="Date" Key="date" Date="r => r.Rate.RateDate" />
+        <GridColumn Title="1 USD equals" Key="rate" Text="r => RateText(r)" Filter="GridFilter.None" CellClass="tabular-nums" />
+        <GridColumn Title="Source" Key="source" Text="r => r.Rate.Source" Filter="GridFilter.Select" OptionsLoader="LoadSources" />
+        <GridColumn Title="Applies to" Filter="GridFilter.None" Sortable="false" Context="r">
+            @if (r.Rate.CompanyId.HasValue) { <span class="chip" data-tone="accent">Your rate</span> }
+            else { <span class="chip chip-plain" data-tone="neutral">Market</span> }
+        </GridColumn>
+        <GridColumn Title="" Filter="GridFilter.None" Sortable="false" CellClass="text-right" Context="r">
+            @if (_isAdmin && r.Rate.CompanyId.HasValue)
+            {
+                <button @onclick="() => Delete(r.Rate)" class="text-xs font-medium text-rose-600 hover:text-rose-700">Delete</button>
+            }
+        </GridColumn>
+    </DataGrid>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private DataGrid<ExchangeRateRow>? _grid;
+    private int _companyId;
+    private string _userName = "";
+    private bool _isAdmin;
+    private bool _loaded;
+    private bool _busy;
+    private string? _error;
+    private DateTime? _latest;
+    private int _count;
+    private List<SelectOption<string>> _currencyOptions = new();
+    private string? _code;
+    private DateTime? _date = DateTime.UtcNow.Date;
+    private decimal _rate;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _userName = authState.User.Identity?.Name ?? "";
+        _isAdmin = authState.User.IsInRole("CompanyAdmin");
+        _currencyOptions = (await FxSvc.GetCompanyCurrencyOptionsAsync(_companyId)).Where(o => o.Value != "USD").ToList();
+        await LoadStatus();
+        _loaded = true;
+    }
+
+    private async Task LoadStatus() => (_latest, _count) = await FxSvc.GetMarketStatusAsync();
+
+    private static string RateText(ExchangeRateRow row) => row.Rate.UnitsPerUsd.ToString("#,##0.######");
+
+    private Task<GridResult<ExchangeRateRow>> LoadPage(GridRequest request) => FxSvc.GetPageAsync(_companyId, request);
+
+    private async Task<IEnumerable<string>> LoadSources() => await FxSvc.GetSourceOptionsAsync(_companyId);
+
+    private async Task RunAsync(Func<Task<string>> action)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var message = await action();
+            await LoadStatus();
+            if (_grid is not null) await _grid.ReloadAsync(resetPage: true);
+            await Toasts.Success(message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            await Toasts.Error("Could not reach the rate provider. The last known rates stay in use; try again later.");
+        }
+        catch (TaskCanceledException)
+        {
+            await Toasts.Error("The rate provider took too long to answer. Try again later.");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task Refresh() => RunAsync(async () =>
+    {
+        var result = await FxSvc.RefreshMarketAsync();
+        return $"Fetched rates dated {result.Date:dd MMM yyyy} ({result.Saved} updated)";
+    });
+
+    private Task Backfill() => RunAsync(async () => $"Added {await FxSvc.BackfillHistoryAsync(90):N0} historical rates");
+
+    private Task Add() => RunAsync(async () =>
+    {
+        await FxSvc.AddCompanyRateAsync(_companyId, _code ?? "", _date ?? DateTime.UtcNow, _rate, _userName);
+        var message = $"Saved your rate for {_code}";
+        _rate = 0;
+        return message;
+    });
+
+    private async Task Delete(ExchangeRate rate)
+    {
+        await FxSvc.DeleteCompanyRateAsync(_companyId, rate.Id);
+        if (_grid is not null) await _grid.ReloadAsync();
+        await Toasts.Success("Rate deleted");
+    }
+}

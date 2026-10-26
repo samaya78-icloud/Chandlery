@@ -454,7 +454,9 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     private static async Task RouteAsync(ChandleryDbContext db, Invoice invoice, int? departmentId, Actor actor)
     {
         var rules = await db.ApprovalRules.Where(r => r.CompanyId == invoice.CompanyId).ToListAsync();
-        var chain = ApprovalEngine.ResolveChain(rules, departmentId, invoice.TotalExclTax);
+        var comparable = await ApprovalEngine.ComparableAsync(db, invoice.CompanyId, invoice.Currency, DateTime.UtcNow, invoice.TotalExclTax);
+        invoice.UsdRate = comparable.Rate;
+        var chain = ApprovalEngine.ResolveChain(rules, departmentId, comparable.Amount);
         if (chain.Count == 0)
         {
             invoice.Status = InvoiceStatus.Approved;
@@ -471,7 +473,8 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         var names = await db.Users.Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName);
         var levels = chain.GroupBy(r => r.Level).OrderBy(g => g.Key)
             .Select(g => $"{levelNames.Name(g.Key)}: {string.Join(" or ", g.Select(r => names.GetValueOrDefault(r.ApproverUserId) ?? "?"))}");
-        AuditLog.Add(db, invoice.CompanyId, AuditEntityTypes.Invoice, invoice.Id, actor, $"SENT for approval ({string.Join("; ", levels)})");
+        AuditLog.Add(db, invoice.CompanyId, AuditEntityTypes.Invoice, invoice.Id, actor,
+            $"SENT for approval ({string.Join("; ", levels)})" + (comparable.Note == "" ? "" : $"; {comparable.Note}"));
     }
 
     /// <summary>Sends a submitted invoice back to the supplier with a reason; its deliveries are freed so it can be corrected.</summary>

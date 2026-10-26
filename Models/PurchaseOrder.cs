@@ -43,6 +43,9 @@ public class PurchaseOrder
     public int? DepartmentId { get; set; }
 
     public string Currency { get; set; } = "USD";
+
+    /// <summary>Units of Currency per 1 USD when the order was raised (null = USD or no rate was available). Divide the total by this for the USD equivalent.</summary>
+    public decimal? UsdRate { get; set; }
     public decimal DiscountPct { get; set; }
 
     /// <summary>Copied from the quote onto the first PO raised for that supplier and RFQ only, so it is charged once.</summary>

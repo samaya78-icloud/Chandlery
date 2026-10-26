@@ -7,7 +7,7 @@
 <PageTitle>Approval Matrix · Chandlery</PageTitle>
 
 <PageHeader Eyebrow="Admin" Title="Approval Matrix"
-            Subtitle="Decides who must approve each purchase order. A PO uses the rules of its department (or the 'All departments' rules when its department has none), picks the smallest amount limit that covers its total, and needs one approver at each step, in order. Name the steps below (for example 'Superintendent review') and the names show everywhere approvals appear. Amounts are compared with the PO total as it is, with no currency conversion. With no rules at all, POs are approved automatically." />
+            Subtitle="Decides who must approve each purchase order. A PO uses the rules of its department (or the 'All departments' rules when its department has none), picks the smallest amount limit that covers its total, and needs one approver at each step, in order. Name the steps below (for example 'Superintendent review') and the names show everywhere approvals appear. Limits are in US dollars: an order or invoice in another currency is converted at that day's exchange rate before it is compared (see Exchange Rates). With no rules at all, POs are approved automatically." />
 
 @if (_loaded)
 {
@@ -20,7 +20,7 @@
         <div class="mb-6">
             <DataGrid TItem="ApprovalRuleRow" Items="_rules" ItemName="rules" EmptyText="No rules match these filters.">
                 <GridColumn Title="Department" Text="r => r.Department" Filter="GridFilter.Select" CellClass="font-medium text-slate-800" />
-                <GridColumn Title="Up to amount" Text="r => UpToText(r)" Filter="GridFilter.Select" />
+                <GridColumn Title="Up to amount (USD)" Text="r => UpToText(r)" Filter="GridFilter.Select" />
                 <GridColumn Title="Step" Text="r => StepText(r)" Filter="GridFilter.Select" />
                 <GridColumn Title="Approver" Text="r => r.Approver" Filter="GridFilter.Select" />
                 <GridColumn Title="" Filter="GridFilter.None" CellClass="text-right" Context="row">
@@ -54,7 +54,7 @@
                 <SelectBox TValue="int" @bind-Value="_departmentId" Options="_deptOptions" />
             </div>
             <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">Up to amount</label>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Up to amount (USD)</label>
                 <input @bind="_upTo" placeholder="empty = no limit" class="@InputClass" />
             </div>
             <div>

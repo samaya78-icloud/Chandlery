@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject InvoiceService InvoiceSvc
+@inject FxService FxSvc
 @inject NavigationManager Navigation
 
 <PageTitle>New Spot Invoice · Chandlery</PageTitle>
@@ -22,7 +23,7 @@
                            Placeholder="Choose a supplier…" SearchPlaceholder="Search suppliers by name or email…" />
             </div>
             <div><label class="label">Supplier invoice no.</label><input @bind="_req.SupplierInvoiceRef" class="input" /></div>
-            <div><label class="label">Currency</label><input @bind="_req.Currency" maxlength="3" class="input uppercase" /></div>
+            <div><label class="label">Currency</label><SelectBox TValue="string" @bind-Value="_req.Currency" Options="_currencyOptions" Placeholder="Currency" SearchPlaceholder="Search currencies…" /></div>
             <div><label class="label">Invoice date</label><input type="date" @bind="_req.InvoiceDate" class="input" /></div>
             <div><label class="label">Due date (optional)</label><input type="date" @bind="_req.DueDate" class="input" /></div>
             <div>
@@ -129,6 +130,7 @@
     private List<Vessel> _vessels = new();
     private List<TaxCode> _taxCodes = new();
     private List<SupplierBankAccount> _banks = new();
+    private List<SelectOption<string>> _currencyOptions = new();
     private List<SelectOption<int>> _departmentOptions = new(), _vesselOptions = new(), _taxOptions = new(), _bankOptions = new();
     private int _supplierId, _departmentId, _vesselId, _taxCodeId, _bankId;
     private bool _busy;
@@ -149,6 +151,7 @@
         _departmentOptions = SelectOptions.From(_departments, d => d.Id, d => d.Name);
         _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);
         _taxOptions = SelectOptions.From(_taxCodes, t => t.Id, t => $"{t.Code} · {t.RatePct:0.##}%", t => t.Description);
+        _currencyOptions = await FxSvc.GetCompanyCurrencyOptionsAsync(companyId);
         _req.Lines.Add(new InvoiceLine());
         _companyId = companyId; // the form is only rendered once everything above is loaded
     }

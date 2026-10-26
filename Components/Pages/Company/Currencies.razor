@@ -1,0 +1,99 @@
+@page "/company/currencies"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject FxService FxSvc
+@inject ToastService Toasts
+
+<PageTitle>Currencies · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Admin" Title="Currencies"
+            Subtitle="The currencies your company uses on quotes, orders and invoices. Every amount can be shown in US dollars using the exchange rates." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else
+{
+    @if (_isAdmin)
+    {
+        <div class="card mb-6 max-w-3xl p-6">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Currencies your company uses</h2>
+            <p class="mb-3 text-xs text-muted">Pick from all @_master.Count standard currencies. USD is always included because every rate is quoted against it. Suppliers can still quote in any currency.</p>
+            <SelectBox TValue="string" Multiple="true" Values="_chosen" Options="_options" OnChanged="StateHasChanged"
+                       Placeholder="Choose currencies…" SearchPlaceholder="Search by code or name…" />
+            <div class="mt-4 flex items-center gap-3">
+                <button @onclick="Save" disabled="@_saving" class="btn btn-primary">Save currencies</button>
+                <span class="text-sm text-muted">@_chosen.Count selected</span>
+            </div>
+        </div>
+    }
+
+    <DataGrid TItem="CurrencyRow" Items="_rows" ItemName="currencies" SyncUrl="false" ExportName="currencies" EmptyText="No currencies selected yet.">
+        <GridColumn Title="Code" Text="r => r.Currency.Code" CellClass="font-semibold text-ink" />
+        <GridColumn Title="Name" Text="r => r.Currency.Name" />
+        <GridColumn Title="Decimals" Text="r => r.Currency.DecimalPlaces.ToString()" Filter="GridFilter.None" />
+        <GridColumn Title="1 USD equals" Text="r => RateText(r)" Filter="GridFilter.None" SortBy="r => r.Rate?.UnitsPerUsd ?? 0m" CellClass="tabular-nums" />
+        <GridColumn Title="Rate date" Text="r => DateText(r)" Filter="GridFilter.None" SortBy="r => r.Rate?.RateDate ?? DateTime.MinValue" />
+        <GridColumn Title="Source" Text="r => SourceText(r)" Filter="GridFilter.None" />
+    </DataGrid>
+
+    <p class="mt-3 text-xs text-muted">Rates come from public feeds and are for converting and comparing amounts. See <a href="/company/exchange-rates" class="link">Exchange rates</a> for the history, to enter your own rate, or to refresh.</p>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private record CurrencyRow(Currency Currency, FxRate? Rate);
+
+    private int _companyId;
+    private bool _isAdmin;
+    private bool _loaded;
+    private bool _saving;
+    private List<Currency> _master = new();
+    private List<SelectOption<string>> _options = new();
+    private readonly HashSet<string> _chosen = new();
+    private List<CurrencyRow> _rows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _isAdmin = authState.User.IsInRole("CompanyAdmin");
+        _master = await FxSvc.GetMasterAsync();
+        _options = _master.Select(c => new SelectOption<string>(c.Code, $"{c.Code} · {c.Name}")).ToList();
+        await Load();
+        _loaded = true;
+    }
+
+    private async Task Load()
+    {
+        var codes = await FxSvc.GetCompanyCurrencyCodesAsync(_companyId);
+        _chosen.Clear();
+        foreach (var c in codes) _chosen.Add(c);
+
+        var rates = await FxSvc.GetRatesAsync(_companyId, codes);
+        _rows = _master.Where(c => codes.Contains(c.Code)).Select(c => new CurrencyRow(c, rates.GetValueOrDefault(c.Code))).ToList();
+    }
+
+    private static string RateText(CurrencyRow row) => row.Rate is null ? "no rate yet" : row.Rate.UnitsPerUsd.ToString("#,##0.######");
+
+    private static string SourceText(CurrencyRow row) => row.Rate?.Source ?? "";
+
+    private static string DateText(CurrencyRow row) => row.Rate is null ? "" : row.Rate.RateDate.ToString("dd MMM yyyy");
+
+    private async Task Save()
+    {
+        _saving = true;
+        try
+        {
+            await FxSvc.SetCompanyCurrenciesAsync(_companyId, _chosen);
+            await Load();
+            await Toasts.Success("Currencies saved");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}
