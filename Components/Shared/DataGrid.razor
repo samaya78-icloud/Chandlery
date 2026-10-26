@@ -122,13 +122,8 @@
                                                    placeholder="Filter…" aria-label="Filter @c.Title" class="@FilterBox" />
                                             break;
                                         case GridFilter.Select:
-                                            <select @bind="c.FilterSelect" @bind:after="() => FilterChanged(GridFilter.Select)" aria-label="Filter @c.Title" class="@FilterBox">
-                                                <option value="">All</option>
-                                                @foreach (var v in OptionsFor(c))
-                                                {
-                                                    <option value="@v">@Humanize(v)</option>
-                                                }
-                                            </select>
+                                            <SelectBox TValue="string" Small="true" @bind-Value="c.FilterSelect" @bind-Value:after="() => FilterChanged(GridFilter.Select)"
+                                                       Options="FilterOptions(c)" SearchPlaceholder="@($"Find in {c.Title}…")" />
                                             break;
                                         case GridFilter.DateRange:
                                             <div class="flex flex-col gap-1">
@@ -260,6 +255,11 @@
 
     private IEnumerable<string> OptionsFor(GridColumn<TItem> c) =>
         c.OptionList ?? (IsServer ? Enumerable.Empty<string>() : Items.Select(c.CellText).Distinct().OrderBy(v => v));
+
+    /// <summary>The choices of a select filter: "All" (nothing filtered) followed by the column's values.</summary>
+    private List<SelectOption<string>> FilterOptions(GridColumn<TItem> c) =>
+        new List<SelectOption<string>> { new("", "All") }
+            .Concat(OptionsFor(c).Select(v => new SelectOption<string>(v, Humanize(v)))).ToList();
 
     private static string Humanize(string text) =>
         System.Text.RegularExpressions.Regex.Replace(text, "(?<=[a-z])(?=[A-Z])", " ")

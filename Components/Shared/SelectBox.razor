@@ -13,7 +13,7 @@
 
 <div class="relative @(Class)" @onkeydown="OnKeyDown">
     <button type="button" id="@_id" disabled="@Disabled" @onclick="ToggleAsync" role="combobox" aria-haspopup="listbox" aria-expanded="@(_open ? "true" : "false")"
-            class="@("input flex w-full items-center gap-2 text-left " + (Disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"))">
+            class="@("input " + (Small ? "input-sm " : "") + "flex w-full items-center gap-2 text-left " + (Disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"))">
         <span class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
             @if (Multiple)
             {
@@ -55,7 +55,9 @@
     @if (_open)
     {
         <div class="fixed inset-0 z-40" @onclick="CloseAsync"></div>
-        <div class="absolute left-0 z-50 mt-1 w-full min-w-[15rem] overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
+        @* Fixed, not absolute: a table or card with overflow hidden can never clip it. chandlery.positionPopup places it under (or above) the button. *@
+        <div id="@(_id)-panel" style="top:0;left:0;visibility:hidden"
+             class="fixed z-50 overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
             @if (ShowSearch)
             {
                 <div class="border-b border-line p-2">
@@ -155,6 +157,9 @@
     /// <summary>Show a clear (x) button to go back to "nothing chosen" (the type's default value, or an empty set).</summary>
     [Parameter] public bool AllowClear { get; set; }
 
+    /// <summary>A compact trigger, for use inside tables (the grid column filters).</summary>
+    [Parameter] public bool Small { get; set; }
+
     /// <summary>Extra classes for the wrapper, for width (for example "max-w-md").</summary>
     [Parameter] public string? Class { get; set; }
 
@@ -238,6 +243,13 @@
         {
             _focusSearch = false;
             try { await _search.FocusAsync(); } catch (InvalidOperationException) { }
+        }
+        if (_open)
+        {
+            // Run after every render while open: the list may have grown or shrunk, which can change whether it fits below.
+            try { await JS.InvokeVoidAsync("chandlery.positionPopup", _id, _id + "-panel"); }
+            catch (InvalidOperationException) { }
+            catch (JSDisconnectedException) { }
         }
         if (_scrollActive)
         {

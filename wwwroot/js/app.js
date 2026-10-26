@@ -163,6 +163,47 @@
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Places a SelectBox panel (position: fixed) under its button, or above it when there is no room below, keeps it
+  // there while the page scrolls or resizes, and stops following once the panel is gone.
+  function positionPopup(triggerId, panelId) {
+    var trigger = document.getElementById(triggerId);
+    var panel = document.getElementById(panelId);
+    if (!trigger || !panel) return;
+
+    var r = trigger.getBoundingClientRect();
+    var width = Math.max(r.width, 240);
+    var left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - width - 8));
+    panel.style.width = width + 'px';
+    panel.style.left = left + 'px';
+
+    var below = window.innerHeight - r.bottom - 8;
+    var above = r.top - 8;
+    if (panel.offsetHeight > below && above > below) {
+      panel.style.top = 'auto';
+      panel.style.bottom = (window.innerHeight - r.top + 4) + 'px';
+    } else {
+      panel.style.bottom = 'auto';
+      panel.style.top = (r.bottom + 4) + 'px';
+    }
+    panel.style.visibility = 'visible';
+
+    if (!panel._following) {
+      panel._following = true;
+      var follow = function (e) {
+        var current = document.getElementById(panelId);
+        if (!current) {
+          window.removeEventListener('scroll', follow, true);
+          window.removeEventListener('resize', follow);
+          return;
+        }
+        if (e && e.target && e.target.nodeType === 1 && current.contains(e.target)) return; // the list scrolling inside the panel
+        positionPopup(triggerId, panelId);
+      };
+      window.addEventListener('scroll', follow, true);
+      window.addEventListener('resize', follow);
+    }
+  }
+
   // Keeps the highlighted option of an open SelectBox visible while arrowing through a long list.
   function scrollActiveOption(listId) {
     var list = document.getElementById(listId);
@@ -171,7 +212,7 @@
   }
 
   window.chandlery = {
-    scrollActiveOption: scrollActiveOption,
+    scrollActiveOption: scrollActiveOption, positionPopup: positionPopup,
     scrollToOnSmall: scrollToOnSmall,
     applyTheme: apply, toast: toast, replaceQuery: replaceQuery, download: download,
     registerPalette: registerPalette, setMode: setMode, setTheme: setTheme
