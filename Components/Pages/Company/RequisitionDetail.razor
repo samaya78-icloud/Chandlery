@@ -149,7 +149,7 @@ else if (_reqn is not null)
     {
         <div class="mb-6 card p-6 print:hidden">
             <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Create RFQ</h2>
-            <p class="mb-4 text-xs text-slate-400">Tick the lines above, choose the suppliers and post. Each supplier quotes against the same lines &mdash; nothing is re-entered. Lines with approved quantity 0 are left out.</p>
+            <p class="mb-4 text-xs text-slate-400">Tick the lines above, choose the suppliers and post. Nothing is re-entered. Lines with approved quantity 0 are left out.</p>
 
             <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
@@ -174,22 +174,8 @@ else if (_reqn is not null)
             }
 
             <h3 class="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Suppliers</h3>
-            @if (_suppliers.Count == 0)
-            {
-                <p class="text-sm text-slate-400">No suppliers yet &mdash; add one on the Suppliers page first.</p>
-            }
-            else
-            {
-                <div class="flex flex-wrap gap-x-6 gap-y-2">
-                    @foreach (var supplier in _suppliers)
-                    {
-                        <label class="flex items-center gap-2 text-sm text-slate-700">
-                            <input type="checkbox" checked="@_invited.Contains(supplier.Id)" @onchange="e => ToggleSupplier(supplier.Id, (bool)e.Value!)" />
-                            @supplier.Name
-                        </label>
-                    }
-                </div>
-            }
+            <p class="mb-3 text-xs text-muted">One RFQ goes to every supplier you choose. Each quotes the same lines and you compare them side by side. A supplier that was already sent a ticked line is greyed out; to bring someone into an existing RFQ, open it and use "Invite more suppliers".</p>
+            <SupplierPicker CompanyId="_companyId" Selected="_invited" Excluded="ExcludedSuppliers" OnChanged="StateHasChanged" />
 
             @if (_error is not null)
             {
@@ -232,7 +218,7 @@ else if (_reqn is not null)
     private List<Vessel> _vessels = new();
     private List<Department> _departments = new();
     private List<Port> _ports = new();
-    private List<Supplier> _suppliers = new();
+    private Dictionary<int, Dictionary<int, string>> _coverage = new();
 
     private readonly Dictionary<int, decimal> _approved = new();
     private readonly HashSet<int> _selected = new();
@@ -296,7 +282,6 @@ else if (_reqn is not null)
         _vessels = await Procurement.GetVesselsAsync(_companyId);
         _departments = await Procurement.GetDepartmentsAsync(_companyId);
         _ports = await Procurement.GetPortsAsync();
-        _suppliers = await Procurement.GetCompanySuppliersAsync(_companyId);
         await Load(initialSelection: true);
         _loaded = true;
     }
@@ -308,6 +293,7 @@ else if (_reqn is not null)
 
         _rfqs = await Requisitions.GetRfqsAsync(_companyId, _reqn.Id);
         _lineRfq = await Requisitions.GetLineRfqNumbersAsync(_companyId, _reqn.Id);
+        _coverage = await Procurement.GetSupplierCoverageAsync(_companyId, _reqn.Id);
         _items = (await Procurement.GetItemsByIdsAsync(_reqn.Lines.Select(l => l.ItemId))).ToDictionary(i => i.Id);
 
         _approved.Clear();
@@ -341,18 +327,36 @@ else if (_reqn is not null)
     private void ToggleLine(int lineId, bool on)
     {
         if (on) _selected.Add(lineId); else _selected.Remove(lineId);
+        DropUnavailableSuppliers();
     }
 
     private void SelectShown(bool on)
     {
         foreach (var l in FilteredLines.Skip((_linePage - 1) * LinePageSize).Take(LinePageSize))
-            ToggleLine(l.Id, on);
+            if (on) _selected.Add(l.Id); else _selected.Remove(l.Id);
+        DropUnavailableSuppliers();
     }
 
-    private void ToggleSupplier(int supplierId, bool on)
+    /// <summary>
+    /// Suppliers that were already sent one of the ticked lines (and the RFQ they are on), so the same line never goes to
+    /// the same supplier twice.
+    /// </summary>
+    private Dictionary<int, string> ExcludedSuppliers
     {
-        if (on) _invited.Add(supplierId); else _invited.Remove(supplierId);
+        get
+        {
+            var ticked = _reqn!.Lines.Where(l => _selected.Contains(l.Id) && _approved.GetValueOrDefault(l.Id) > 0).Select(l => l.Id).ToHashSet();
+            var excluded = new Dictionary<int, string>();
+            foreach (var (supplierId, sent) in _coverage)
+            {
+                var rfq = sent.Where(kv => ticked.Contains(kv.Key)).Select(kv => kv.Value).FirstOrDefault();
+                if (rfq is not null) excluded[supplierId] = $"Already sent on {rfq}";
+            }
+            return excluded;
+        }
     }
+
+    private void DropUnavailableSuppliers() => _invited.RemoveWhere(ExcludedSuppliers.ContainsKey);
 
     private async Task SaveApproved()
     {
@@ -435,6 +439,7 @@ else if (_reqn is not null)
         try
         {
             var rfq = await Procurement.CreateRfqAsync(_companyId, request, _actor);
+            _invited.Clear();
             await Load(initialSelection: false);
             _message = $"{rfq.RfqNumber} posted to {rfq.InvitedSupplierIds.Count} supplier(s) with {rfq.Lines.Count} lines.";
         }

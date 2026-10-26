@@ -1,0 +1,160 @@
+@inject ProcurementService Procurement
+
+@* Choose suppliers from a long address book: search by name or email, page through the matches, and see what is already
+   selected as removable chips. Suppliers in Excluded cannot be chosen and show the reason. *@
+
+<div class="space-y-3">
+    <div class="flex flex-wrap items-center gap-2">
+        <span class="text-sm font-medium text-ink">Selected (@Selected.Count)</span>
+        @if (Selected.Count == 0)
+        {
+            <span class="text-sm text-muted">None yet. Search below and tick the suppliers.</span>
+        }
+        else
+        {
+            @foreach (var id in Selected.OrderBy(i => _names.GetValueOrDefault(i, "")).Take(30))
+            {
+                var supplierId = id;
+                <span class="inline-flex items-center gap-1 rounded-full bg-accent-50 px-2.5 py-1 text-xs font-medium text-accent-700">
+                    @_names.GetValueOrDefault(id, "Supplier " + id)
+                    <button type="button" @onclick="() => RemoveAsync(supplierId)" class="text-accent-600 hover:text-rose-600" aria-label="Remove">&#10005;</button>
+                </span>
+            }
+            @if (Selected.Count > 30)
+            {
+                <span class="text-xs text-muted">and @(Selected.Count - 30) more</span>
+            }
+            <button type="button" @onclick="ClearAsync" class="ml-1 text-xs font-medium text-rose-600 hover:text-rose-700">Clear all</button>
+        }
+    </div>
+
+    <div class="rounded-xl border border-line">
+        <div class="flex flex-wrap items-center gap-3 border-b border-line p-3">
+            <input @bind="_term" @bind:event="oninput" @bind:after="SearchChangedAsync" placeholder="Search suppliers by name or email…" class="input max-w-sm" />
+            <span class="text-sm text-muted">@_total.ToString("N0") @(string.IsNullOrWhiteSpace(_term) ? "suppliers" : "matching")</span>
+            @if (!string.IsNullOrWhiteSpace(_term) && _total > 0 && _total <= 50)
+            {
+                <button type="button" @onclick="SelectAllMatchingAsync" class="ml-auto text-sm font-medium text-accent-600 hover:text-accent-700">Select all @_total matching</button>
+            }
+        </div>
+
+        @if (_loaded && _rows.Count == 0)
+        {
+            <p class="p-4 text-sm text-muted">@(string.IsNullOrWhiteSpace(_term) ? "No suppliers yet. Add one on the Suppliers page first." : "No supplier matches that search.")</p>
+        }
+        else
+        {
+            <ul class="divide-y divide-line">
+                @foreach (var s in _rows)
+                {
+                    var supplier = s;
+                    var reason = Excluded.GetValueOrDefault(s.Id);
+                    <li>
+                        <label class="@("flex items-center gap-3 px-4 py-2 text-sm " + (reason is null ? "cursor-pointer hover:bg-surface-2" : "cursor-not-allowed opacity-60"))">
+                            <input type="checkbox" disabled="@(reason is not null)" checked="@Selected.Contains(s.Id)" @onchange="e => ToggleAsync(supplier, (bool)e.Value!)" />
+                            <span class="min-w-0 flex-1">
+                                <span class="block truncate font-medium text-ink">@s.Name</span>
+                                @if (!string.IsNullOrWhiteSpace(s.ContactEmail)) { <span class="block truncate text-xs text-muted">@s.ContactEmail</span> }
+                            </span>
+                            @if (reason is not null) { <span class="chip chip-plain" data-tone="neutral">@reason</span> }
+                        </label>
+                    </li>
+                }
+            </ul>
+            <div class="flex items-center justify-between border-t border-line px-4 py-2 text-xs text-muted">
+                <span>Showing @(_total == 0 ? 0 : _page * PageSize + 1)–@Math.Min((_page + 1) * PageSize, _total) of @_total.ToString("N0")</span>
+                <div class="flex items-center gap-2">
+                    <button type="button" @onclick="() => GoToAsync(_page - 1)" disabled="@(_page <= 0)" class="btn btn-secondary btn-sm">&lsaquo; Prev</button>
+                    <button type="button" @onclick="() => GoToAsync(_page + 1)" disabled="@((_page + 1) * PageSize >= _total)" class="btn btn-secondary btn-sm">Next &rsaquo;</button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private const int PageSize = 8;
+
+    [Parameter, EditorRequired] public int CompanyId { get; set; }
+    [Parameter, EditorRequired] public HashSet<int> Selected { get; set; } = new();
+
+    /// <summary>Suppliers that cannot be chosen, with the reason shown next to them (for example "Already on RFQ-1007").</summary>
+    [Parameter] public IReadOnlyDictionary<int, string> Excluded { get; set; } = new Dictionary<int, string>();
+
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private readonly Dictionary<int, string> _names = new();
+    private List<Supplier> _rows = new();
+    private string _term = "";
+    private int _page;
+    private int _total;
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        await EnsureNamesAsync();
+        _loaded = true;
+    }
+
+    protected override async Task OnParametersSetAsync() => await EnsureNamesAsync();
+
+    private async Task LoadAsync()
+    {
+        var (rows, total) = await Procurement.SearchCompanySuppliersAsync(CompanyId, _term, _page * PageSize, PageSize);
+        _rows = rows;
+        _total = total;
+        foreach (var s in rows) _names[s.Id] = s.Name;
+    }
+
+    /// <summary>Names for suppliers that are selected but not on the current page, so every chip has a label.</summary>
+    private async Task EnsureNamesAsync()
+    {
+        var missing = Selected.Where(id => !_names.ContainsKey(id)).ToList();
+        if (missing.Count == 0) return;
+        foreach (var s in await Procurement.GetSuppliersByIdsAsync(missing)) _names[s.Id] = s.Name;
+    }
+
+    private async Task SearchChangedAsync()
+    {
+        _page = 0;
+        await LoadAsync();
+    }
+
+    private async Task GoToAsync(int page)
+    {
+        _page = Math.Max(0, page);
+        await LoadAsync();
+    }
+
+    private async Task ToggleAsync(Supplier supplier, bool on)
+    {
+        _names[supplier.Id] = supplier.Name;
+        if (on) Selected.Add(supplier.Id); else Selected.Remove(supplier.Id);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task RemoveAsync(int id)
+    {
+        Selected.Remove(id);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task ClearAsync()
+    {
+        Selected.Clear();
+        await OnChanged.InvokeAsync();
+    }
+
+    /// <summary>Adds every supplier the current search matches (only offered for short result lists), skipping excluded ones.</summary>
+    private async Task SelectAllMatchingAsync()
+    {
+        var (rows, _) = await Procurement.SearchCompanySuppliersAsync(CompanyId, _term, 0, 50);
+        foreach (var s in rows.Where(s => !Excluded.ContainsKey(s.Id)))
+        {
+            _names[s.Id] = s.Name;
+            Selected.Add(s.Id);
+        }
+        await OnChanged.InvokeAsync();
+    }
+}

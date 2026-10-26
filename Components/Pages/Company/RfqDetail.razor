@@ -229,23 +229,15 @@ else
         }
     </div>
 
-    @if (_rfq.Status != RfqStatus.Awarded && _uninvited.Count > 0)
+    @if (_rfq.Status != RfqStatus.Awarded)
     {
-        <div class="mt-8 max-w-md card p-4 print:hidden">
-            <h2 class="text-sm font-semibold text-slate-800">Invite more suppliers</h2>
-            <p class="mb-3 mt-1 text-xs text-slate-400">They'll receive this same RFQ &mdash; no need to enter the items again.</p>
-            <div class="flex flex-col gap-2">
-                @foreach (var s in _uninvited)
-                {
-                    <label class="flex items-center gap-2 text-sm text-slate-700">
-                        <input type="checkbox" checked="@_toInvite.Contains(s.Id)" @onchange="e => ToggleInvite(s.Id, (bool)e.Value!)" />
-                        @s.Name
-                    </label>
-                }
-            </div>
+        <div class="mt-8 max-w-2xl card p-4 print:hidden">
+            <h2 class="text-sm font-semibold text-ink">Invite more suppliers</h2>
+            <p class="mb-3 mt-1 text-xs text-muted">They receive this same RFQ and quote the same lines, so nothing is entered again. Suppliers already on it are greyed out.</p>
+            <SupplierPicker CompanyId="_companyId" Selected="_toInvite" Excluded="AlreadyInvited" OnChanged="StateHasChanged" />
             <button @onclick="InviteSelected" disabled="@(_toInvite.Count == 0)"
                     class="mt-3 btn btn-primary btn-sm">
-                Send to selected
+                Send to @_toInvite.Count supplier(s)
             </button>
         </div>
     }
@@ -270,7 +262,7 @@ else
     private Dictionary<int, Item> _itemsById = new();
     private Dictionary<int, Supplier> _suppliersById = new();
     private List<Port> _ports = new();
-    private List<Supplier> _uninvited = new();
+    private IReadOnlyDictionary<int, string> AlreadyInvited => _rfq!.InvitedSupplierIds.ToDictionary(id => id, _ => "Already invited");
     private HashSet<int> _toInvite = new();
     private string? _error;
 
@@ -323,8 +315,6 @@ else
 
         _ports = await Procurement.GetPortsAsync();
 
-        var linked = await Procurement.GetCompanySuppliersAsync(_companyId);
-        _uninvited = linked.Where(s => !_rfq.InvitedSupplierIds.Contains(s.Id)).ToList();
         _toInvite.Clear();
     }
 
@@ -378,11 +368,6 @@ else
         await Load();
     }
 
-    private void ToggleInvite(int supplierId, bool selected)
-    {
-        if (selected) _toInvite.Add(supplierId);
-        else _toInvite.Remove(supplierId);
-    }
 
     private async Task InviteSelected()
     {

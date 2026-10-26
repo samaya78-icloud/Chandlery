@@ -565,6 +565,49 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return links.Where(suppliers.ContainsKey).Select(id => suppliers[id]).ToList();
     }
 
+    /// <summary>
+    /// For one requisition: which suppliers were already sent which requisition lines, and on which RFQ.
+    /// supplier id -> (requisition line id -> RFQ number). Used so a supplier is never sent the same line twice.
+    /// </summary>
+    internal static async Task<Dictionary<int, Dictionary<int, string>>> SupplierCoverageAsync(ChandleryDbContext db, int companyId, int requisitionId)
+    {
+        var rfqs = await db.Rfqs.Include(r => r.Lines)
+            .Where(r => r.CompanyId == companyId && r.RequisitionId == requisitionId).OrderBy(r => r.Id).ToListAsync();
+        var map = new Dictionary<int, Dictionary<int, string>>();
+        foreach (var rfq in rfqs)
+        foreach (var supplierId in rfq.InvitedSupplierIds)
+        {
+            if (!map.TryGetValue(supplierId, out var lines)) map[supplierId] = lines = new Dictionary<int, string>();
+            foreach (var line in rfq.Lines.Where(l => l.RequisitionLineId.HasValue))
+                lines.TryAdd(line.RequisitionLineId!.Value, rfq.RfqNumber);
+        }
+        return map;
+    }
+
+    public async Task<Dictionary<int, Dictionary<int, string>>> GetSupplierCoverageAsync(int companyId, int requisitionId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await SupplierCoverageAsync(db, companyId, requisitionId);
+    }
+
+    /// <summary>One page of the company's suppliers matching a name or email search (all of them when the term is empty), A to Z.</summary>
+    public async Task<(List<Supplier> Rows, int Total)> SearchCompanySuppliersAsync(int companyId, string? term, int skip, int take)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var linked = db.CompanySuppliers.Where(cs => cs.CompanyId == companyId).Select(cs => cs.SupplierId);
+        var q = db.Suppliers.Where(s => linked.Contains(s.Id));
+        if (!string.IsNullOrWhiteSpace(term))
+        {
+            var like = "%" + term.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+            q = q.Where(s => EF.Functions.ILike(s.Name, like) || EF.Functions.ILike(s.ContactEmail, like));
+        }
+        var total = await q.CountAsync();
+        var rows = await q.OrderBy(s => s.Name).ThenBy(s => s.Id).Skip(skip).Take(take).ToListAsync();
+        return (rows, total);
+    }
+
     /// <summary>A company's own address-book of suppliers it can invite — not the global directory.</summary>
     public async Task<List<Supplier>> GetCompanySuppliersAsync(int companyId)
     {
@@ -701,6 +744,23 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             .Select(cs => cs.SupplierId).ToListAsync();
         if (request.InvitedSupplierIds.Any(id => !linkedSupplierIds.Contains(id)))
             throw new InvalidOperationException("You can only invite suppliers linked to your company.");
+
+        // A supplier is never sent the same requisition line twice. To add a supplier to lines that already went out,
+        // invite them to that RFQ instead of raising a second one.
+        if (requisition is not null)
+        {
+            var coverage = await SupplierCoverageAsync(db, companyId, requisition.Id);
+            var lineIds = request.Lines.Where(l => l.RequisitionLineId.HasValue).Select(l => l.RequisitionLineId!.Value).ToHashSet();
+            foreach (var supplierId in request.InvitedSupplierIds)
+            {
+                if (!coverage.TryGetValue(supplierId, out var sent)) continue;
+                var repeated = sent.Where(kv => lineIds.Contains(kv.Key)).ToList();
+                if (repeated.Count == 0) continue;
+                var name = await db.Suppliers.Where(s => s.Id == supplierId).Select(s => s.Name).FirstAsync();
+                throw new InvalidOperationException(
+                    $"{name} has already been sent {repeated.Count} of these line(s) on {repeated[0].Value}. Untick them, or leave {name} out of this RFQ.");
+            }
+        }
 
         var itemIds = request.Lines.Select(l => l.ItemId).Distinct().ToList();
         var items = await db.Items.Where(i => i.CompanyId == companyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id);
