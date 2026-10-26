@@ -1531,6 +1531,9 @@ namespace Chandlery.Migrations
                                 .HasPrecision(5, 2)
                                 .HasColumnType("numeric(5,2)");
 
+                            b1.Property<int?>("ItemId")
+                                .HasColumnType("integer");
+
                             b1.Property<decimal>("Quantity")
                                 .HasPrecision(18, 3)
                                 .HasColumnType("numeric(18,3)");

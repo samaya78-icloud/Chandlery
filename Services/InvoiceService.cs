@@ -40,7 +40,8 @@ public class NewSpotInvoice
     public decimal AdditionalItemsCost { get; set; }
     public decimal AdditionalDeliveryCost { get; set; }
     public decimal DiscountOrCredit { get; set; }
-    public List<InvoiceLine> Lines { get; set; } = new();
+    /// <summary>Catalog items (limited to the department's categories) with quantity, price and discount.</summary>
+    public List<NewRfqLine> Lines { get; set; } = new();
 }
 
 public record UploadedFile(string FileName, string ContentType, byte[] Data);
@@ -609,7 +610,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
             throw new InvalidOperationException($"{supplier.Name} already has an invoice numbered {reference}.");
 
         if (request.Lines.Count == 0) throw new InvalidOperationException("Add at least one line.");
-        if (request.Lines.Any(l => string.IsNullOrWhiteSpace(l.Description))) throw new InvalidOperationException("Every line needs a description.");
+        if (request.Lines.GroupBy(l => l.ItemId).Any(g => g.Count() > 1)) throw new InvalidOperationException("An item can only appear once on an invoice.");
         if (request.Lines.Any(l => l.Quantity <= 0 || l.UnitPrice < 0)) throw new InvalidOperationException("Every line needs a quantity above zero and a price.");
         if (request.Lines.Any(l => l.DiscountPct is < 0 or > 100)) throw new InvalidOperationException("Discounts must be between 0 and 100 percent.");
         if (request.AdditionalItemsCost < 0 || request.AdditionalDeliveryCost < 0 || request.DiscountOrCredit < 0) throw new InvalidOperationException("Amounts cannot be negative.");
@@ -628,6 +629,11 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
             tax = await db.TaxCodes.FirstOrDefaultAsync(t => t.Id == request.TaxCodeId.Value && t.CompanyId == companyId)
                 ?? throw new InvalidOperationException("Tax code not found.");
 
+        var itemIds = request.Lines.Select(l => l.ItemId).Distinct().ToList();
+        var items = await db.Items.Where(i => i.CompanyId == companyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id);
+        if (items.Count != itemIds.Count) throw new InvalidOperationException("One or more items were not found in your catalog.");
+        await ProcurementService.EnsureItemsAllowedAsync(db, companyId, request.DepartmentId, itemIds);
+
         var invoice = new Invoice
         {
             CompanyId = companyId, InvoiceNumber = await NextNumberAsync(db), Kind = InvoiceKind.SpotInvoice, SupplierId = supplier.Id,
@@ -642,7 +648,9 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
             SubmittedByName = actor.Name, SubmittedAt = DateTime.UtcNow, VerifiedByName = actor.Name, VerifiedAt = DateTime.UtcNow,
             Lines = request.Lines.Select(l => new InvoiceLine
             {
-                Description = l.Description.Trim(), Quantity = l.Quantity, UnitPrice = l.UnitPrice, DiscountPct = l.DiscountPct
+                ItemId = l.ItemId,
+                Description = $"{items[l.ItemId].Code} · {items[l.ItemId].Name}" + (string.IsNullOrWhiteSpace(l.Description) ? "" : $" ({l.Description.Trim()})"),
+                Quantity = l.Quantity, UnitPrice = l.UnitPrice, DiscountPct = l.DiscountPct
             }).ToList()
         };
         invoice.InvoiceAmount = invoice.Lines.Sum(l => Money.LineNet(l.Quantity, l.UnitPrice, l.DiscountPct));

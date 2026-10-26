@@ -177,7 +177,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return item;
     }
 
-    /// <summary>Which of these items appear on any requisition, RFQ, purchase order or delivery (so they can be disabled but not deleted).</summary>
+    /// <summary>Which of these items appear on any requisition, RFQ, purchase order, delivery or invoice (so they can be disabled but not deleted).</summary>
     public async Task<HashSet<int>> GetUsedItemIdsAsync(int companyId, IReadOnlyCollection<int> itemIds)
     {
         await using var db = await factory.CreateDbContextAsync();
@@ -188,6 +188,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         used.UnionWith(await db.Rfqs.Where(r => r.CompanyId == companyId).SelectMany(r => r.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
         used.UnionWith(await db.PurchaseOrders.Where(p => p.CompanyId == companyId).SelectMany(p => p.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
         used.UnionWith(await db.DeliveryOrders.Where(d => d.CompanyId == companyId).SelectMany(d => d.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
+        used.UnionWith(await db.Invoices.Where(i => i.CompanyId == companyId).SelectMany(i => i.Lines).Where(l => l.ItemId != null && ids.Contains(l.ItemId.Value)).Select(l => l.ItemId!.Value).Distinct().ToListAsync());
         return used;
     }
 
@@ -198,7 +199,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         var item = await db.Items.FirstOrDefaultAsync(i => i.Id == itemId && i.CompanyId == companyId)
             ?? throw new InvalidOperationException("Item not found.");
         if ((await GetUsedItemIdsAsync(companyId, new[] { itemId })).Contains(itemId))
-            throw new InvalidOperationException($"{item.Code} is on requisitions, RFQs or purchase orders, so it cannot be deleted. Disable it instead.");
+            throw new InvalidOperationException($"{item.Code} is on requisitions, RFQs, purchase orders or invoices, so it cannot be deleted. Disable it instead.");
         db.Items.Remove(item);
         await db.SaveChangesAsync();
     }

@@ -81,6 +81,8 @@ public class Invoice
 /// <summary>A free-text line on a spot invoice.</summary>
 public class InvoiceLine
 {
+    /// <summary>The catalog item (spot invoices); null on lines entered as free text before items were required.</summary>
+    public int? ItemId { get; set; }
     public string Description { get; set; } = "";
     public decimal Quantity { get; set; } = 1;
     public decimal UnitPrice { get; set; }

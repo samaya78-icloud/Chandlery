@@ -31,8 +31,8 @@
                 <SelectBox TValue="int" @bind-Value="_taxCodeId" Options="_taxOptions" Placeholder="No tax" AllowClear="true" />
             </div>
             <div>
-                <label class="label">Department</label>
-                <SelectBox TValue="int" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="None" AllowClear="true" />
+                <label class="label">Department@(_departments.Count > 0 ? " *" : "")</label>
+                <SelectBox TValue="int" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "No department")" />
             </div>
             <div>
                 <label class="label">Vessel</label>
@@ -47,38 +47,10 @@
         </div>
     </div>
 
-    <div class="card p-6">
-        <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Lines</h2>
-            <button type="button" @onclick="AddLine" class="btn btn-secondary btn-sm">+ Add line</button>
-        </div>
-        <table class="w-full text-left text-sm">
-            <thead>
-                <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
-                    <th class="px-2 py-2 font-medium">Description</th>
-                    <th class="px-2 py-2 font-medium">Qty</th>
-                    <th class="px-2 py-2 font-medium">Unit price</th>
-                    <th class="px-2 py-2 font-medium">Disc %</th>
-                    <th class="px-2 py-2 text-right font-medium">Amount</th>
-                    <th class="px-2 py-2"></th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var line in _req.Lines)
-                {
-                    var l = line;
-                    <tr class="border-b border-line last:border-0">
-                        <td class="px-2 py-2"><input @bind="l.Description" class="input input-sm min-w-56" /></td>
-                        <td class="px-2 py-2"><input type="number" min="0" step="any" @bind="l.Quantity" @bind:event="oninput" class="input input-sm w-20" /></td>
-                        <td class="px-2 py-2"><input type="number" min="0" step="any" @bind="l.UnitPrice" @bind:event="oninput" class="input input-sm w-28" /></td>
-                        <td class="px-2 py-2"><input type="number" min="0" max="100" step="any" @bind="l.DiscountPct" @bind:event="oninput" class="input input-sm w-20" /></td>
-                        <td class="px-2 py-2 text-right tabular-nums">@Money.LineNet(l.Quantity, l.UnitPrice, l.DiscountPct).ToString("N2")</td>
-                        <td class="px-2 py-2 text-right"><button type="button" @onclick="() => _req.Lines.Remove(l)" class="text-slate-400 hover:text-rose-500">&#10005;</button></td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+    <ItemLinePicker CompanyId="_companyId" Lines="_req.Lines" ShowPrice="true" OnChanged="StateHasChanged"
+                    DepartmentId="@(_departmentId == 0 ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)" />
 
+    <div class="card p-6">
         <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div><label class="label">Additional items</label><input type="number" min="0" step="any" @bind="_req.AdditionalItemsCost" @bind:event="oninput" class="input" /></div>
             <div><label class="label">Delivery cost</label><input type="number" min="0" step="any" @bind="_req.AdditionalDeliveryCost" @bind:event="oninput" class="input" /></div>
@@ -152,7 +124,6 @@
         _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);
         _taxOptions = SelectOptions.From(_taxCodes, t => t.Id, t => $"{t.Code} · {t.RatePct:0.##}%", t => t.Description);
         _currencyOptions = await FxSvc.GetCompanyCurrencyOptionsAsync(companyId);
-        _req.Lines.Add(new InvoiceLine());
         _companyId = companyId; // the form is only rendered once everything above is loaded
     }
 
@@ -162,8 +133,6 @@
         _banks = _supplierId == 0 ? new() : await InvoiceSvc.GetBankAccountsAsync(_supplierId);
         _bankOptions = SelectOptions.From(_banks, b => b.Id, b => $"{b.BankName} · {b.AccountNumber}", b => $"{b.AccountName} ({b.Currency})");
     }
-
-    private void AddLine() => _req.Lines.Add(new InvoiceLine());
 
     private async Task OnFiles(InputFileChangeEventArgs e)
     {
@@ -188,6 +157,7 @@
     {
         _error = null;
         if (_supplierId == 0) { _error = "Choose a supplier."; return; }
+        if (_departments.Count > 0 && _departmentId == 0) { _error = "Choose a department."; return; }
         _req.SupplierId = _supplierId;
         _req.Currency = Currency;
         _req.DepartmentId = _departmentId == 0 ? null : _departmentId;
