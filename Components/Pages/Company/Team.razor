@@ -87,7 +87,7 @@
     {
         var authState = await AuthStateTask!;
         _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
-        _users = await Procurement.GetCompanyUsersAsync(_companyId);
+        _users = (await Procurement.GetCompanyUsersAsync(_companyId)).OrderByDescending(u => u.CreatedAt).ThenByDescending(u => u.Id).ToList();
     }
 
     private async Task Add()
@@ -108,7 +108,7 @@
             return;
         }
 
-        _users = await Procurement.GetCompanyUsersAsync(_companyId);
+        _users = (await Procurement.GetCompanyUsersAsync(_companyId)).OrderByDescending(u => u.CreatedAt).ThenByDescending(u => u.Id).ToList();
         _name = "";
         _email = "";
         _password = "";

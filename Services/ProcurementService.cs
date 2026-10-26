@@ -554,6 +554,17 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return await db.Suppliers.Where(s => ids.Contains(s.Id)).ToListAsync();
     }
 
+    /// <summary>The company's suppliers, most recently added to its address book first (for the Suppliers list).</summary>
+    public async Task<List<Supplier>> GetCompanySuppliersNewestFirstAsync(int companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var links = await db.CompanySuppliers.Where(cs => cs.CompanyId == companyId)
+            .OrderByDescending(cs => cs.AddedAt).ThenByDescending(cs => cs.Id).Select(cs => cs.SupplierId).ToListAsync();
+        var suppliers = await db.Suppliers.Where(s => links.Contains(s.Id)).ToDictionaryAsync(s => s.Id);
+        return links.Where(suppliers.ContainsKey).Select(id => suppliers[id]).ToList();
+    }
+
     /// <summary>A company's own address-book of suppliers it can invite — not the global directory.</summary>
     public async Task<List<Supplier>> GetCompanySuppliersAsync(int companyId)
     {
@@ -1031,7 +1042,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             "uom" => GridSort.By(q, i => i.UnitOfMeasure, desc),
             "code" => GridSort.By(q, i => i.Code, desc),
             "status" => GridSort.By(q, i => i.IsActive, desc),
-            _ => q.OrderBy(i => i.Code)
+            _ => q.OrderByDescending(i => i.Id)
         };
         var rows = await ordered.ThenBy(i => i.Id).Skip(req.Skip).Take(req.PageSize).ToListAsync();
         return new GridResult<Item>(rows, total);
@@ -1111,7 +1122,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         {
             "port" => GridSort.By(q, p => p.Name, desc),
             "country" => GridSort.By(q, p => p.Country, desc),
-            _ => q.OrderBy(p => p.Country).ThenBy(p => p.Name)
+            _ => q.OrderByDescending(p => p.Id)
         };
         var rows = await ordered.ThenBy(p => p.Id)
             .Skip(req.Skip).Take(req.PageSize).ToListAsync();

@@ -61,7 +61,7 @@
     {
         var authState = await AuthStateTask!;
         _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
-        _departments = await Procurement.GetDepartmentsAsync(_companyId);
+        _departments = (await Procurement.GetDepartmentsAsync(_companyId)).OrderByDescending(d => d.Id).ToList();
         _links = await Procurement.GetDepartmentLinkCountsAsync(_companyId);
     }
 
@@ -83,7 +83,7 @@
             return;
         }
 
-        _departments = await Procurement.GetDepartmentsAsync(_companyId);
+        _departments = (await Procurement.GetDepartmentsAsync(_companyId)).OrderByDescending(d => d.Id).ToList();
         _links = await Procurement.GetDepartmentLinkCountsAsync(_companyId);
         _name = "";
         _error = null;

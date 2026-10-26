@@ -183,7 +183,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory)
             "lines" => GridSort.By(q, r => r.Lines.Count, desc),
             "rfqs" => GridSort.By(q, r => db.Rfqs.Count(x => x.RequisitionId == r.Id), desc),
             "status" => GridSort.By(q, r => r.Status, desc),
-            _ => q.OrderByDescending(r => r.ReqnDate)
+            _ => q.OrderByDescending(r => r.Id) // newest created first; the Date column sorts by the requisition date
         };
         var page = await ordered.ThenByDescending(r => r.Id)
             .Skip(req.Skip).Take(req.PageSize)

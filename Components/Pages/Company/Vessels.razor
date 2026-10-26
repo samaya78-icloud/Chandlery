@@ -54,7 +54,7 @@
     {
         var authState = await AuthStateTask!;
         _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
-        _vessels = await Procurement.GetVesselsAsync(_companyId);
+        _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
     }
 
     private async Task Add()
@@ -75,7 +75,7 @@
             return;
         }
 
-        _vessels = await Procurement.GetVesselsAsync(_companyId);
+        _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
         _name = "";
         _imo = "";
         _error = null;

@@ -58,7 +58,7 @@ else
             var invoices = await InvoiceSvc.GetPendingForUserAsync(companyId, userId);
             _rows = pos.Select(p => new InboxRow(DocKind.PurchaseOrder, p.Po.Id, p.Po.PoNumber, p.Po.SupplierId, p.Supplier, p.Department, p.Po.CreatedDate, names.Name(p.Level), p.Total, p.Po.Currency))
                 .Concat(invoices.Select(i => new InboxRow(DocKind.Invoice, i.Inv.Id, i.Inv.InvoiceNumber, i.Inv.SupplierId, i.Supplier, "", i.Inv.SubmittedAt, names.Name(i.Level), i.Inv.TotalExclTax, i.Inv.Currency)))
-                .OrderBy(r => r.Raised).ToList();
+                .OrderByDescending(r => r.Raised).ToList();
         }
         _loaded = true;
     }

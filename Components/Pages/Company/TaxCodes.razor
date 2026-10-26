@@ -74,7 +74,7 @@ else
 
     private static string RateText(TaxCode t) => t.RatePct.ToString("0.##") + "%";
 
-    private async Task Load() => _codes = await InvoiceSvc.GetTaxCodesAsync(_companyId);
+    private async Task Load() => _codes = (await InvoiceSvc.GetTaxCodesAsync(_companyId)).OrderByDescending(t => t.Id).ToList();
 
     private async Task Add()
     {
