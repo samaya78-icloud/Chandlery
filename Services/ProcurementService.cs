@@ -608,6 +608,17 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return (rows, total);
     }
 
+    /// <summary>Server-side search for a SelectBox of the company's suppliers (name or email), for lists that can grow to hundreds.</summary>
+    public Func<SelectQuery, Task<SelectResult<int>>> SupplierSelectProvider(int companyId) => async query =>
+    {
+        var (rows, total) = await SearchCompanySuppliersAsync(companyId, query.Term, query.Skip, query.Take);
+        return new SelectResult<int>(rows.Select(s => new SelectOption<int>(s.Id, s.Name, s.ContactEmail)).ToList(), total);
+    };
+
+    /// <summary>Turns supplier ids into labels for a server-side SelectBox (a record that is already open, selected chips).</summary>
+    public Func<IReadOnlyCollection<int>, Task<IReadOnlyList<SelectOption<int>>>> SupplierSelectResolver() => async ids =>
+        (await GetSuppliersByIdsAsync(ids)).Select(s => new SelectOption<int>(s.Id, s.Name, s.ContactEmail)).ToList();
+
     /// <summary>A company's own address-book of suppliers it can invite — not the global directory.</summary>
     public async Task<List<Supplier>> GetCompanySuppliersAsync(int companyId)
     {

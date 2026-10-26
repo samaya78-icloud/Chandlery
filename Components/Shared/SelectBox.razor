@@ -1,0 +1,366 @@
+@typeparam TValue where TValue : notnull
+@inject IJSRuntime JS
+
+@*
+  A styled, searchable drop-down that replaces the native <select>. One component for every case:
+
+  - Single choice:   <SelectBox TValue="int" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="Choose a vessel…" />
+  - Multiple choice: <SelectBox TValue="int" Multiple="true" Values="_ids" Options="_options" OnChanged="StateHasChanged" />
+  - Small lists: pass Options; typing filters them in the browser's memory (no server call).
+  - Large lists: pass Provider (and Resolve for labels of values that are not on the loaded page); typing asks the server,
+    and "Load more" pages through the matches.
+*@
+
+<div class="relative @(Class)" @onkeydown="OnKeyDown">
+    <button type="button" id="@_id" disabled="@Disabled" @onclick="ToggleAsync" role="combobox" aria-haspopup="listbox" aria-expanded="@(_open ? "true" : "false")"
+            class="@("input flex w-full items-center gap-2 text-left " + (Disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"))">
+        <span class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            @if (Multiple)
+            {
+                @if (Values is null || Values.Count == 0)
+                {
+                    <span class="truncate text-muted">@Placeholder</span>
+                }
+                else
+                {
+                    @foreach (var v in Values.Take(3))
+                    {
+                        <span class="inline-flex max-w-[12rem] items-center truncate rounded-full bg-accent-50 px-2 py-0.5 text-xs font-medium text-accent-700">@LabelFor(v)</span>
+                    }
+                    @if (Values.Count > 3)
+                    {
+                        <span class="text-xs text-muted">+@(Values.Count - 3) more</span>
+                    }
+                }
+            }
+            else if (HasSingleValue)
+            {
+                <span class="truncate text-ink">@LabelFor(Value)</span>
+            }
+            else
+            {
+                <span class="truncate text-muted">@Placeholder</span>
+            }
+        </span>
+        <svg xmlns="http://www.w3.org/2000/svg" class="@("h-4 w-4 shrink-0 text-muted transition " + (_open ? "rotate-180" : ""))" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+
+    @if (AllowClear && !Disabled && (Multiple ? Values is { Count: > 0 } : HasSingleValue))
+    {
+        <button type="button" @onclick="ClearAsync" class="absolute right-9 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted hover:text-rose-600" aria-label="Clear" title="Clear">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+    }
+
+    @if (_open)
+    {
+        <div class="fixed inset-0 z-40" @onclick="CloseAsync"></div>
+        <div class="absolute left-0 z-50 mt-1 w-full min-w-[15rem] overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
+            @if (ShowSearch)
+            {
+                <div class="border-b border-line p-2">
+                    <input @ref="_search" @bind="_term" @bind:event="oninput" @bind:after="SearchChangedAsync" placeholder="@SearchPlaceholder"
+                           class="input input-sm" autocomplete="off" />
+                </div>
+            }
+
+            <ul id="@(_id)-list" role="listbox" aria-multiselectable="@(Multiple ? "true" : "false")" class="max-h-64 overflow-y-auto py-1">
+                @if (_loading && Visible.Count == 0)
+                {
+                    <li class="px-3 py-3 text-sm text-muted">Loading…</li>
+                }
+                else if (Visible.Count == 0)
+                {
+                    <li class="px-3 py-3 text-sm text-muted">@(string.IsNullOrWhiteSpace(_term) ? EmptyText : "Nothing matches that search.")</li>
+                }
+                @for (var i = 0; i < Visible.Count; i++)
+                {
+                    var option = Visible[i];
+                    var index = i;
+                    var selected = IsSelected(option.Value);
+                    <li role="option" aria-selected="@(selected ? "true" : "false")" data-active="@(index == _active)"
+                        @onclick="() => ChooseAsync(option)" @onmouseover="() => _active = index"
+                        class="@("flex items-center gap-2 px-3 py-2 text-sm " + (option.Disabled ? "cursor-not-allowed opacity-50 " : "cursor-pointer ") + (index == _active && !option.Disabled ? "bg-accent-50 " : ""))">
+                        @if (Multiple)
+                        {
+                            <input type="checkbox" checked="@selected" disabled="@option.Disabled" tabindex="-1" class="pointer-events-none" />
+                        }
+                        <span class="min-w-0 flex-1">
+                            <span class="@("block truncate " + (selected && !Multiple ? "font-semibold text-accent-700" : "text-ink"))">@option.Label</span>
+                            @if (!string.IsNullOrWhiteSpace(option.Description))
+                            {
+                                <span class="block truncate text-xs text-muted">@option.Description</span>
+                            }
+                        </span>
+                        @if (option.Disabled && !string.IsNullOrWhiteSpace(option.DisabledReason))
+                        {
+                            <span class="chip chip-plain" data-tone="neutral">@option.DisabledReason</span>
+                        }
+                        else if (selected && !Multiple)
+                        {
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 shrink-0 text-accent-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L20 7"/></svg>
+                        }
+                    </li>
+                }
+            </ul>
+
+            @if (IsServer && _hasMore)
+            {
+                <div class="border-t border-line p-2 text-center">
+                    <button type="button" @onclick="LoadMoreAsync" disabled="@_loading" class="text-sm font-medium text-accent-600 hover:text-accent-700">@(_loading ? "Loading…" : $"Load more ({_total - _loaded:N0} left)")</button>
+                </div>
+            }
+            @if (Multiple)
+            {
+                <div class="flex items-center justify-between border-t border-line px-3 py-2 text-xs text-muted">
+                    <span>@(Values?.Count ?? 0) selected</span>
+                    <span class="flex items-center gap-3">
+                        @if (ShowSelectAll)
+                        {
+                            <button type="button" @onclick="SelectAllShownAsync" class="font-medium text-accent-600 hover:text-accent-700">Select all shown</button>
+                        }
+                        <button type="button" @onclick="ClearAsync" class="font-medium text-rose-600 hover:text-rose-700">Clear</button>
+                        <button type="button" @onclick="CloseAsync" class="font-semibold text-ink">Done</button>
+                    </span>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const int PageSize = 20;
+    private const int AutoSearchThreshold = 8;
+
+    // ---- What to show ----
+
+    /// <summary>Choices for small lists. They are filtered in the browser as you type.</summary>
+    [Parameter] public IReadOnlyList<SelectOption<TValue>> Options { get; set; } = Array.Empty<SelectOption<TValue>>();
+
+    /// <summary>For large lists: fetches one page of matches from the server for the typed text. Setting this switches to server-side search.</summary>
+    [Parameter] public Func<SelectQuery, Task<SelectResult<TValue>>>? Provider { get; set; }
+
+    /// <summary>Server mode only: turns chosen values into labels when they are not on a loaded page (for example after opening an existing record).</summary>
+    [Parameter] public Func<IReadOnlyCollection<TValue>, Task<IReadOnlyList<SelectOption<TValue>>>>? Resolve { get; set; }
+
+    [Parameter] public string Placeholder { get; set; } = "Select…";
+    [Parameter] public string EmptyText { get; set; } = "Nothing to choose from.";
+
+    /// <summary>Show the search box. Default: on for server lists and for lists longer than 8 options.</summary>
+    [Parameter] public bool? Searchable { get; set; }
+
+    [Parameter] public string SearchPlaceholder { get; set; } = "Search…";
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>Show a clear (x) button to go back to "nothing chosen" (the type's default value, or an empty set).</summary>
+    [Parameter] public bool AllowClear { get; set; }
+
+    /// <summary>Extra classes for the wrapper, for width (for example "max-w-md").</summary>
+    [Parameter] public string? Class { get; set; }
+
+    // ---- Single choice ----
+
+    [Parameter] public TValue? Value { get; set; }
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+
+    // ---- Multiple choice ----
+
+    [Parameter] public bool Multiple { get; set; }
+
+    /// <summary>The chosen values. The component adds and removes entries in this set directly, then raises OnChanged.</summary>
+    [Parameter] public HashSet<TValue>? Values { get; set; }
+
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    // ---- State ----
+
+    private readonly string _id = "sb" + Guid.NewGuid().ToString("N")[..8];
+    private ElementReference _search;
+    private bool _open;
+    private bool _focusSearch;
+    private bool _scrollActive;
+    private string _term = "";
+    private int _active;
+    private bool _loading;
+    private int _loaded;
+    private int _total;
+    private bool _hasMore;
+    private CancellationTokenSource? _debounce;
+    private List<SelectOption<TValue>> _serverRows = new();
+    private readonly Dictionary<TValue, string> _labels = new();
+
+    private bool IsServer => Provider is not null;
+    private bool ShowSearch => Searchable ?? (IsServer || Options.Count > AutoSearchThreshold);
+    private bool ShowSelectAll => Multiple && !IsServer && Visible.Count > 0 && Visible.Count <= 200;
+
+    private bool HasSingleValue => Value is not null && !EqualityComparer<TValue>.Default.Equals(Value, default!)
+        || (Value is not null && Options.Any(o => EqualityComparer<TValue>.Default.Equals(o.Value, Value)));
+
+    private IReadOnlyList<SelectOption<TValue>> Visible
+    {
+        get
+        {
+            if (IsServer) return _serverRows;
+            var term = _term.Trim();
+            if (term == "") return Options;
+            return Options.Where(o => o.Label.Contains(term, StringComparison.OrdinalIgnoreCase)
+                                      || (o.Description?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        foreach (var o in Options) _labels[o.Value] = o.Label;
+        await ResolveLabelsAsync();
+    }
+
+    /// <summary>Server mode: makes sure every chosen value has a label even when it is not on a loaded page.</summary>
+    private async Task ResolveLabelsAsync()
+    {
+        if (Resolve is null) return;
+        var wanted = new List<TValue>();
+        if (Multiple && Values is not null) wanted.AddRange(Values);
+        else if (!Multiple && Value is not null && !EqualityComparer<TValue>.Default.Equals(Value, default!)) wanted.Add(Value);
+        var missing = wanted.Where(v => !_labels.ContainsKey(v)).ToList();
+        if (missing.Count == 0) return;
+        foreach (var option in await Resolve(missing)) _labels[option.Value] = option.Label;
+    }
+
+    private string LabelFor(TValue? value) =>
+        value is not null && _labels.TryGetValue(value, out var label) ? label : "…";
+
+    private bool IsSelected(TValue value) =>
+        Multiple ? Values?.Contains(value) ?? false : EqualityComparer<TValue>.Default.Equals(Value, value);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusSearch)
+        {
+            _focusSearch = false;
+            try { await _search.FocusAsync(); } catch (InvalidOperationException) { }
+        }
+        if (_scrollActive)
+        {
+            _scrollActive = false;
+            try { await JS.InvokeVoidAsync("chandlery.scrollActiveOption", _id + "-list"); }
+            catch (InvalidOperationException) { }
+            catch (JSDisconnectedException) { }
+        }
+    }
+
+    // ---- Opening, searching, paging ----
+
+    private async Task ToggleAsync()
+    {
+        if (Disabled) return;
+        if (_open) { await CloseAsync(); return; }
+
+        _open = true;
+        _term = "";
+        _active = Math.Max(0, Visible.ToList().FindIndex(o => IsSelected(o.Value)));
+        _focusSearch = ShowSearch;
+        if (IsServer) await LoadAsync(reset: true);
+        _scrollActive = true;
+    }
+
+    private Task CloseAsync()
+    {
+        _open = false;
+        return Task.CompletedTask;
+    }
+
+    private async Task SearchChangedAsync()
+    {
+        _active = 0;
+        if (!IsServer) return;
+
+        _debounce?.Cancel();
+        _debounce = new CancellationTokenSource();
+        var token = _debounce.Token;
+        try { await Task.Delay(250, token); }
+        catch (TaskCanceledException) { return; }
+        await LoadAsync(reset: true);
+    }
+
+    private async Task LoadAsync(bool reset)
+    {
+        _loading = true;
+        try
+        {
+            if (reset) { _serverRows = new(); _loaded = 0; }
+            var result = await Provider!(new SelectQuery(_term.Trim(), _loaded, PageSize));
+            _serverRows.AddRange(result.Options);
+            _loaded = _serverRows.Count;
+            _total = result.Total;
+            _hasMore = _loaded < _total;
+            foreach (var o in result.Options) _labels[o.Value] = o.Label;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadMoreAsync() => await LoadAsync(reset: false);
+
+    // ---- Choosing ----
+
+    private async Task ChooseAsync(SelectOption<TValue> option)
+    {
+        if (option.Disabled) return;
+        _labels[option.Value] = option.Label;
+
+        if (Multiple)
+        {
+            Values ??= new HashSet<TValue>();
+            if (!Values.Remove(option.Value)) Values.Add(option.Value);
+            await OnChanged.InvokeAsync();
+            return; // stays open so several can be ticked in a row
+        }
+
+        Value = option.Value;
+        _open = false;
+        await ValueChanged.InvokeAsync(option.Value);
+    }
+
+    private async Task ClearAsync()
+    {
+        if (Multiple)
+        {
+            Values?.Clear();
+            await OnChanged.InvokeAsync();
+            return;
+        }
+        Value = default;
+        await ValueChanged.InvokeAsync(default!);
+    }
+
+    private async Task SelectAllShownAsync()
+    {
+        Values ??= new HashSet<TValue>();
+        foreach (var o in Visible.Where(o => !o.Disabled)) Values.Add(o.Value);
+        await OnChanged.InvokeAsync();
+    }
+
+    // ---- Keyboard ----
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (!_open)
+        {
+            if (e.Key == "ArrowDown") await ToggleAsync(); // Enter and Space already click the button
+            return;
+        }
+
+        var rows = Visible;
+        switch (e.Key)
+        {
+            case "ArrowDown": _active = rows.Count == 0 ? 0 : (_active + 1) % rows.Count; _scrollActive = true; break;
+            case "ArrowUp": _active = rows.Count == 0 ? 0 : (_active - 1 + rows.Count) % rows.Count; _scrollActive = true; break;
+            case "Enter":
+                if (rows.Count > 0) await ChooseAsync(rows[Math.Clamp(_active, 0, rows.Count - 1)]);
+                break;
+            case "Escape": await CloseAsync(); break;
+        }
+    }
+}

@@ -95,13 +95,7 @@ else
                 }
                 else
                 {
-                    <select @bind="_req.BankAccountId" class="select max-w-xl">
-                        <option value="0">Choose an account…</option>
-                        @foreach (var b in _ctx.Banks)
-                        {
-                            <option value="@b.Id">@b.BankName · @b.AccountName · @b.AccountNumber (@b.Currency)</option>
-                        }
-                    </select>
+                    <SelectBox TValue="int" @bind-Value="_req.BankAccountId" Options="_bankOptions" Placeholder="Choose an account…" Class="max-w-xl" />
                 }
             </div>
 
@@ -149,6 +143,7 @@ else
     private int _supplierId;
     private Actor _actor = Actor.System;
     private SubmitContext? _ctx;
+    private List<SelectOption<int>> _bankOptions = new();
     private readonly SubmitInvoice _req = new();
     private readonly List<UploadedFile> _uploads = new();
     private bool _loaded;
@@ -178,6 +173,7 @@ else
         }
 
         _ctx = await InvoiceSvc.GetSubmitContextAsync(_supplierId, poId, invoiceId);
+        _bankOptions = _ctx is null ? new() : SelectOptions.From(_ctx.Banks, b => b.Id, b => $"{b.BankName} · {b.AccountNumber}", b => $"{b.AccountName} ({b.Currency})");
         if (_ctx is not null)
         {
             _req.PurchaseOrderId = poId;

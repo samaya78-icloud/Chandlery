@@ -18,10 +18,8 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
                 <label class="label">Supplier</label>
-                <select @bind="_supplierId" @bind:after="LoadBanks" class="select">
-                    <option value="0">Choose a supplier…</option>
-                    @foreach (var s in _suppliers) { <option value="@s.Id">@s.Name</option> }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_supplierId" @bind-Value:after="LoadBanks" Provider="Procurement.SupplierSelectProvider(_companyId)" Resolve="Procurement.SupplierSelectResolver()"
+                           Placeholder="Choose a supplier…" SearchPlaceholder="Search suppliers by name or email…" />
             </div>
             <div><label class="label">Supplier invoice no.</label><input @bind="_req.SupplierInvoiceRef" class="input" /></div>
             <div><label class="label">Currency</label><input @bind="_req.Currency" maxlength="3" class="input uppercase" /></div>
@@ -29,32 +27,21 @@
             <div><label class="label">Due date (optional)</label><input type="date" @bind="_req.DueDate" class="input" /></div>
             <div>
                 <label class="label">Tax code</label>
-                <select @bind="_taxCodeId" class="select">
-                    <option value="0">No tax</option>
-                    @foreach (var t in _taxCodes) { <option value="@t.Id">@t.Code · @t.RatePct.ToString("0.##")%</option> }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_taxCodeId" Options="_taxOptions" Placeholder="No tax" AllowClear="true" />
             </div>
             <div>
                 <label class="label">Department</label>
-                <select @bind="_departmentId" class="select">
-                    <option value="0">None</option>
-                    @foreach (var d in _departments) { <option value="@d.Id">@d.Name</option> }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="None" AllowClear="true" />
             </div>
             <div>
                 <label class="label">Vessel</label>
-                <select @bind="_vesselId" class="select">
-                    <option value="0">None</option>
-                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="None" AllowClear="true" />
             </div>
             <div><label class="label">Cost centre</label><input @bind="_req.CostCentre" class="input" /></div>
             <div class="md:col-span-3">
                 <label class="label">Pay into (the supplier's saved accounts)</label>
-                <select @bind="_bankId" class="select max-w-xl">
-                    <option value="0">@(_supplierId == 0 ? "Choose a supplier first" : _banks.Count == 0 ? "This supplier has not saved a bank account" : "Not specified")</option>
-                    @foreach (var b in _banks) { <option value="@b.Id">@b.BankName · @b.AccountNumber (@b.Currency)</option> }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_bankId" Options="_bankOptions" Disabled="@(_supplierId == 0 || _banks.Count == 0)" AllowClear="true" Class="max-w-xl"
+                           Placeholder="@(_supplierId == 0 ? "Choose a supplier first" : _banks.Count == 0 ? "This supplier has not saved a bank account" : "Not specified")" />
             </div>
         </div>
     </div>
@@ -138,11 +125,11 @@
     private Actor _actor = Actor.System;
     private readonly NewSpotInvoice _req = new();
     private readonly List<UploadedFile> _uploads = new();
-    private List<Supplier> _suppliers = new();
     private List<Department> _departments = new();
     private List<Vessel> _vessels = new();
     private List<TaxCode> _taxCodes = new();
     private List<SupplierBankAccount> _banks = new();
+    private List<SelectOption<int>> _departmentOptions = new(), _vesselOptions = new(), _taxOptions = new(), _bankOptions = new();
     private int _supplierId, _departmentId, _vesselId, _taxCodeId, _bankId;
     private bool _busy;
     private string? _error;
@@ -156,10 +143,12 @@
         var authState = await AuthStateTask!;
         var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
-        _suppliers = await Procurement.GetCompanySuppliersAsync(companyId);
         _departments = await Procurement.GetDepartmentsAsync(companyId);
         _vessels = await Procurement.GetVesselsAsync(companyId);
         _taxCodes = await InvoiceSvc.GetTaxCodesAsync(companyId);
+        _departmentOptions = SelectOptions.From(_departments, d => d.Id, d => d.Name);
+        _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);
+        _taxOptions = SelectOptions.From(_taxCodes, t => t.Id, t => $"{t.Code} · {t.RatePct:0.##}%", t => t.Description);
         _req.Lines.Add(new InvoiceLine());
         _companyId = companyId; // the form is only rendered once everything above is loaded
     }
@@ -168,6 +157,7 @@
     {
         _bankId = 0;
         _banks = _supplierId == 0 ? new() : await InvoiceSvc.GetBankAccountsAsync(_supplierId);
+        _bankOptions = SelectOptions.From(_banks, b => b.Id, b => $"{b.BankName} · {b.AccountNumber}", b => $"{b.AccountName} ({b.Currency})");
     }
 
     private void AddLine() => _req.Lines.Add(new InvoiceLine());

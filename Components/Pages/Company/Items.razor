@@ -113,13 +113,7 @@ else
                     </div>
                     <div class="mb-3">
                         <label class="label">Parent category</label>
-                        <select @bind="_catParentId" class="select">
-                            <option value="0">None (top-level)</option>
-                            @foreach (var (category, path, _) in ParentChoices)
-                            {
-                                <option value="@category.Id">@path</option>
-                            }
-                        </select>
+                        <SelectBox TValue="int" @bind-Value="_catParentId" Options="ParentCategoryOptions" SearchPlaceholder="Search categories…" />
                     </div>
                     @if (_error is not null) { <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
                     <div class="flex gap-3">
@@ -149,13 +143,7 @@ else
                         }
                         else
                         {
-                            <select @bind="_itemCategoryId" class="select">
-                                <option value="0">Select category…</option>
-                                @foreach (var (category, path, _) in _formTree)
-                                {
-                                    <option value="@category.Id">@path</option>
-                                }
-                            </select>
+                            <SelectBox TValue="int" @bind-Value="_itemCategoryId" Options="FormCategoryOptions" Placeholder="Select category…" SearchPlaceholder="Search categories…" />
                         }
                     </div>
                     @if (_error is not null) { <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
@@ -230,6 +218,11 @@ else
     private string _code = "", _name = "", _uom = "";
     private int _itemCategoryId;
     private List<(Category Category, string Path, int Depth)> _formTree = new();
+
+    private List<SelectOption<int>> FormCategoryOptions => _formTree.Select(t => new SelectOption<int>(t.Category.Id, t.Path)).ToList();
+
+    private List<SelectOption<int>> ParentCategoryOptions =>
+        new List<SelectOption<int>> { new(0, "None (top-level)") }.Concat(ParentChoices.Select(t => new SelectOption<int>(t.Category.Id, t.Path))).ToList();
 
     private Category? _selected => _selectedId == 0 ? null : _categories.FirstOrDefault(c => c.Id == _selectedId);
     private string? ExtraQuery => _selectedId == 0 ? null : $"c={_selectedId}";

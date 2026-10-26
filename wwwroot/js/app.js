@@ -163,7 +163,15 @@
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Keeps the highlighted option of an open SelectBox visible while arrowing through a long list.
+  function scrollActiveOption(listId) {
+    var list = document.getElementById(listId);
+    var el = list && list.querySelector("[data-active]");
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+  }
+
   window.chandlery = {
+    scrollActiveOption: scrollActiveOption,
     scrollToOnSmall: scrollToOnSmall,
     applyTheme: apply, toast: toast, replaceQuery: replaceQuery, download: download,
     registerPalette: registerPalette, setMode: setMode, setTheme: setTheme

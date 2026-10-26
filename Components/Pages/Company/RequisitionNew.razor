@@ -23,21 +23,12 @@
             <label class="flex items-center gap-2 text-sm text-slate-700">
                 <input type="radio" name="reqn-type" checked="@(_reqn.Type == RfqType.Spares)" @onchange="() => _reqn.Type = RfqType.Spares" /> Spares
             </label>
-            <label class="ml-auto flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" @bind="_reqn.IsBreakdown" /> Breakdown / incident
-            </label>
         </div>
 
         <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Vessel <span class="text-rose-500">*</span></label>
-                <select @bind="_reqn.VesselId" class="@InputClass">
-                    <option value="0">Select vessel…</option>
-                    @foreach (var v in _vessels)
-                    {
-                        <option value="@v.Id">@v.Name</option>
-                    }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_reqn.VesselId" Options="_vesselOptions" Placeholder="Select vessel…" />
                 @if (_vessels.Count == 0)
                 {
                     <p class="mt-1 text-xs text-slate-400">No vessels yet &mdash; <a href="/company/vessels" class="text-indigo-600 underline">add one</a> first.</p>
@@ -45,13 +36,7 @@
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Department @if (_departments.Count > 0) { <span class="text-rose-500">*</span> }</label>
-                <select @bind="_departmentId" class="@InputClass">
-                    <option value="0">@(_departments.Count > 0 ? "Select department…" : "Not specified")</option>
-                    @foreach (var d in _departments)
-                    {
-                        <option value="@d.Id">@d.Name</option>
-                    }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "Not specified")" />
                 @if (_departments.Count > 0)
                 {
                     <p class="mt-1 text-xs text-slate-400">The department decides which categories and items you can add.</p>
@@ -59,22 +44,11 @@
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Urgency</label>
-                <select @bind="_reqn.Urgency" class="@InputClass">
-                    @foreach (var u in Enum.GetValues<Urgency>())
-                    {
-                        <option value="@u">@u</option>
-                    }
-                </select>
+                <SelectBox TValue="Urgency" @bind-Value="_reqn.Urgency" Options="_urgencyOptions" />
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Delivery port <span class="text-rose-500">*</span></label>
-                <select @bind="_portId" class="@InputClass">
-                    <option value="0">Select port…</option>
-                    @foreach (var p in _ports)
-                    {
-                        <option value="@p.Id">@p.Name, @p.Country</option>
-                    }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_portId" Options="_portOptions" Placeholder="Select port…" SearchPlaceholder="Search ports…" />
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Requisition date</label>
@@ -131,6 +105,8 @@
     private List<Vessel> _vessels = new();
     private List<Department> _departments = new();
     private List<Port> _ports = new();
+    private List<SelectOption<int>> _vesselOptions = new(), _departmentOptions = new(), _portOptions = new();
+    private readonly List<SelectOption<Urgency>> _urgencyOptions = SelectOptions.FromEnum<Urgency>();
     private List<LineCopySource> _copySources = new();
     private string? _error;
     private bool _busy;
@@ -144,6 +120,9 @@
         _vessels = await Procurement.GetVesselsAsync(companyId);
         _departments = await Procurement.GetDepartmentsAsync(companyId);
         _ports = await Procurement.GetPortsAsync();
+        _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);
+        _departmentOptions = SelectOptions.From(_departments, d => d.Id, d => d.Name);
+        _portOptions = SelectOptions.From(_ports, p => p.Id, p => $"{p.Name}, {p.Country}");
 
         var recent = await Requisitions.GetRecentAsync(companyId);
         _copySources = recent.Select(r => new LineCopySource(

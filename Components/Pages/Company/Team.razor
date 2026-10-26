@@ -24,10 +24,7 @@
         </div>
         <div class="mb-3">
             <label class="mb-1 block text-sm font-medium text-slate-700">Role</label>
-            <select @bind="_role" class="input">
-                <option value="@UserRole.CompanyUser">Company User</option>
-                <option value="@UserRole.CompanyAdmin">Company Admin</option>
-            </select>
+            <SelectBox TValue="UserRole" @bind-Value="_role" Options="_roleOptions" />
         </div>
         <div class="mb-4">
             <label class="mb-1 block text-sm font-medium text-slate-700">Temporary Password</label>
@@ -81,6 +78,11 @@
     private string _email = "";
     private string _password = "";
     private UserRole _role = UserRole.CompanyUser;
+    private readonly List<SelectOption<UserRole>> _roleOptions = new()
+    {
+        new(UserRole.CompanyUser, "Company User", "Can raise requisitions and orders"),
+        new(UserRole.CompanyAdmin, "Company Admin", "Also manages the team, approval matrix and finalizes invoices")
+    };
     private string? _error;
 
     protected override async Task OnInitializedAsync()

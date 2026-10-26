@@ -18,7 +18,6 @@ else if (_reqn is not null)
             <StatusChip Value="_reqn.Status" />
             <StatusChip Value="_reqn.Type" />
             @if (_reqn.Urgency == Urgency.Urgent) { <StatusChip Value="_reqn.Urgency" /> }
-            @if (_reqn.IsBreakdown) { <StatusChip Label="Breakdown" Tone="warning" /> }
         </Badges>
         <Facts>
             <DocLink Kind="DocKind.Vessel" Id="_reqn.VesselId" Text="@VesselName" />

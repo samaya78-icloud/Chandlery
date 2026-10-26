@@ -54,13 +54,7 @@
         <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div class="mb-3 flex flex-wrap items-center gap-3">
                 <input @bind="_pickSearch" @bind:after="SearchChanged" placeholder="Search code or name…" class="@(InputClass + " w-60")" />
-                <select @bind="_pickCategoryId" @bind:after="SearchChanged" class="@(InputClass + " w-auto max-w-sm")">
-                    <option value="0">All categories</option>
-                    @foreach (var (category, path, _) in _tree)
-                    {
-                        <option value="@category.Id">@path</option>
-                    }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_pickCategoryId" @bind-Value:after="SearchChanged" Options="CategoryFilterOptions" Class="w-72 max-w-full" SearchPlaceholder="Search categories…" />
                 <span class="text-sm text-slate-500">@_pickTotal matching</span>
                 <button type="button" @onclick="AddAllMatching" disabled="@(_pickTotal == 0 || _busy)"
                         class="ml-auto btn btn-primary btn-sm">
@@ -139,13 +133,7 @@
         <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p class="mb-2 text-sm text-slate-600">Reuse the item lines of an earlier @CopySourceLabel, for example last month's provisions list.</p>
             <div class="flex flex-wrap items-center gap-3">
-                <select @bind="_copyId" class="@(InputClass + " w-auto min-w-72")">
-                    <option value="0">Choose @(CopySourceLabel)…</option>
-                    @foreach (var source in CopySources)
-                    {
-                        <option value="@source.Id">@source.Label</option>
-                    }
-                </select>
+                <SelectBox TValue="int" @bind-Value="_copyId" Options="CopyOptions" Placeholder="@($"Choose {CopySourceLabel}…")" Class="min-w-72" />
                 <button type="button" @onclick="CopyFromSource" disabled="@(_copyId == 0 || _busy)"
                         class="btn btn-primary btn-sm">
                     Copy lines
@@ -258,6 +246,11 @@
     [Parameter] public bool RequireDepartment { get; set; }
 
     private bool Locked => RequireDepartment && DepartmentId is null;
+
+    private List<SelectOption<int>> CategoryFilterOptions =>
+        new List<SelectOption<int>> { new(0, "All categories") }.Concat(_tree.Select(t => new SelectOption<int>(t.Category.Id, t.Path))).ToList();
+
+    private List<SelectOption<int>> CopyOptions => CopySources.Select(s => new SelectOption<int>(s.Id, s.Label)).ToList();
 
     private HashSet<int> _pickable = new();
     private bool _pickableLoaded;
