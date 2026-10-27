@@ -1,0 +1,84 @@
+@* Picks images and PDFs for a form. The files stay in the Files list the caller owns (nothing is stored until the caller saves),
+   and each one has a "Show to suppliers" tick. OnChanged fires after files are added, removed or re-ticked. *@
+
+<div class="@(Compact ? "inline-flex flex-wrap items-center gap-1.5" : "space-y-2")">
+    @foreach (var file in Files)
+    {
+        var f = file;
+        <span class="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink">
+            <span class="truncate" title="@f.FileName">@f.FileName</span>
+            <span class="text-muted">@Size(f.Data.Length)</span>
+            @if (AllowShare)
+            {
+                <label class="flex cursor-pointer items-center gap-1 text-muted" title="Show this file to the suppliers on the RFQ">
+                    <input type="checkbox" checked="@f.Share" @onchange="e => SetShare(f, (bool)e.Value!)" />
+                    <span>suppliers</span>
+                </label>
+            }
+            <button type="button" @onclick="() => Remove(f)" class="text-slate-400 hover:text-rose-500" title="Remove">&#10005;</button>
+        </span>
+    }
+    <label class="@("btn btn-secondary btn-sm cursor-pointer " + (Files.Count >= AttachmentRules.MaxPerTarget ? "pointer-events-none opacity-50" : ""))" title="Images (PNG, JPG, WEBP, GIF) or PDF, up to 10 MB each">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 11-8.6 8.6a5 5 0 0 1-7-7l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>
+        @(Compact ? "Attach" : Label)
+        <InputFile OnChange="OnFiles" multiple class="hidden" accept="@AttachmentRules.AcceptList" />
+    </label>
+    @if (_error is not null)
+    {
+        <span class="text-xs text-rose-600">@_error</span>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<PendingAttachment> Files { get; set; } = new();
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    /// <summary>One small row (used inside table cells) instead of a stacked block.</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    /// <summary>Shows the per-file "suppliers" tick. Turn off when the files are saved straight away as internal ones.</summary>
+    [Parameter] public bool AllowShare { get; set; } = true;
+    [Parameter] public string Label { get; set; } = "Attach images or PDFs";
+
+    private string? _error;
+
+    private static string Size(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:0.#} MB" : $"{Math.Max(1, bytes / 1024)} KB";
+
+    private async Task OnFiles(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        foreach (var file in e.GetMultipleFiles(AttachmentRules.MaxPerTarget))
+        {
+            if (Files.Count >= AttachmentRules.MaxPerTarget) { _error = $"Up to {AttachmentRules.MaxPerTarget} files."; break; }
+            try
+            {
+                var contentType = AttachmentRules.ContentTypeFor(file.Name);
+                await using var stream = file.OpenReadStream(maxAllowedSize: AttachmentRules.MaxBytes);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                Files.Add(new PendingAttachment { FileName = file.Name, ContentType = contentType, Data = memory.ToArray() });
+            }
+            catch (InvalidOperationException ex)
+            {
+                _error = ex.Message;
+            }
+            catch (IOException)
+            {
+                _error = $"{file.Name} is larger than 10 MB.";
+            }
+        }
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task Remove(PendingAttachment file)
+    {
+        Files.Remove(file);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task SetShare(PendingAttachment file, bool share)
+    {
+        file.Share = share;
+        await OnChanged.InvokeAsync();
+    }
+}

@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject AttachmentService Attach
 @inject FxService FxSvc
 
 <PageTitle>@(_rfq?.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
@@ -62,6 +63,15 @@ else
                     </dl>
                 }
             </div>
+
+            @if (_files.Header.Count > 0)
+            {
+                <div class="card p-4">
+                    <h2 class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Attachments from the buyer</h2>
+                    <p class="mb-3 text-xs text-slate-500">Photos or drawings to quote against. Click one to open it full size.</p>
+                    <AttachmentList Items="_files.Header" ShowSharing="false" />
+                </div>
+            }
 
             <div class="card p-4">
                 <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Your terms</h2>
@@ -178,6 +188,10 @@ else
                                     <p class="font-medium text-slate-800">@item?.Code &mdash; @item?.Name</p>
                                     @if (!string.IsNullOrWhiteSpace(line.Description)) { <p class="text-xs text-slate-500">@line.Description</p> }
                                     @if (!string.IsNullOrWhiteSpace(line.DrawingNo)) { <p class="text-xs text-slate-400">Drawing @line.DrawingNo</p> }
+                                    @if (_files.ByLine.TryGetValue(line.Id, out var lineFiles))
+                                    {
+                                        <div class="mt-2"><AttachmentList Items="lineFiles" Compact="true" ShowSharing="false" /></div>
+                                    }
                                     <input @bind="draft.OfferText" disabled="@_locked" placeholder="Offer (if different from what's requested)"
                                            class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-fuchsia-800 placeholder:text-slate-400" />
                                 </td>
@@ -300,10 +314,14 @@ else
         await Load();
     }
 
+    private RfqFiles _files = RfqFiles.Empty;
+
     private async Task Load()
     {
         _rfq = await Procurement.GetRfqForSupplierAsync(_supplierId, RfqId);
         if (_rfq is null) return;
+
+        _files = await Attach.ForRfqSupplierAsync(_supplierId, RfqId);
 
         _existing = await Procurement.GetQuoteAsync(RfqId, _supplierId);
         _ports = await Procurement.GetPortsAsync();

@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject RequisitionService Requisitions
+@inject AttachmentService Attach
 @inject NavigationManager Navigation
 
 <PageTitle>@(_reqn?.ReqnNumber ?? "Requisition") · Chandlery</PageTitle>
@@ -57,6 +58,27 @@ else if (_reqn is not null)
         }
     </div>
 
+    @* Header attachments *@
+    <div class="mb-6 card p-6">
+        <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">
+            Attachments <span class="ml-1 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium normal-case text-indigo-600">@HeaderFiles.Count</span>
+        </h2>
+        <p class="mb-3 text-xs text-muted">Photos, drawings or PDFs for the whole requisition. Files are internal unless you choose "Show to suppliers": then the suppliers on an RFQ made from this requisition can open them while quoting.</p>
+        <AttachmentList Items="HeaderFiles" CanEdit="CanChange" OnToggleShare="ToggleShare" OnDelete="DeleteFile" />
+        @if (HeaderFiles.Count == 0 && !CanChange)
+        {
+            <p class="text-sm text-muted">No files attached.</p>
+        }
+        @if (CanChange)
+        {
+            <div class="mt-3 print:hidden"><FilePicker Files="_pendingHeader" AllowShare="false" OnChanged="() => SaveFiles(null, _pendingHeader)" /></div>
+        }
+        @if (_fileError is not null)
+        {
+            <p class="mt-2 text-sm text-rose-600">@_fileError</p>
+        }
+    </div>
+
     @* Lines *@
     <div class="mb-6 card p-6">
         <div class="mb-3 flex flex-wrap items-center gap-3">
@@ -84,6 +106,7 @@ else if (_reqn is not null)
                     <th class="px-2 py-2 font-medium">UOM</th>
                     <th class="px-2 py-2 font-medium">Description / notes</th>
                     @if (_reqn.Type == RfqType.Spares) { <th class="px-2 py-2 font-medium">Drawing no.</th> }
+                    <th class="px-2 py-2 font-medium">Files</th>
                     <th class="px-2 py-2 font-medium">RFQ</th>
                 </tr>
             </thead>
@@ -118,6 +141,14 @@ else if (_reqn is not null)
                         <td class="px-2 py-2 text-slate-600">@line.Uom</td>
                         <td class="px-2 py-2 text-slate-600">@line.Description</td>
                         @if (_reqn.Type == RfqType.Spares) { <td class="px-2 py-2 text-slate-600">@line.DrawingNo</td> }
+                        <td class="px-2 py-2">
+                            <AttachmentList Items="FilesFor(line.Id)" Compact="true" CanEdit="CanChange" OnToggleShare="ToggleShare" OnDelete="DeleteFile" />
+                            @if (CanChange)
+                            {
+                                var lineId = line.Id;
+                                <div class="mt-1 print:hidden"><FilePicker Files="PendingFor(lineId)" Compact="true" AllowShare="false" OnChanged="() => SaveFiles(lineId, PendingFor(lineId))" /></div>
+                            }
+                        </td>
                         <td class="px-2 py-2 text-xs">
                             @if (onRfq is not null)
                             {
@@ -230,6 +261,58 @@ else if (_reqn is not null)
     private string _rfqRemarks = "";
     private string _equipDescription = "", _equipMaker = "", _equipParticulars = "", _equipSerial = "";
     private string? _error;
+    private string? _fileError;
+    private List<AttachmentView> _files = new();
+    private readonly List<PendingAttachment> _pendingHeader = new();
+    private readonly Dictionary<int, List<PendingAttachment>> _pendingLine = new();
+
+    private List<AttachmentView> HeaderFiles => _files.Where(f => f.RequisitionLineId is null).ToList();
+    private List<AttachmentView> FilesFor(int lineId) => _files.Where(f => f.RequisitionLineId == lineId).ToList();
+
+    private List<PendingAttachment> PendingFor(int lineId)
+    {
+        if (!_pendingLine.TryGetValue(lineId, out var list)) _pendingLine[lineId] = list = new();
+        return list;
+    }
+
+    /// <summary>Saves the files just picked straight away (as internal ones; sharing is switched on afterwards from the list).</summary>
+    private async Task SaveFiles(int? lineId, List<PendingAttachment> pending)
+    {
+        _fileError = null;
+        var batch = pending.ToList();
+        pending.Clear();
+        try
+        {
+            foreach (var file in batch) await Attach.AddAsync(_companyId, RequisitionId, lineId, file, _actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _fileError = ex.Message;
+        }
+        await ReloadFiles();
+    }
+
+    private async Task ToggleShare(AttachmentView file)
+    {
+        _fileError = null;
+        try { await Attach.SetShareAsync(_companyId, file.Id, !file.ShareWithSuppliers, _actor); }
+        catch (InvalidOperationException ex) { _fileError = ex.Message; }
+        await ReloadFiles();
+    }
+
+    private async Task DeleteFile(AttachmentView file)
+    {
+        _fileError = null;
+        try { await Attach.DeleteAsync(_companyId, file.Id, _actor); }
+        catch (InvalidOperationException ex) { _fileError = ex.Message; }
+        await ReloadFiles();
+    }
+
+    private async Task ReloadFiles()
+    {
+        _files = await Attach.ListAsync(_companyId, RequisitionId);
+        _auditVersion++;
+    }
     private string? _message;
 
     private bool CanChange => _reqn is { Status: RequisitionStatus.Open or RequisitionStatus.RfqPosted };
@@ -294,6 +377,7 @@ else if (_reqn is not null)
         _lineRfq = await Requisitions.GetLineRfqNumbersAsync(_companyId, _reqn.Id);
         _coverage = await Procurement.GetSupplierCoverageAsync(_companyId, _reqn.Id);
         _items = (await Procurement.GetItemsByIdsAsync(_reqn.Lines.Select(l => l.ItemId))).ToDictionary(i => i.Id);
+        _files = await Attach.ListAsync(_companyId, _reqn.Id);
 
         _approved.Clear();
         foreach (var l in _reqn.Lines) _approved[l.Id] = l.ApprovedQuantity;

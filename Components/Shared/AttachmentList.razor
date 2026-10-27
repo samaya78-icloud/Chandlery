@@ -1,0 +1,63 @@
+@* Saved files on a requisition or RFQ. Images show as thumbnails that open full size in a new tab, PDFs as a chip.
+   With ShowSharing the buyer sees whether each file is visible to suppliers; with CanEdit they can change that or remove the file. *@
+
+@if (Items.Count > 0)
+{
+    <div class="@("flex flex-wrap gap-3 " + (Compact ? "" : "mb-1"))">
+        @foreach (var a in Items)
+        {
+            var item = a;
+            <div class="@("flex items-start gap-2 rounded-xl border border-line bg-surface p-2 " + (Compact ? "max-w-60" : "max-w-72"))">
+                <a href="/files/attachments/@item.Id" target="_blank" rel="noopener" title="Open @item.FileName" class="shrink-0">
+                    @if (item.IsImage)
+                    {
+                        <img src="/files/attachments/@item.Id" alt="@item.FileName" loading="lazy" class="@((Compact ? "h-12 w-12" : "h-16 w-16") + " rounded-lg border border-line object-cover")" />
+                    }
+                    else
+                    {
+                        <span class="@((Compact ? "h-12 w-12" : "h-16 w-16") + " flex flex-col items-center justify-center rounded-lg bg-rose-50 text-[10px] font-bold text-rose-600")">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="mb-0.5 h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+                            PDF
+                        </span>
+                    }
+                </a>
+                <div class="min-w-0 text-xs">
+                    <a href="/files/attachments/@item.Id" target="_blank" rel="noopener" class="link block truncate" title="@item.FileName">@item.FileName</a>
+                    <span class="text-muted">@Size(item.SizeBytes)</span>
+                    @if (ShowSharing)
+                    {
+                        <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span class="chip" data-tone="@(item.ShareWithSuppliers ? "info" : "neutral")">@(item.ShareWithSuppliers ? "Shown to suppliers" : "Internal")</span>
+                            @if (CanEdit)
+                            {
+                                <button type="button" @onclick="() => OnToggleShare.InvokeAsync(item)" class="font-medium text-indigo-600 hover:underline">@(item.ShareWithSuppliers ? "Make internal" : "Show to suppliers")</button>
+                            }
+                        </div>
+                    }
+                    @if (CanEdit)
+                    {
+                        <button type="button" @onclick="() => OnDelete.InvokeAsync(item)" class="mt-0.5 font-medium text-rose-600 hover:underline">Remove</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AttachmentView> Items { get; set; } = Array.Empty<AttachmentView>();
+
+    /// <summary>Smaller thumbnails, for use inside table cells.</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    /// <summary>Show the "Shown to suppliers" / "Internal" tag. Off on the supplier side, where everything shown is shared.</summary>
+    [Parameter] public bool ShowSharing { get; set; } = true;
+
+    /// <summary>Allow changing the sharing and removing files.</summary>
+    [Parameter] public bool CanEdit { get; set; }
+
+    [Parameter] public EventCallback<AttachmentView> OnToggleShare { get; set; }
+    [Parameter] public EventCallback<AttachmentView> OnDelete { get; set; }
+
+    private static string Size(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:0.#} MB" : $"{Math.Max(1, bytes / 1024)} KB";
+}

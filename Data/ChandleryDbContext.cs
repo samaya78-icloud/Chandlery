@@ -34,6 +34,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<Invoice> Invoices => Set<Invoice>();
     public DbSet<InvoiceApproval> InvoiceApprovals => Set<InvoiceApproval>();
     public DbSet<InvoiceDocument> InvoiceDocuments => Set<InvoiceDocument>();
+    public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<SupplierBankAccount> SupplierBankAccounts => Set<SupplierBankAccount>();
     public DbSet<TaxCode> TaxCodes => Set<TaxCode>();
     public DbSet<DepartmentCategory> DepartmentCategories => Set<DepartmentCategory>();
@@ -298,6 +299,16 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Invoice>().WithMany().HasForeignKey(d => d.InvoiceId).OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<Attachment>(b =>
+        {
+            b.Property(a => a.FileName).HasMaxLength(260);
+            b.Property(a => a.ContentType).HasMaxLength(80);
+            b.HasOne<Company>().WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Requisition>().WithMany().HasForeignKey(a => a.RequisitionId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(a => new { a.RequisitionId, a.RequisitionLineId });
+            b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<AuditEntry>(b =>

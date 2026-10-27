@@ -4,6 +4,7 @@
 @inject ProcurementService Procurement
 @inject RequisitionService Requisitions
 @inject FxService FxSvc
+@inject AttachmentService Attach
 @inject NavigationManager Navigation
 
 <PageTitle>@(_rfq?.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
@@ -57,6 +58,15 @@ else
             <div class="col-span-2 md:col-span-4"><p class="text-xs uppercase tracking-wide text-slate-400">Remarks</p><p class="text-slate-700">@_rfq.Remarks</p></div>
         }
     </div>
+
+    @if (_files.Header.Count > 0)
+    {
+        <div class="mb-6 card p-4">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Attachments from the requisition</h2>
+            <p class="mb-3 text-xs text-muted">Suppliers only see the ones tagged "Shown to suppliers". Change that on the requisition.</p>
+            <AttachmentList Items="_files.Header" />
+        </div>
+    }
 
     @if (_newlyRaisedPos.Count > 0)
     {
@@ -250,6 +260,10 @@ else
                         {
                             <p class="mt-1 text-xs text-slate-500">@line.Description</p>
                         }
+                        @if (_files.ByLine.TryGetValue(line.Id, out var lineFiles))
+                        {
+                            <div class="mt-2"><AttachmentList Items="lineFiles" Compact="true" /></div>
+                        }
                     </div>
                     @if (isPoRaised)
                     {
@@ -375,6 +389,7 @@ else
     private HashSet<int> _toInvite = new();
     private string? _error;
     private string? _info;
+    private RfqFiles _files = RfqFiles.Empty;
     private string? _draftInfo;
     private string _evaluationNote = "";
     private bool _noteLoaded;
@@ -421,6 +436,7 @@ else
         _auditVersion++;
 
         _quotes = await Procurement.GetQuotesForRfqAsync(_companyId, RfqId);
+        _files = await Attach.ForRfqAsync(_companyId, RfqId);
 
         var pos = await Procurement.GetPurchaseOrdersAsync(_companyId);
         _poItemIds = pos.Where(po => po.RfqId == RfqId).SelectMany(po => po.Lines).Select(l => l.ItemId).ToHashSet();

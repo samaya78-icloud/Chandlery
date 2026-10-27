@@ -169,6 +169,10 @@
                     {
                         <th class="px-2 py-2 font-medium">Drawing no.</th>
                     }
+                    @if (ShowAttachments)
+                    {
+                        <th class="px-2 py-2 font-medium">Files</th>
+                    }
                     @if (ShowPrice)
                     {
                         <th class="px-2 py-2 font-medium">Unit price</th>
@@ -193,6 +197,10 @@
                         @if (ShowDrawingNo)
                         {
                             <td class="px-2 py-2"><input @bind="line.DrawingNo" class="w-28 input input-sm" /></td>
+                        }
+                        @if (ShowAttachments)
+                        {
+                            <td class="px-2 py-2"><FilePicker Files="line.Files" Compact="true" OnChanged="NotifyChanged" /></td>
                         }
                         @if (ShowPrice)
                         {
@@ -232,6 +240,9 @@
 
     /// <summary>Adds unit price and discount columns (used by the Spot PO form, which prices lines up front).</summary>
     [Parameter] public bool ShowPrice { get; set; }
+
+    /// <summary>Adds a Files column so images and PDFs can be attached to each line (requisition form).</summary>
+    [Parameter] public bool ShowAttachments { get; set; }
 
     /// <summary>"RFQ" or "requisition": the label for the copy-from-previous tool. Hidden when there are no sources.</summary>
     [Parameter] public string CopySourceLabel { get; set; } = "document";

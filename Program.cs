@@ -19,6 +19,7 @@ builder.Services.AddDbContextFactory<ChandleryDbContext>(options =>
 
 builder.Services.AddScoped<ProcurementService>();
 builder.Services.AddScoped<AuditService>();
+builder.Services.AddScoped<AttachmentService>();
 builder.Services.AddScoped<RequisitionService>();
 builder.Services.AddScoped<ApprovalService>();
 builder.Services.AddScoped<ToastService>();
@@ -251,6 +252,22 @@ app.MapGet("/files/invoices/{documentId:int}", async (int documentId, HttpContex
     var found = await invoices.OpenDocumentAsync(documentId, companyId, supplierId);
     if (found is null) return Results.NotFound();
     return Results.File(found.Value.Content, found.Value.Doc.ContentType, found.Value.Doc.FileName);
+}).RequireAuthorization();
+
+// Requisition files: the company that owns them, or (when shared) a supplier invited to an RFQ made from the requisition.
+// Served inline so images and PDFs open in the browser; sandboxed and nosniff so an uploaded file can never run as a page.
+app.MapGet("/files/attachments/{attachmentId:int}", async (int attachmentId, bool? download, HttpContext http, AttachmentService attachments) =>
+{
+    int? companyId = int.TryParse(http.User.FindFirst("CompanyId")?.Value, out var c) ? c : null;
+    int? supplierId = int.TryParse(http.User.FindFirst("SupplierId")?.Value, out var s) ? s : null;
+
+    var found = await attachments.OpenAsync(attachmentId, companyId, supplierId);
+    if (found is null) return Results.NotFound();
+    http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    http.Response.Headers["Content-Security-Policy"] = "sandbox";
+    return download == true
+        ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
+        : Results.File(found.Value.Content, found.Value.File.ContentType);
 }).RequireAuthorization();
 
 static string PoFileName(PoDocument doc) =>

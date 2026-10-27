@@ -18,13 +18,16 @@ public class NewRequisition
     public bool IsBreakdown { get; set; }
     public string Remarks { get; set; } = "";
     public List<NewRfqLine> Lines { get; set; } = new();
+
+    /// <summary>Optional files on the requisition as a whole.</summary>
+    public List<PendingAttachment> Files { get; set; } = new();
 }
 
 /// <summary>A row of the requisition list.</summary>
 public record RequisitionListRow(Requisition Requisition, string Vessel, string Department, int LineCount, int RfqCount);
 
 /// <summary>Requisitions: the vessel's request for items, entered once and turned into RFQs for many suppliers.</summary>
-public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory)
+public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, AttachmentService attachments)
 {
     private static DateTime? Utc(DateTime? date) =>
         date.HasValue ? DateTime.SpecifyKind(date.Value.Date, DateTimeKind.Utc) : null;
@@ -48,6 +51,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory)
             throw new InvalidOperationException("Add at least one line item.");
         if (request.Lines.Any(l => l.Quantity <= 0))
             throw new InvalidOperationException("Every line needs a quantity above zero.");
+        foreach (var file in request.Files.Concat(request.Lines.SelectMany(l => l.Files))) AttachmentRules.Validate(file);
 
         var itemIds = request.Lines.Select(l => l.ItemId).Distinct().ToList();
         var items = await db.Items.Where(i => i.CompanyId == companyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id);
@@ -92,6 +96,8 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory)
 
         AuditLog.Add(db, companyId, AuditEntityTypes.Requisition, requisition.Id, actor,
             $"CREATED New Requisition {requisition.ReqnNumber} with {requisition.Lines.Count} lines");
+        if (request.Files.Count > 0 || request.Lines.Any(l => l.Files.Count > 0))
+            await attachments.AddNewAsync(db, requisition, request.Files, request.Lines.Select(l => (IReadOnlyList<PendingAttachment>)l.Files).ToList(), actor);
         await db.SaveChangesAsync();
         return requisition;
     }

@@ -40,6 +40,9 @@ public class NewRfqLine
     public decimal Quantity { get; set; } = 1;
     public string Description { get; set; } = "";
     public string DrawingNo { get; set; } = "";
+
+    /// <summary>Files picked for this line on the requisition form (saved with the requisition).</summary>
+    public List<PendingAttachment> Files { get; set; } = new();
 }
 
 /// <summary>A purchase order raised directly with a supplier, without an RFQ.</summary>

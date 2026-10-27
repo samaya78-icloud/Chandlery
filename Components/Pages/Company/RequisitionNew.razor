@@ -74,7 +74,13 @@
         </div>
     </div>
 
-    <ItemLinePicker CompanyId="_companyId" Lines="_reqn.Lines" ShowDrawingNo="@(_reqn.Type == RfqType.Spares)"
+    <div class="card p-6">
+        <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Attachments <span class="font-normal normal-case text-muted">(optional)</span></h2>
+        <p class="mb-3 text-xs text-muted">Photos, drawings or other PDFs for the whole requisition. Files stay internal unless you tick "suppliers": those are shown to the suppliers on the RFQ so they can quote against them. You can also attach files to individual lines below.</p>
+        <FilePicker Files="_reqn.Files" OnChanged="StateHasChanged" />
+    </div>
+
+    <ItemLinePicker CompanyId="_companyId" Lines="_reqn.Lines" ShowAttachments="true" ShowDrawingNo="@(_reqn.Type == RfqType.Spares)"
                     DepartmentId="@(_departmentId == 0 ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)"
                     CopySourceLabel="requisition" CopySources="_copySources" OnChanged="StateHasChanged" />
 
