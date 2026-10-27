@@ -260,6 +260,10 @@ else
                         {
                             <p class="mt-1 text-xs text-slate-500">@line.Description</p>
                         }
+                        @if (line.AllowUomChange)
+                        {
+                            <p class="mt-1 text-xs text-indigo-600">Suppliers may quote this line in another unit (converted from @line.Uom).</p>
+                        }
                         @if (_files.ByLine.TryGetValue(line.Id, out var lineFiles))
                         {
                             <div class="mt-2"><AttachmentList Items="lineFiles" Compact="true" /></div>
@@ -297,11 +301,18 @@ else
                             }
                             else
                             {
-                                <p class="text-lg font-bold text-slate-800">@Money.Format(NetUnit(quoteLine), quote.Currency)</p>
+                                <p class="text-lg font-bold text-slate-800">@Money.Format(NetUnit(quoteLine), quote.Currency) <span class="text-xs font-normal text-slate-400">per @(quoteLine.Uom ?? line.Uom)</span></p>
                                 <p class="text-xs text-slate-400">
                                     List @Money.Format(quoteLine.UnitPrice, quote.Currency)@(quoteLine.DiscountPct > 0 ? $" less {quoteLine.DiscountPct:0.##}%" : "")
-                                    &middot; line total @Money.Format(Money.LineNet(line.Quantity, quoteLine.UnitPrice, quoteLine.DiscountPct), quote.Currency)
+                                    &middot; line total @Money.Format(Money.LineNet(quoteLine.QuotedQuantity(line.Quantity), quoteLine.UnitPrice, quoteLine.DiscountPct), quote.Currency)
                                 </p>
+                                @if (quoteLine.ConversionFactor != 1m)
+                                {
+                                    <p class="mt-1 text-xs font-medium text-indigo-600">
+                                        Quoted in @quoteLine.Uom: @Money.Qty(quoteLine.QuotedQuantity(line.Quantity)) @quoteLine.Uom for the @Money.Qty(line.Quantity) @line.Uom asked (1 @line.Uom = @Money.Qty(quoteLine.ConversionFactor) @quoteLine.Uom)
+                                        &middot; about @Money.Format(NetUnit(quoteLine) * quoteLine.ConversionFactor, quote.Currency) per @line.Uom
+                                    </p>
+                                }
                                 @if (!string.IsNullOrWhiteSpace(quoteLine.OfferText))
                                 {
                                     <p class="mt-1 text-xs italic text-fuchsia-700">Offer: @quoteLine.OfferText</p>
@@ -488,7 +499,7 @@ else
 
     /// <summary>What one unit really costs: the line discount, then the supplier's header discount.</summary>
     private decimal? EffectiveUnit(Quote quote, QuoteLine quoteLine) =>
-        Cmp(quote.Currency, quoteLine.UnitPrice * (1 - quoteLine.DiscountPct / 100m) * (1 - quote.DiscountPct / 100m));
+        Cmp(quote.Currency, quoteLine.UnitPrice * quoteLine.ConversionFactor * (1 - quoteLine.DiscountPct / 100m) * (1 - quote.DiscountPct / 100m)); // per requested unit
 
     private record TotalRow(Quote Quote, string Supplier, int Quoted, bool Complete, decimal? Cmp);
 
@@ -504,7 +515,7 @@ else
                 .Select(q =>
                 {
                     var quoted = open.Count(l => q!.Lines.Any(ql => ql.RfqLineId == l.Id));
-                    var subtotal = open.Sum(l => q!.Lines.FirstOrDefault(ql => ql.RfqLineId == l.Id) is { } ql ? Money.LineNet(l.Quantity, ql.UnitPrice, ql.DiscountPct) : 0m);
+                    var subtotal = open.Sum(l => q!.Lines.FirstOrDefault(ql => ql.RfqLineId == l.Id) is { } ql ? Money.LineNet(ql.QuotedQuantity(l.Quantity), ql.UnitPrice, ql.DiscountPct) : 0m);
                     var total = Money.GrandTotal(subtotal, q!.DiscountPct, q.AdditionalCharges);
                     return new TotalRow(q, _suppliersById.GetValueOrDefault(q.SupplierId)?.Name ?? "", quoted, quoted == open.Count, Cmp(q.Currency, total));
                 })

@@ -23,6 +23,9 @@ public class NewRfq
     public string EquipmentSerialNo { get; set; } = "";
     public List<NewRfqLine> Lines { get; set; } = new();
     public List<int> InvitedSupplierIds { get; set; } = new();
+
+    /// <summary>Lets the invited suppliers quote in another unit of measure (converted from the requested one).</summary>
+    public bool AllowSupplierUomChange { get; set; }
 }
 
 /// <summary>An earlier document (RFQ or requisition) whose item lines can be copied into a new one.</summary>
@@ -33,6 +36,9 @@ public class NewRfqLine
 {
     public int ItemId { get; set; }
     public int? RequisitionLineId { get; set; }
+
+    /// <summary>Unit chosen for this line; blank means the item's own unit.</summary>
+    public string Uom { get; set; } = "";
 
     /// <summary>Only used by the Spot PO form, which prices its lines up front.</summary>
     public decimal UnitPrice { get; set; }

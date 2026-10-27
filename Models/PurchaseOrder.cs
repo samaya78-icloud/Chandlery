@@ -61,6 +61,12 @@ public class PurchaseOrder
 public class PoLine
 {
     public int ItemId { get; set; }
+
+    /// <summary>The unit the quantity and price are in. Blank on older orders, which use the item's unit.</summary>
+    public string Uom { get; set; } = "";
+
+    /// <summary>The unit to show: this line's own, or the item's when the order predates units on lines.</summary>
+    public string UomOr(string? itemUom) => string.IsNullOrWhiteSpace(Uom) ? itemUom ?? "" : Uom;
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal DiscountPct { get; set; }

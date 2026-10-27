@@ -71,7 +71,7 @@ public class PoDocumentService(IDbContextFactory<ChandleryDbContext> factory)
         var lines = po.Lines.Select((l, index) =>
         {
             var item = items.GetValueOrDefault(l.ItemId);
-            return new PoDocLine(index + 1, item?.Code ?? "", item?.Name ?? "", item?.UnitOfMeasure ?? "",
+            return new PoDocLine(index + 1, item?.Code ?? "", item?.Name ?? "", l.UomOr(item?.UnitOfMeasure),
                 l.Quantity, l.UnitPrice, l.DiscountPct, Money.LineNet(l.Quantity, l.UnitPrice, l.DiscountPct));
         }).ToList();
 

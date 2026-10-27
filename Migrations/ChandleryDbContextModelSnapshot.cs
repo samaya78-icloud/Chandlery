@@ -1212,6 +1212,9 @@ namespace Chandlery.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<bool>("AllowUomChange")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("Description")
                         .HasColumnType("text");
 
@@ -1337,6 +1340,81 @@ namespace Chandlery.Migrations
                         .IsUnique();
 
                     b.ToTable("TaxCodes");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.Uom", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<int>("CompanyId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId", "Code")
+                        .IsUnique();
+
+                    b.ToTable("Uoms");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.UomConversion", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("CompanyId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("Factor")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<int>("FromUomId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("ItemId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ToUomId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromUomId");
+
+                    b.HasIndex("ItemId");
+
+                    b.HasIndex("ToUomId");
+
+                    b.HasIndex("CompanyId", "FromUomId", "ToUomId")
+                        .IsUnique()
+                        .HasFilter("\"ItemId\" IS NULL");
+
+                    b.HasIndex("CompanyId", "FromUomId", "ToUomId", "ItemId")
+                        .IsUnique()
+                        .HasFilter("\"ItemId\" IS NOT NULL");
+
+                    b.ToTable("UomConversions");
                 });
 
             modelBuilder.Entity("Chandlery.Models.Vessel", b =>
@@ -1744,6 +1822,10 @@ namespace Chandlery.Migrations
                                 .HasPrecision(18, 2)
                                 .HasColumnType("numeric(18,2)");
 
+                            b1.Property<string>("Uom")
+                                .IsRequired()
+                                .HasColumnType("text");
+
                             b1.HasKey("PurchaseOrderId", "Id");
 
                             b1.ToTable("PoLine");
@@ -1779,6 +1861,9 @@ namespace Chandlery.Migrations
                                 .HasColumnType("integer");
 
                             NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b1.Property<int>("Id"));
+
+                            b1.Property<decimal>("ConversionFactor")
+                                .HasColumnType("numeric");
 
                             b1.Property<decimal>("DiscountPct")
                                 .HasPrecision(5, 2)
@@ -1906,6 +1991,41 @@ namespace Chandlery.Migrations
                         .WithMany()
                         .HasForeignKey("CompanyId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.Uom", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.UomConversion", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.Uom", null)
+                        .WithMany()
+                        .HasForeignKey("FromUomId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.Item", null)
+                        .WithMany()
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Chandlery.Models.Uom", null)
+                        .WithMany()
+                        .HasForeignKey("ToUomId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

@@ -35,6 +35,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<InvoiceApproval> InvoiceApprovals => Set<InvoiceApproval>();
     public DbSet<InvoiceDocument> InvoiceDocuments => Set<InvoiceDocument>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
+    public DbSet<Uom> Uoms => Set<Uom>();
+    public DbSet<UomConversion> UomConversions => Set<UomConversion>();
     public DbSet<SupplierBankAccount> SupplierBankAccounts => Set<SupplierBankAccount>();
     public DbSet<TaxCode> TaxCodes => Set<TaxCode>();
     public DbSet<DepartmentCategory> DepartmentCategories => Set<DepartmentCategory>();
@@ -299,6 +301,28 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Invoice>().WithMany().HasForeignKey(d => d.InvoiceId).OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<Uom>(b =>
+        {
+            b.Property(u => u.Code).HasMaxLength(12);
+            b.Property(u => u.Name).HasMaxLength(60);
+            b.HasOne<Company>().WithMany().HasForeignKey(u => u.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(u => new { u.CompanyId, u.Code }).IsUnique();
+            b.HasQueryFilter(u => CurrentCompanyId == null || u.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<UomConversion>(b =>
+        {
+            b.Property(c => c.Factor).HasPrecision(18, 8);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Uom>().WithMany().HasForeignKey(c => c.FromUomId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Uom>().WithMany().HasForeignKey(c => c.ToUomId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Item>().WithMany().HasForeignKey(c => c.ItemId).OnDelete(DeleteBehavior.Cascade);
+            // Null item ids never collide in a unique index, so the general and the per-item conversions each get their own.
+            b.HasIndex(c => new { c.CompanyId, c.FromUomId, c.ToUomId }).IsUnique().HasFilter("\"ItemId\" IS NULL");
+            b.HasIndex(c => new { c.CompanyId, c.FromUomId, c.ToUomId, c.ItemId }).IsUnique().HasFilter("\"ItemId\" IS NOT NULL");
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<Attachment>(b =>

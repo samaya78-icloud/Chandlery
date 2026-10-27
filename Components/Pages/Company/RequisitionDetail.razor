@@ -192,6 +192,14 @@ else if (_reqn is not null)
                 </div>
             </div>
 
+            <label class="mt-4 flex items-start gap-2 text-sm text-ink">
+                <input type="checkbox" class="mt-0.5" checked="@_allowUomChange" @onchange="e => _allowUomChange = (bool)e.Value!" />
+                <span>
+                    <span class="font-medium">Let suppliers quote in a different unit of measure</span>
+                    <span class="block text-xs text-muted">Off: suppliers price in the unit you asked for. On: they may pick another unit that your <a href="/company/uoms" class="link">conversion table</a> can convert to (for example litres for drums), and the quantity is converted for them.</span>
+                </span>
+            </label>
+
             @if (_reqn.Type == RfqType.Spares)
             {
                 <h3 class="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">Equipment</h3>
@@ -259,6 +267,7 @@ else if (_reqn is not null)
 
     private DateTime? _rfqDue;
     private string _rfqRemarks = "";
+    private bool _allowUomChange;
     private string _equipDescription = "", _equipMaker = "", _equipParticulars = "", _equipSerial = "";
     private string? _error;
     private string? _fileError;
@@ -493,6 +502,7 @@ else if (_reqn is not null)
             {
                 ItemId = l.ItemId,
                 Quantity = l.ApprovedQuantity,
+                Uom = l.Uom,
                 Description = l.Description ?? "",
                 DrawingNo = l.DrawingNo ?? "",
                 RequisitionLineId = l.Id
@@ -515,7 +525,8 @@ else if (_reqn is not null)
             EquipmentParticulars = _equipParticulars,
             EquipmentSerialNo = _equipSerial,
             Lines = lines,
-            InvitedSupplierIds = _invited.ToList()
+            InvitedSupplierIds = _invited.ToList(),
+            AllowSupplierUomChange = _allowUomChange
         };
 
         _busy = true;

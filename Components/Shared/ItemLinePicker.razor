@@ -1,4 +1,5 @@
 @inject ProcurementService Procurement
+@inject UomService UomSvc
 
 @* Line-item entry shared by the RFQ and requisition forms: catalog picker, paste from Excel, copy from a
    previous document, and a paged/filterable grid of the lines. Items are searched on the server, so large
@@ -192,7 +193,17 @@
                             <p class="text-xs text-slate-500">@item?.Name</p>
                         </td>
                         <td class="px-2 py-2"><input type="number" min="0" step="any" @bind="line.Quantity" @bind:after="NotifyChanged" class="w-24 input input-sm" /></td>
-                        <td class="px-2 py-2 text-slate-600">@item?.UnitOfMeasure</td>
+                        <td class="px-2 py-2 text-slate-600">
+                            @if (ShowUom && item is not null)
+                            {
+                                var current = UnitOf(line, item);
+                                <div class="w-28"><SelectBox TValue="string" Small="true" Value="@current" ValueChanged="v => SetUnit(line, item, v)" Options="UnitOptions" Searchable="false" /></div>
+                            }
+                            else
+                            {
+                                @item?.UnitOfMeasure
+                            }
+                        </td>
                         <td class="px-2 py-2"><input @bind="line.Description" class="w-full min-w-40 input input-sm" /></td>
                         @if (ShowDrawingNo)
                         {
@@ -240,6 +251,9 @@
 
     /// <summary>Adds unit price and discount columns (used by the Spot PO form, which prices lines up front).</summary>
     [Parameter] public bool ShowPrice { get; set; }
+
+    /// <summary>Lets the unit of measure be chosen per line (it starts as the item's own). Off where lines have no unit.</summary>
+    [Parameter] public bool ShowUom { get; set; } = true;
 
     /// <summary>Adds a Files column so images and PDFs can be attached to each line (requisition form).</summary>
     [Parameter] public bool ShowAttachments { get; set; }
@@ -305,11 +319,23 @@
         }
     }
 
+    private List<SelectOption<string>> UnitOptions = new();
+
+    private static string UnitOf(NewRfqLine line, Item item) => string.IsNullOrWhiteSpace(line.Uom) ? item.UnitOfMeasure : line.Uom;
+
+    /// <summary>Choosing the item's own unit clears the override, so the line simply follows the item.</summary>
+    private async Task SetUnit(NewRfqLine line, Item item, string? unit)
+    {
+        line.Uom = string.IsNullOrWhiteSpace(unit) || string.Equals(unit, item.UnitOfMeasure, StringComparison.OrdinalIgnoreCase) ? "" : unit;
+        await NotifyChanged();
+    }
+
     protected override async Task OnParametersSetAsync()
     {
         if (!_loaded)
         {
             _loaded = true;
+            UnitOptions = await UomSvc.GetOptionsAsync(CompanyId);
             _categories = await Procurement.GetCategoriesAsync(CompanyId);
             _categoryNames = _categories.ToDictionary(c => c.Id, c => c.Name);
             _catalogCount = await Procurement.GetItemCountAsync(CompanyId);

@@ -25,6 +25,7 @@ public static class Breadcrumbs
         ("/company/vessels", "Master data", "Vessels"),
         ("/company/departments", "Master data", "Departments"),
         ("/company/ports", "Master data", "Ports"),
+        ("/company/uoms", "Master data", "Units of Measure"),
         ("/company/approval-matrix", "Admin", "Approval Matrix"),
         ("/company/profile", "Admin", "Company Profile"),
         ("/company/team", "Admin", "Team"),

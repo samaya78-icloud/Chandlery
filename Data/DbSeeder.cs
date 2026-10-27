@@ -27,6 +27,7 @@ public static class DbSeeder
             await EnsureSpotDemoAsync(db);
             await EnsureTaxCodesAsync(db);
             await EnsureCurrenciesAsync(db);
+            await EnsureUomsAsync(db);
             return;
         }
 
@@ -202,6 +203,14 @@ public static class DbSeeder
         await EnsureSpotDemoAsync(db);
         await EnsureTaxCodesAsync(db);
         await EnsureCurrenciesAsync(db);
+        await EnsureUomsAsync(db);
+    }
+
+    /// <summary>Gives every company the starter units of measure and conversions it does not have yet. Idempotent.</summary>
+    private static async Task EnsureUomsAsync(ChandleryDbContext db)
+    {
+        foreach (var companyId in await db.Companies.Select(c => c.Id).ToListAsync())
+            await Chandlery.Services.UomService.EnsureStarterAsync(db, companyId);
     }
 
     /// <summary>

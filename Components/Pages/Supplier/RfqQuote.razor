@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject AttachmentService Attach
+@inject UomService UomSvc
 @inject FxService FxSvc
 
 <PageTitle>@(_rfq?.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
@@ -195,20 +196,33 @@ else
                                     <input @bind="draft.OfferText" disabled="@_locked" placeholder="Offer (if different from what's requested)"
                                            class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-fuchsia-800 placeholder:text-slate-400" />
                                 </td>
-                                <td class="px-3 py-3 text-slate-600">
-                                    @Money.Qty(line.Quantity)
-                                    <input @bind="draft.Uom" disabled="@_locked" title="Unit of measure" class="mt-1 block w-16 rounded border border-slate-200 bg-slate-50 px-1.5 py-1 text-xs" />
+                                <td class="min-w-36 px-3 py-3 text-slate-600">
+                                    <p>@Money.Qty(line.Quantity) @line.Uom <span class="text-xs text-slate-400">requested</span></p>
+                                    @if (line.AllowUomChange)
+                                    {
+                                        var lineId = line.Id;
+                                        <div class="mt-1.5 w-32">
+                                            <SelectBox TValue="string" Small="true" Value="@draft.Uom" ValueChanged="v => SetUom(lineId, v)" Options="UnitOptionsFor(line)"
+                                                       Disabled="@_locked" Searchable="false" />
+                                        </div>
+                                        @if (FactorFor(line) is { } factor && factor != 1m)
+                                        {
+                                            <p class="mt-1 text-xs font-medium text-indigo-600">= @Money.Qty(line.Quantity * factor) @draft.Uom</p>
+                                            <p class="text-[11px] text-slate-400">1 @line.Uom = @Money.Qty(factor) @draft.Uom</p>
+                                        }
+                                    }
                                 </td>
                                 <td class="px-3 py-3">
                                     <input type="number" min="0" step="0.01" @bind="draft.UnitPrice" disabled="@_locked"
                                            class="w-24 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm" />
+                                    <p class="mt-1 text-[11px] text-slate-400">per @(string.IsNullOrWhiteSpace(draft.Uom) ? line.Uom : draft.Uom)</p>
                                 </td>
                                 <td class="px-3 py-3">
                                     <input type="number" min="0" max="100" step="0.01" @bind="draft.DiscountPct" disabled="@_locked"
                                            class="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm" />
                                 </td>
                                 <td class="px-3 py-3 text-right font-medium text-slate-800">
-                                    @Money.Format(Money.LineNet(line.Quantity, draft.UnitPrice, draft.DiscountPct), _input.Currency)
+                                    @Money.Format(Money.LineNet(line.Quantity * (FactorFor(line) ?? 1m), draft.UnitPrice, draft.DiscountPct), _input.Currency)
                                 </td>
                             </tr>
                         }
@@ -304,7 +318,33 @@ else
         }
     }
 
-    private decimal Subtotal =>_rfq?.Lines.Sum(l => Money.LineNet(l.Quantity, _lines[l.Id].UnitPrice, _lines[l.Id].DiscountPct)) ?? 0m;
+    private decimal Subtotal => _rfq?.Lines.Sum(l => Money.LineNet(l.Quantity * (FactorFor(l) ?? 1m), _lines[l.Id].UnitPrice, _lines[l.Id].DiscountPct)) ?? 0m;
+
+    // ---- Units of measure ----
+
+    private UomConverter _converter = UomConverter.Empty;
+    private List<SelectOption<string>> _allUnits = new();
+
+    /// <summary>Quoted units in one requested unit for this line (1 when the line is quoted as asked), or null when no conversion exists.</summary>
+    private decimal? FactorFor(RfqLine line)
+    {
+        var chosen = _lines.TryGetValue(line.Id, out var d) ? d.Uom : null;
+        if (!line.AllowUomChange || string.IsNullOrWhiteSpace(chosen) || string.Equals(chosen, line.Uom, StringComparison.OrdinalIgnoreCase)) return 1m;
+        return _converter.Factor(line.Uom, chosen, line.ItemId);
+    }
+
+    /// <summary>The requested unit first, then every unit it can be converted to.</summary>
+    private List<SelectOption<string>> UnitOptionsFor(RfqLine line)
+    {
+        var options = UomService.QuotableOptions(_converter, _allUnits, line.Uom, line.ItemId);
+        if (options.All(o => !string.Equals(o.Value, line.Uom, StringComparison.OrdinalIgnoreCase))) options.Insert(0, new SelectOption<string>(line.Uom, line.Uom));
+        return options;
+    }
+
+    private void SetUom(int lineId, string? unit)
+    {
+        if (_lines.TryGetValue(lineId, out var draft)) draft.Uom = string.IsNullOrWhiteSpace(unit) ? _rfq!.Lines.First(l => l.Id == lineId).Uom : unit;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -322,6 +362,8 @@ else
         if (_rfq is null) return;
 
         _files = await Attach.ForRfqSupplierAsync(_supplierId, RfqId);
+        _converter = await UomSvc.GetConverterAsync(_rfq.CompanyId);
+        _allUnits = await UomSvc.GetOptionsAsync(_rfq.CompanyId);
 
         _existing = await Procurement.GetQuoteAsync(RfqId, _supplierId);
         _ports = await Procurement.GetPortsAsync();
@@ -437,6 +479,16 @@ else
             draft.UnitPrice = l.UnitPrice;
             draft.DiscountPct = l.DiscountPct;
             draft.Uom = l.Uom ?? rfqLine.Uom;
+            if (!string.Equals(draft.Uom, rfqLine.Uom, StringComparison.OrdinalIgnoreCase))
+            {
+                var code = _allUnits.FirstOrDefault(o => string.Equals(o.Value, draft.Uom, StringComparison.OrdinalIgnoreCase))?.Value;
+                if (!rfqLine.AllowUomChange || code is null || _converter.Factor(rfqLine.Uom, code, rfqLine.ItemId) is null)
+                {
+                    result.Warnings.Add($"{_itemsById.GetValueOrDefault(rfqLine.ItemId)?.Code}: the offered unit '{draft.Uom}' cannot be used here, so {rfqLine.Uom} was kept.");
+                    draft.Uom = rfqLine.Uom;
+                }
+                else draft.Uom = code;
+            }
             draft.OfferText = l.OfferText;
         }
 

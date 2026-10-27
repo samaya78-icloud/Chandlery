@@ -77,7 +77,7 @@ else
                                 <DocLink Kind="DocKind.Item" Id="item.Id" Text="@item.Code" Plain="true" />
                             }
                         </td>
-                        <td class="px-4 py-3 text-slate-600">@Money.Qty(line.Quantity) @item?.UnitOfMeasure</td>
+                        <td class="px-4 py-3 text-slate-600">@Money.Qty(line.Quantity) @line.UomOr(item?.UnitOfMeasure)</td>
                         @if (ShowDelivery)
                         {
                             var progress = _progress.GetValueOrDefault(line.ItemId);
@@ -170,7 +170,7 @@ else
                                         <span class="font-medium text-ink">@item?.Name</span>
                                         <span class="ml-1 text-xs text-muted">@item?.Code</span>
                                     </td>
-                                    <td class="px-2 py-2 text-muted">@Money.Qty(p.Remaining) @item?.UnitOfMeasure</td>
+                                    <td class="px-2 py-2 text-muted">@Money.Qty(p.Remaining) @UnitFor(p.ItemId)</td>
                                     <td class="px-2 py-2">
                                         <input type="number" min="0" max="@Money.Qty(p.Remaining)" step="any" class="input input-sm w-28"
                                                value="@(_receive.TryGetValue(pid, out var q) ? Money.Qty(q) : "")"
@@ -224,7 +224,7 @@ else
                                     @foreach (var l in d.Lines)
                                     {
                                         var li = _itemsById.GetValueOrDefault(l.ItemId);
-                                        <li class="flex justify-between gap-4"><span class="text-ink">@li?.Name <span class="text-xs text-muted">@li?.Code</span></span><span class="tabular-nums text-muted">@Money.Qty(l.Quantity) @li?.UnitOfMeasure</span></li>
+                                        <li class="flex justify-between gap-4"><span class="text-ink">@li?.Name <span class="text-xs text-muted">@li?.Code</span></span><span class="tabular-nums text-muted">@Money.Qty(l.Quantity) @UnitFor(l.ItemId)</span></li>
                                     }
                                 </ul>
                                 @if (!d.InvoiceId.HasValue)
@@ -253,6 +253,10 @@ else
 }
 
 @code {
+    /// <summary>The unit an item is ordered in on this PO (its line unit, or the item's own on older orders).</summary>
+    private string UnitFor(int itemId) =>
+        _po?.Lines.FirstOrDefault(x => x.ItemId == itemId)?.UomOr(_itemsById.GetValueOrDefault(itemId)?.UnitOfMeasure) ?? "";
+
     [Parameter] public int PoId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 

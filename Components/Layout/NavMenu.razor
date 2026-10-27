@@ -71,6 +71,7 @@
     private static readonly MarkupString CategoryIcon = Icon("<path d='M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z'/>");
     private static readonly MarkupString VesselIcon = Icon("<path d='M3 17l2 3h14l2-3M5 17l-1-6h16l-1 6M12 11V4m0 0 4 3-4 2'/>");
     private static readonly MarkupString DepartmentIcon = Icon("<path d='M4 21V7l8-4 8 4v14M9 21v-6h6v6M9 10h.01M15 10h.01'/>");
+    private static readonly MarkupString UnitIcon = Icon("<path d='M3 17 17 3l4 4L7 21z'/><path d='m7 13 2 2M10 10l2 2M13 7l2 2'/>");
     private static readonly MarkupString PortIcon = Icon("<circle cx='12' cy='5' r='2'/><path d='M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6'/>");
     private static readonly MarkupString MatrixIcon = Icon("<rect x='3' y='3' width='18' height='18' rx='2'/><path d='M3 9h18M3 15h18M9 3v18M15 3v18'/>");
     private static readonly MarkupString ProfileIcon = Icon("<rect x='3' y='4' width='18' height='16' rx='2'/><path d='M7 9h10M7 13h6'/>");
@@ -105,6 +106,7 @@
         new("/company/vessels", "Vessels", VesselIcon),
         new("/company/departments", "Departments", DepartmentIcon),
         new("/company/ports", "Ports", PortIcon),
+        new("/company/uoms", "Units of Measure", UnitIcon),
     };
 
     private readonly List<NavItem> _adminItems = new()

@@ -67,6 +67,9 @@ public class RfqLine
     public string? DrawingNo { get; set; }
     public int? RequisitionLineId { get; set; }
     public int? WinningSupplierId { get; set; }
+
+    /// <summary>When true the supplier may quote in another unit of measure that can be converted from <see cref="Uom"/>.</summary>
+    public bool AllowUomChange { get; set; }
 }
 
 /// <summary>A supplier's own archive flag for an RFQ (works even if they never quoted).</summary>

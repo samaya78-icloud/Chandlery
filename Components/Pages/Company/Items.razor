@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject UomService UomSvc
 @inject ToastService Toasts
 @inject IJSRuntime JS
 
@@ -129,7 +130,7 @@ else
                     <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_itemFormId == 0 ? "New item" : "Edit item")</h3>
                     <div class="mb-3 grid grid-cols-2 gap-3">
                         <div><label class="label">Code</label><input @bind="_code" class="input" /></div>
-                        <div><label class="label">Unit of measure</label><input @bind="_uom" placeholder="Pcs, Drum, Litre" class="input" /></div>
+                        <div><label class="label">Unit of measure</label><SelectBox TValue="string" @bind-Value="_uom" Options="_uomOptions" Placeholder="Choose…" SearchPlaceholder="Search units…" /></div>
                     </div>
                     <div class="mb-3">
                         <label class="label">Name</label>
@@ -216,6 +217,7 @@ else
     // Item form: -1 closed, 0 adding, otherwise the id being edited
     private int _itemFormId = -1;
     private string _code = "", _name = "", _uom = "";
+    private List<SelectOption<string>> _uomOptions = new();
     private int _itemCategoryId;
     private List<(Category Category, string Path, int Depth)> _formTree = new();
 
@@ -232,6 +234,7 @@ else
     {
         var authState = await AuthStateTask!;
         _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _uomOptions = await UomSvc.GetOptionsAsync(_companyId);
         await LoadCategories();
         _count = await Procurement.GetItemCountAsync(_companyId);
         if (CategoryQuery is { } c && _categories.Any(x => x.Id == c)) _selectedId = c;

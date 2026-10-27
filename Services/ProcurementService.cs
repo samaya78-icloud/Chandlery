@@ -73,6 +73,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         foreach (var code in CurrencyCatalog.DefaultForCompany)
             db.CompanyCurrencies.Add(new CompanyCurrency { CompanyId = company.Id, CurrencyCode = code });
         await db.SaveChangesAsync();
+        await UomService.EnsureStarterAsync(db, company.Id);
 
         var admin = new AppUser
         {
@@ -143,7 +144,8 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (await db.Items.AnyAsync(i => i.CompanyId == companyId && i.Code.ToLower() == code.ToLower()))
             throw new InvalidOperationException($"An item with code {code} already exists.");
 
-        var item = new Item { CompanyId = companyId, Code = code, Name = name, CategoryId = categoryId, UnitOfMeasure = (uom ?? "").Trim() };
+        if (string.IsNullOrWhiteSpace(uom)) throw new InvalidOperationException("Choose a unit of measure.");
+        var item = new Item { CompanyId = companyId, Code = code, Name = name, CategoryId = categoryId, UnitOfMeasure = await UomService.EnsureExistsAsync(db, companyId, uom) };
         db.Items.Add(item);
         await db.SaveChangesAsync();
         return item;
@@ -172,7 +174,8 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         item.Code = code;
         item.Name = name;
         item.CategoryId = categoryId;
-        item.UnitOfMeasure = (uom ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(uom)) throw new InvalidOperationException("Choose a unit of measure.");
+        item.UnitOfMeasure = await UomService.EnsureExistsAsync(db, companyId, uom);
         await db.SaveChangesAsync();
         return item;
     }
@@ -259,6 +262,11 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         var existingCodes = (await db.Items.Where(i => i.CompanyId == companyId).Select(i => i.Code).ToListAsync())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        // Units named in the file that are not set up yet are created, so an import never fails on a new unit.
+        var unitCodes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var unit in rows.Select(r => r.Uom.Trim()).Where(u => u != "").Distinct(StringComparer.OrdinalIgnoreCase))
+            unitCodes[unit] = await UomService.EnsureExistsAsync(db, companyId, unit);
+
         var created = 0;
         var skipped = 0;
         foreach (var row in rows)
@@ -271,7 +279,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
                 Code = row.Code,
                 Name = row.Name,
                 CategoryId = await EnsurePathAsync(row.CategoryPath),
-                UnitOfMeasure = row.Uom
+                UnitOfMeasure = unitCodes.GetValueOrDefault(row.Uom.Trim()) ?? row.Uom.Trim()
             });
             created++;
         }
@@ -782,6 +790,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (items.Count != itemIds.Count)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
 
+        var unitCodes = await ActiveUnitCodesAsync(db, companyId);
         var nextSeq = 1001 + await db.Rfqs.IgnoreQueryFilters().CountAsync();
         var isSpares = request.Type == RfqType.Spares;
 
@@ -812,7 +821,8 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             {
                 ItemId = l.ItemId,
                 Quantity = l.Quantity,
-                Uom = items[l.ItemId].UnitOfMeasure,
+                Uom = ChooseUnit(unitCodes, l.Uom, items[l.ItemId].UnitOfMeasure),
+                AllowUomChange = request.AllowSupplierUomChange,
                 Description = string.IsNullOrWhiteSpace(l.Description) ? null : l.Description.Trim(),
                 DrawingNo = isSpares && !string.IsNullOrWhiteSpace(l.DrawingNo) ? l.DrawingNo.Trim() : null,
                 RequisitionLineId = requisition is null ? null : l.RequisitionLineId
@@ -909,16 +919,39 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         quote.AdditionalChargeDescription = input.AdditionalChargeDescription.Trim();
         quote.Remarks = input.Remarks.Trim();
 
+        // A different unit than requested is only allowed where the buyer permits it, and the quantity always comes from the buyer's
+        // conversion table here on the server (never from the browser), saved with the quote so later table changes leave it alone.
+        var converter = await UomService.BuildConverterAsync(db, rfq.CompanyId);
+        var masterCodes = (await db.Uoms.IgnoreQueryFilters().Where(u => u.CompanyId == rfq.CompanyId && u.IsActive).Select(u => u.Code).ToListAsync())
+            .ToDictionary(c => c.ToLower(), c => c);
+
         quote.Lines.Clear();
         foreach (var l in lines)
+        {
+            var rfqLine = rfq.Lines.First(x => x.Id == l.RfqLineId);
+            var offered = (l.Uom ?? "").Trim();
+            string? offeredUom = null;
+            var factor = 1m;
+            if (offered != "" && !string.Equals(offered, rfqLine.Uom, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!rfqLine.AllowUomChange)
+                    throw new InvalidOperationException($"The buyer asked for quotes in {rfqLine.Uom} on this line, so the unit cannot be changed.");
+                if (!masterCodes.TryGetValue(offered.ToLower(), out var code))
+                    throw new InvalidOperationException($"'{offered}' is not a unit the buyer uses. Choose one from the list.");
+                factor = converter.Factor(rfqLine.Uom, code, rfqLine.ItemId)
+                    ?? throw new InvalidOperationException($"There is no conversion from {rfqLine.Uom} to {code}, so this line cannot be quoted in {code}.");
+                offeredUom = code;
+            }
             quote.Lines.Add(new QuoteLine
             {
                 RfqLineId = l.RfqLineId,
                 UnitPrice = l.UnitPrice,
                 DiscountPct = l.DiscountPct,
-                Uom = string.IsNullOrWhiteSpace(l.Uom) ? null : l.Uom.Trim(),
+                Uom = offeredUom,
+                ConversionFactor = factor,
                 OfferText = l.OfferText.Trim()
             });
+        }
 
         if (existing is null)
         {
@@ -1283,6 +1316,21 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
+    // ---- Units of measure on lines ----
+
+    /// <summary>The company's enabled unit codes (lower-case code to code as stored).</summary>
+    internal static async Task<Dictionary<string, string>> ActiveUnitCodesAsync(ChandleryDbContext db, int companyId) =>
+        (await db.Uoms.Where(u => u.CompanyId == companyId && u.IsActive).Select(u => u.Code).ToListAsync())
+        .ToDictionary(c => c.ToLower(), c => c);
+
+    /// <summary>The unit for a line: what was chosen (it must be an enabled unit), or the item's own unit when nothing was chosen.</summary>
+    internal static string ChooseUnit(Dictionary<string, string> active, string? chosen, string itemUom)
+    {
+        chosen = (chosen ?? "").Trim();
+        if (chosen == "" || string.Equals(chosen, itemUom, StringComparison.OrdinalIgnoreCase)) return itemUom;
+        return active.TryGetValue(chosen.ToLower(), out var code) ? code : throw new InvalidOperationException($"'{chosen}' is not an enabled unit of measure.");
+    }
+
     // ---- Award & Purchase Orders ----
 
     public async Task AwardLineAsync(int companyId, int rfqId, int rfqLineId, int supplierId, Actor? actor = null)
@@ -1451,7 +1499,8 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
                     return new PoLine
                     {
                         ItemId = line.ItemId,
-                        Quantity = line.Quantity,
+                        Uom = string.IsNullOrWhiteSpace(quoteLine?.Uom) ? line.Uom : quoteLine!.Uom!,
+                        Quantity = quoteLine?.QuotedQuantity(line.Quantity) ?? line.Quantity,
                         UnitPrice = quoteLine?.UnitPrice ?? 0m,
                         DiscountPct = quoteLine?.DiscountPct ?? 0m
                     };
@@ -1537,6 +1586,8 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (itemCount != itemIds.Count)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
         await EnsureItemsAllowedAsync(db, companyId, request.DepartmentId, itemIds);
+        var unitCodes = await ActiveUnitCodesAsync(db, companyId);
+        var itemUnits = await db.Items.Where(i => i.CompanyId == companyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.UnitOfMeasure);
 
         var nextSeq = 5001 + await db.PurchaseOrders.IgnoreQueryFilters().CountAsync();
         var po = new PurchaseOrder
@@ -1561,6 +1612,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             Lines = request.Lines.Select(l => new PoLine
             {
                 ItemId = l.ItemId,
+                Uom = ChooseUnit(unitCodes, l.Uom, itemUnits[l.ItemId]),
                 Quantity = l.Quantity,
                 UnitPrice = request.IsDummy ? 0m : l.UnitPrice,
                 DiscountPct = request.IsDummy ? 0m : l.DiscountPct

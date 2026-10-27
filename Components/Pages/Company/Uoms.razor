@@ -1,0 +1,234 @@
+@page "/company/uoms"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject UomService UomSvc
+@inject ToastService Toasts
+
+<PageTitle>Units of Measure · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Units of Measure"
+            Subtitle="The units your items and orders use, and how they convert. When a supplier is allowed to quote in a different unit, the quantity and price are converted with this table." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else
+{
+    @if (_error is not null)
+    {
+        <div class="mb-4 max-w-4xl rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+
+    <div class="grid gap-6 xl:grid-cols-2">
+        @* Units *@
+        <div>
+            @if (_isAdmin)
+            {
+                <div class="card mb-4 p-5">
+                    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_editId == 0 ? "Add a unit" : "Edit unit")</h2>
+                    <div class="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
+                        <div><label class="label">Code</label><input @bind="_code" maxlength="12" disabled="@(_editId != 0)" placeholder="e.g. Drum" class="input" /></div>
+                        <div><label class="label">Name</label><input @bind="_name" maxlength="60" placeholder="e.g. Drum (205 L)" class="input" /></div>
+                        <div class="flex gap-2">
+                            <button @onclick="SaveUnit" disabled="@_busy" class="btn btn-primary">@(_editId == 0 ? "Add unit" : "Save")</button>
+                            @if (_editId != 0) { <button @onclick="CancelEdit" class="btn btn-secondary">Cancel</button> }
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <DataGrid TItem="UomRow" Items="_units" ItemName="units" SyncUrl="false" ExportName="units" EmptyText="No units yet.">
+                <GridColumn Title="Code" Text="r => r.Uom.Code" CellClass="font-semibold text-ink" />
+                <GridColumn Title="Name" Text="r => r.Uom.Name" Filter="GridFilter.None" />
+                <GridColumn Title="Used on" Text="r => r.UsedOn.ToString()" Filter="GridFilter.None" SortBy="r => r.UsedOn" CellClass="tabular-nums" />
+                <GridColumn Title="Status" Text="r => StatusText(r)" Filter="GridFilter.Select" />
+                <GridColumn Title="" Filter="GridFilter.None" Sortable="false" CellClass="text-right" Context="r">
+                    @if (_isAdmin)
+                    {
+                        <span class="inline-flex gap-3 text-xs font-medium">
+                            <button @onclick="() => StartEdit(r)" class="text-indigo-600 hover:underline">Edit</button>
+                            <button @onclick="() => ToggleActive(r)" class="text-slate-500 hover:underline">@(r.Uom.IsActive ? "Disable" : "Enable")</button>
+                            @if (r.UsedOn == 0) { <button @onclick="() => DeleteUnit(r)" class="text-rose-600 hover:underline">Delete</button> }
+                        </span>
+                    }
+                </GridColumn>
+            </DataGrid>
+            <p class="mt-2 text-xs text-muted">A unit that is used on items or documents can be disabled (it stays on what already exists but cannot be picked again), not deleted.</p>
+        </div>
+
+        @* Conversions *@
+        <div>
+            @if (_isAdmin)
+            {
+                <div class="card mb-4 p-5">
+                    <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Add a conversion</h2>
+                    <p class="mb-3 text-xs text-muted">The other direction is worked out for you, and chains join up (Drum to Litre and Litre to mL gives Drum to mL).</p>
+                    <div class="flex flex-wrap items-end gap-3">
+                        <span class="pb-2 text-sm text-ink">1</span>
+                        <div class="w-36"><label class="label">Unit</label><SelectBox TValue="string" @bind-Value="_from" Options="_unitOptions" Placeholder="From…" SearchPlaceholder="Search…" /></div>
+                        <span class="pb-2 text-sm text-ink">=</span>
+                        <div class="w-32"><label class="label">Factor</label><input type="number" min="0" step="any" @bind="_factor" class="input" /></div>
+                        <div class="w-36"><label class="label">Unit</label><SelectBox TValue="string" @bind-Value="_to" Options="_unitOptions" Placeholder="To…" SearchPlaceholder="Search…" /></div>
+                    </div>
+                    <div class="mt-3 max-w-md">
+                        <label class="label">Only for one item (optional)</label>
+                        <SelectBox TValue="int" @bind-Value="_itemId" Provider="UomSvc.ItemSelectProvider(_companyId)" Resolve="UomSvc.ItemSelectResolver()" AllowClear="true"
+                                   Placeholder="All items" SearchPlaceholder="Search items by code or name…" />
+                        <p class="mt-1 text-xs text-muted">Use this when the factor only holds for one product, for example a drum of paint is not 205 litres.</p>
+                    </div>
+                    <button @onclick="SaveConversion" disabled="@_busy" class="btn btn-primary mt-4">Save conversion</button>
+                </div>
+            }
+
+            <DataGrid TItem="UomConversionRow" Items="_conversions" ItemName="conversions" SyncUrl="false" ExportName="uom-conversions" EmptyText="No conversions yet.">
+                <GridColumn Title="Conversion" Text="r => Describe(r)" CellClass="font-medium text-ink tabular-nums" />
+                <GridColumn Title="Applies to" Text="r => AppliesTo(r)" Filter="GridFilter.Text" />
+                <GridColumn Title="" Filter="GridFilter.None" Sortable="false" CellClass="text-right" Context="r">
+                    @if (_isAdmin) { <button @onclick="() => DeleteConversion(r)" class="text-xs font-medium text-rose-600 hover:underline">Delete</button> }
+                </GridColumn>
+            </DataGrid>
+
+            <div class="card mt-4 p-5">
+                <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Check a conversion</h2>
+                <p class="mb-3 text-xs text-muted">See what the table gives for any two units, the way a supplier's quote would use it.</p>
+                <div class="flex flex-wrap items-end gap-3">
+                    <div class="w-36"><label class="label">From</label><SelectBox TValue="string" @bind-Value="_checkFrom" @bind-Value:after="Check" Options="_unitOptions" Placeholder="From…" SearchPlaceholder="Search…" /></div>
+                    <div class="w-36"><label class="label">To</label><SelectBox TValue="string" @bind-Value="_checkTo" @bind-Value:after="Check" Options="_unitOptions" Placeholder="To…" SearchPlaceholder="Search…" /></div>
+                </div>
+                @if (_checkText is not null)
+                {
+                    <p class="mt-3 text-sm font-medium text-ink">@_checkText</p>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private int _companyId;
+    private bool _isAdmin;
+    private bool _loaded;
+    private bool _busy;
+    private string? _error;
+
+    private List<UomRow> _units = new();
+    private List<UomConversionRow> _conversions = new();
+    private List<SelectOption<string>> _unitOptions = new();
+    private UomConverter _converter = UomConverter.Empty;
+
+    private int _editId;
+    private string _code = "", _name = "";
+    private string? _from, _to, _checkFrom, _checkTo;
+    private decimal _factor;
+    private int _itemId;
+    private string? _checkText;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _isAdmin = authState.User.IsInRole("CompanyAdmin");
+        await Load();
+        _loaded = true;
+    }
+
+    private async Task Load()
+    {
+        _units = await UomSvc.GetAllAsync(_companyId);
+        _conversions = await UomSvc.GetConversionsAsync(_companyId);
+        _unitOptions = await UomSvc.GetOptionsAsync(_companyId);
+        _converter = await UomSvc.GetConverterAsync(_companyId);
+    }
+
+    private static string StatusText(UomRow r) => r.Uom.IsActive ? "Enabled" : "Disabled";
+
+    private static string AppliesTo(UomConversionRow r) => r.ItemId.HasValue ? r.ItemLabel : "All items";
+
+    private static string Describe(UomConversionRow r) => $"1 {r.From} = {r.Factor.ToString("#,##0.########")} {r.To}";
+
+    private async Task Run(Func<Task<string>> action)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var message = await action();
+            await Load();
+            Check();
+            await Toasts.Success(message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void StartEdit(UomRow row)
+    {
+        _editId = row.Uom.Id;
+        _code = row.Uom.Code;
+        _name = row.Uom.Name;
+    }
+
+    private void CancelEdit()
+    {
+        _editId = 0;
+        _code = _name = "";
+    }
+
+    private Task SaveUnit() => Run(async () =>
+    {
+        if (_editId == 0)
+        {
+            await UomSvc.AddAsync(_companyId, _code, _name);
+            _code = _name = "";
+            return "Unit added";
+        }
+        var current = _units.First(u => u.Uom.Id == _editId);
+        await UomSvc.UpdateAsync(_companyId, _editId, _name, current.Uom.IsActive);
+        CancelEdit();
+        return "Unit saved";
+    });
+
+    private Task ToggleActive(UomRow row) => Run(async () =>
+    {
+        await UomSvc.UpdateAsync(_companyId, row.Uom.Id, row.Uom.Name, !row.Uom.IsActive);
+        return row.Uom.IsActive ? $"{row.Uom.Code} disabled" : $"{row.Uom.Code} enabled";
+    });
+
+    private Task DeleteUnit(UomRow row) => Run(async () =>
+    {
+        await UomSvc.DeleteAsync(_companyId, row.Uom.Id);
+        return $"{row.Uom.Code} deleted";
+    });
+
+    private Task SaveConversion() => Run(async () =>
+    {
+        await UomSvc.AddConversionAsync(_companyId, _from ?? "", _to ?? "", _factor, _itemId == 0 ? null : _itemId);
+        var message = $"Saved 1 {_from} = {_factor:#,##0.########} {_to}";
+        _factor = 0;
+        return message;
+    });
+
+    private Task DeleteConversion(UomConversionRow row) => Run(async () =>
+    {
+        await UomSvc.DeleteConversionAsync(_companyId, row.Id);
+        return "Conversion deleted";
+    });
+
+    private void Check()
+    {
+        if (string.IsNullOrEmpty(_checkFrom) || string.IsNullOrEmpty(_checkTo)) { _checkText = null; return; }
+        var factor = _converter.Factor(_checkFrom, _checkTo);
+        _checkText = factor is null
+            ? $"No conversion connects {_checkFrom} and {_checkTo} (for items that have their own conversion it may still work)."
+            : $"1 {_checkFrom} = {factor.Value.ToString("#,##0.########")} {_checkTo}";
+    }
+}

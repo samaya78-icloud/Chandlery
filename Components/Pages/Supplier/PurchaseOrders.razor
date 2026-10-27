@@ -51,7 +51,7 @@ else
                             var item = _itemsById.GetValueOrDefault(line.ItemId);
                             <tr class="border-b border-slate-50 last:border-0">
                                 <td class="px-4 py-2 text-slate-700">@item?.Name</td>
-                                <td class="px-4 py-2 text-slate-500">@Money.Qty(line.Quantity) @item?.UnitOfMeasure</td>
+                                <td class="px-4 py-2 text-slate-500">@Money.Qty(line.Quantity) @line.UomOr(item?.UnitOfMeasure)</td>
                                 <td class="px-4 py-2 text-slate-500">@Money.Format(line.UnitPrice, po.Currency)@(line.DiscountPct > 0 ? $" (less {line.DiscountPct:0.##}%)" : "")</td>
                                 <td class="px-4 py-2 text-right font-medium text-slate-700">@Money.Format(Money.LineNet(line.Quantity, line.UnitPrice, line.DiscountPct), po.Currency)</td>
                             </tr>

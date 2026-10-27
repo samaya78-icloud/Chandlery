@@ -58,6 +58,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
         if (items.Count != itemIds.Count)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
         await ProcurementService.EnsureItemsAllowedAsync(db, companyId, request.DepartmentId, itemIds);
+        var unitCodes = await ProcurementService.ActiveUnitCodesAsync(db, companyId);
 
         var isSpares = request.Type == RfqType.Spares;
         var nextSeq = 1001 + await db.Requisitions.IgnoreQueryFilters().CountAsync();
@@ -86,7 +87,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
                 ItemId = l.ItemId,
                 Quantity = l.Quantity,
                 ApprovedQuantity = l.Quantity,
-                Uom = items[l.ItemId].UnitOfMeasure,
+                Uom = ProcurementService.ChooseUnit(unitCodes, l.Uom, items[l.ItemId].UnitOfMeasure),
                 Description = string.IsNullOrWhiteSpace(l.Description) ? null : l.Description.Trim(),
                 DrawingNo = isSpares && !string.IsNullOrWhiteSpace(l.DrawingNo) ? l.DrawingNo.Trim() : null
             }).ToList()

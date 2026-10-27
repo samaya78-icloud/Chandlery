@@ -20,6 +20,7 @@ builder.Services.AddDbContextFactory<ChandleryDbContext>(options =>
 builder.Services.AddScoped<ProcurementService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddScoped<AttachmentService>();
+builder.Services.AddScoped<UomService>();
 builder.Services.AddScoped<RequisitionService>();
 builder.Services.AddScoped<ApprovalService>();
 builder.Services.AddScoped<ToastService>();
