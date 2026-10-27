@@ -239,17 +239,18 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_focusSearch)
-        {
-            _focusSearch = false;
-            try { await _search.FocusAsync(); } catch (InvalidOperationException) { }
-        }
         if (_open)
         {
             // Run after every render while open: the list may have grown or shrunk, which can change whether it fits below.
             try { await JS.InvokeVoidAsync("chandlery.positionPopup", _id, _id + "-panel"); }
             catch (InvalidOperationException) { }
             catch (JSDisconnectedException) { }
+        }
+        if (_focusSearch)
+        {
+            // After positioning: the panel stays visibility:hidden until then, and a hidden input cannot take focus.
+            _focusSearch = false;
+            try { await _search.FocusAsync(preventScroll: true); } catch (InvalidOperationException) { } catch (JSDisconnectedException) { }
         }
         if (_scrollActive)
         {
