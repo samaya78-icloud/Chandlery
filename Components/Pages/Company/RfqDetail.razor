@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject RequisitionService Requisitions
+@inject FxService FxSvc
 @inject NavigationManager Navigation
 
 <PageTitle>@(_rfq?.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
@@ -118,6 +119,113 @@ else
         }
     </div>
 
+    @* Quick select: fill in the winner on many lines at once *@
+    @if (_quotes.Count > 0 && OpenLines.Any())
+    {
+        var totals = TotalRows;
+        var lowest = totals.Where(t => t.Complete && t.Cmp.HasValue).OrderBy(t => t.Cmp).FirstOrDefault();
+        var perLine = BestPerLine();
+        var bySupplier = perLine.GroupBy(kv => kv.Value).Select(g => (Supplier: _suppliersById.GetValueOrDefault(g.Key)?.Name ?? "", Lines: g.Count())).OrderByDescending(x => x.Lines).ToList();
+        var openCount = OpenLines.Count();
+        var chosenCount = _pickSupplier == 0 ? 0 : OpenLines.Count(l => QuoteLineFor(_pickSupplier, l.Id) is not null);
+
+        <div class="mb-6 card p-5 print:hidden">
+            <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
+                <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Quick select winners</h2>
+                @if (_rfq.Lines.Any(l => l.WinningSupplierId.HasValue && !_poItemIds.Contains(l.ItemId)))
+                {
+                    <button @onclick="ClearAll" disabled="@_busy" class="text-xs font-medium text-rose-600 hover:text-rose-700">Clear all selections</button>
+                }
+            </div>
+            <p class="mb-4 text-xs text-muted">
+                Fills in the winner on every line that has no purchase order yet. You can still change any line by hand below.
+                @if (!_singleCurrency) { <span>Quotes in different currencies are compared in US dollars at today's rate.</span> }
+            </p>
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <div class="rounded-xl border border-line p-4">
+                    <p class="text-sm font-semibold text-ink">One supplier for everything</p>
+                    <p class="mb-3 text-xs text-muted">Choose the supplier yourself.</p>
+                    <SelectBox TValue="int" @bind-Value="_pickSupplier" Options="_quotedSupplierOptions" Placeholder="Choose a supplier…" SearchPlaceholder="Search…" />
+                    @if (_pickSupplier != 0)
+                    {
+                        <p class="mt-2 text-xs text-muted">Quoted @chosenCount of @openCount open lines@(chosenCount < openCount ? "; the rest stay as they are." : ".")</p>
+                    }
+                    <button @onclick="SelectOneSupplier" disabled="@(_busy || _pickSupplier == 0 || chosenCount == 0)" class="btn btn-secondary btn-sm mt-3">Select all lines</button>
+                </div>
+
+                <div class="rounded-xl border border-line p-4">
+                    <p class="text-sm font-semibold text-ink">Lowest total quote</p>
+                    <p class="mb-3 text-xs text-muted">The supplier whose whole quote costs least, among those who quoted every open line.</p>
+                    <ul class="space-y-1 text-xs">
+                        @foreach (var t in totals)
+                        {
+                            <li class="flex items-center justify-between gap-2 @(lowest is not null && t.Quote.SupplierId == lowest.Quote.SupplierId ? "font-semibold text-ink" : "text-muted")">
+                                <span class="truncate">@t.Supplier</span>
+                                <span class="tabular-nums">
+                                    @if (!t.Complete) { <span>partial: @t.Quoted of @openCount</span> }
+                                    else if (t.Cmp is null) { <span>no rate for @t.Quote.Currency</span> }
+                                    else { <span>@Money.Format(t.Cmp.Value, CmpCurrency(t.Quote))</span> }
+                                </span>
+                            </li>
+                        }
+                    </ul>
+                    <button @onclick="() => SelectLowestTotal(lowest)" disabled="@(_busy || lowest is null)" class="btn btn-secondary btn-sm mt-3">
+                        @(lowest is null ? "No complete quote to compare" : "Select " + lowest.Supplier)
+                    </button>
+                </div>
+
+                <div class="rounded-xl border border-line p-4">
+                    <p class="text-sm font-semibold text-ink">Cheapest for each line</p>
+                    <p class="mb-3 text-xs text-muted">Every line goes to whoever quoted the lowest price for it (after the line and header discounts), so the order can split across suppliers.</p>
+                    @if (bySupplier.Count == 0)
+                    {
+                        <p class="text-xs text-muted">No line has a quote that can be compared yet.</p>
+                    }
+                    else
+                    {
+                        <ul class="space-y-1 text-xs text-muted">
+                            @foreach (var x in bySupplier)
+                            {
+                                <li class="flex justify-between gap-2"><span class="truncate">@x.Supplier</span><span class="tabular-nums">@x.Lines line(s)</span></li>
+                            }
+                            @if (perLine.Count < openCount)
+                            {
+                                <li class="text-amber-600">@(openCount - perLine.Count) line(s) have no comparable quote</li>
+                            }
+                        </ul>
+                    }
+                    <button @onclick="() => SelectCheapestPerLine(perLine)" disabled="@(_busy || perLine.Count == 0)" class="btn btn-secondary btn-sm mt-3">Select cheapest per line</button>
+                </div>
+            </div>
+            @if (_info is not null)
+            {
+                <p class="mt-4 text-sm text-emerald-600">@_info</p>
+            }
+        </div>
+
+        var selectedOpen = OpenLines.Count(l => l.WinningSupplierId.HasValue);
+        <div class="mb-6 card p-5 print:hidden">
+            <div class="mb-1 flex flex-wrap items-center gap-2">
+                <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Draft evaluation</h2>
+                @if (selectedOpen > 0) { <StatusChip Label="Draft" Tone="warning" /> }
+            </div>
+            <p class="mb-3 text-xs text-muted">
+                Your selections are kept as you make them, so you can leave this page and come back to change them. Nothing goes to a supplier until you raise the purchase orders.
+                @if (_rfq.EvaluationUpdatedAt is { } updated)
+                {
+                    <span class="text-ink">Last updated @updated.ToString("dd MMM yyyy HH:mm") UTC@(string.IsNullOrEmpty(_rfq.EvaluationUpdatedByName) ? "" : " by " + _rfq.EvaluationUpdatedByName).</span>
+                }
+            </p>
+            <label class="label">Note for the evaluation (optional)</label>
+            <textarea @bind="_evaluationNote" rows="2" class="textarea" placeholder="For example: waiting for a better price on the filters, approval from the superintendent needed."></textarea>
+            <div class="mt-3 flex flex-wrap items-center gap-3">
+                <button @onclick="SaveDraft" disabled="@_busy" class="btn btn-secondary btn-sm">Save draft</button>
+                <span class="text-xs text-muted">@selectedOpen of @OpenLines.Count() open lines selected</span>
+                @if (_draftInfo is not null) { <span class="text-sm text-emerald-600">@_draftInfo</span> }
+            </div>
+        </div>
+    }
+
     @* Line comparison *@
     var visibleLines = VisibleLines;
     @if (_rfq.Lines.Count > LinePageSize)
@@ -149,7 +257,7 @@ else
                     }
                     else if (line.WinningSupplierId.HasValue)
                     {
-                        <span class="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-600">Awarded &middot; pending PO</span>
+                        <span class="rounded-full bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-600">Selected &middot; draft, no PO yet</span>
                     }
                 </div>
 
@@ -266,6 +374,14 @@ else
     private IReadOnlyDictionary<int, string> AlreadyInvited => _rfq!.InvitedSupplierIds.ToDictionary(id => id, _ => "Already invited");
     private HashSet<int> _toInvite = new();
     private string? _error;
+    private string? _info;
+    private string? _draftInfo;
+    private string _evaluationNote = "";
+    private bool _noteLoaded;
+    private bool _busy;
+    private int _pickSupplier;
+    private List<SelectOption<int>> _quotedSupplierOptions = new();
+    private Dictionary<string, decimal> _unitsPerUsd = new();
 
     private const int LinePageSize = 25;
     private string _lineFilter = "";
@@ -300,6 +416,7 @@ else
         _rfq = await Procurement.GetRfqAsync(_companyId, RfqId);
         if (_rfq is null) return;
 
+        if (!_noteLoaded) { _evaluationNote = _rfq.EvaluationNote; _noteLoaded = true; } // later reloads must not wipe a note being typed
         _requisition = _rfq.RequisitionId.HasValue ? await Requisitions.GetAsync(_companyId, _rfq.RequisitionId.Value) : null;
         _auditVersion++;
 
@@ -316,6 +433,11 @@ else
 
         _ports = await Procurement.GetPortsAsync();
 
+        _unitsPerUsd = (await FxSvc.GetRatesAsync(_companyId, _quotes.Select(q => q.Currency))).ToDictionary(r => r.Key, r => r.Value.UnitsPerUsd);
+        _quotedSupplierOptions = _rfq.InvitedSupplierIds.Where(id => _quotes.Any(q => q.SupplierId == id))
+            .Select(id => new SelectOption<int>(id, _suppliersById.GetValueOrDefault(id)?.Name ?? "Supplier " + id)).ToList();
+        if (_pickSupplier != 0 && _quotedSupplierOptions.All(o => o.Value != _pickSupplier)) _pickSupplier = 0;
+
         _toInvite.Clear();
     }
 
@@ -329,24 +451,160 @@ else
 
     private static decimal NetUnit(QuoteLine ql) => Money.Round(ql.UnitPrice * (1 - ql.DiscountPct / 100m));
 
-    /// <summary>Lowest net unit price, compared only against quotes in the same currency (no FX conversion).</summary>
+    // ---- Comparing quotes (used by "Lowest" and the quick-select options) ----
+
+    private IEnumerable<RfqLine> OpenLines => _rfq is null ? Enumerable.Empty<RfqLine>() : _rfq.Lines.Where(l => !_poItemIds.Contains(l.ItemId));
+
+    /// <summary>True when every quote is in the same currency, so amounts compare as they are.</summary>
+    private bool _singleCurrency => _quotes.Select(q => q.Currency).Distinct().Count() <= 1;
+
+    private string CmpCurrency(Quote quote) => _singleCurrency ? quote.Currency : "USD";
+
+    /// <summary>The amount in US dollars (or as it is when all quotes share a currency). Null when there is no exchange rate for it.</summary>
+    private decimal? Cmp(string currency, decimal amount)
+    {
+        if (_singleCurrency) return amount;
+        return _unitsPerUsd.TryGetValue(currency, out var rate) && rate > 0 ? amount / rate : null;
+    }
+
+    private QuoteLine? QuoteLineFor(int supplierId, int rfqLineId) =>
+        _quotes.FirstOrDefault(q => q.SupplierId == supplierId)?.Lines.FirstOrDefault(l => l.RfqLineId == rfqLineId);
+
+    /// <summary>What one unit really costs: the line discount, then the supplier's header discount.</summary>
+    private decimal? EffectiveUnit(Quote quote, QuoteLine quoteLine) =>
+        Cmp(quote.Currency, quoteLine.UnitPrice * (1 - quoteLine.DiscountPct / 100m) * (1 - quote.DiscountPct / 100m));
+
+    private record TotalRow(Quote Quote, string Supplier, int Quoted, bool Complete, decimal? Cmp);
+
+    /// <summary>Each supplier's total for the lines that still have no PO (header discount and charges included).</summary>
+    private List<TotalRow> TotalRows
+    {
+        get
+        {
+            var open = OpenLines.ToList();
+            return _rfq!.InvitedSupplierIds
+                .Select(id => _quotes.FirstOrDefault(q => q.SupplierId == id))
+                .Where(q => q is not null)
+                .Select(q =>
+                {
+                    var quoted = open.Count(l => q!.Lines.Any(ql => ql.RfqLineId == l.Id));
+                    var subtotal = open.Sum(l => q!.Lines.FirstOrDefault(ql => ql.RfqLineId == l.Id) is { } ql ? Money.LineNet(l.Quantity, ql.UnitPrice, ql.DiscountPct) : 0m);
+                    var total = Money.GrandTotal(subtotal, q!.DiscountPct, q.AdditionalCharges);
+                    return new TotalRow(q, _suppliersById.GetValueOrDefault(q.SupplierId)?.Name ?? "", quoted, quoted == open.Count, Cmp(q.Currency, total));
+                })
+                .ToList();
+        }
+    }
+
+    /// <summary>The cheapest comparable quote for each open line (the first invited supplier wins a tie).</summary>
+    private Dictionary<int, int> BestPerLine()
+    {
+        var best = new Dictionary<int, int>();
+        foreach (var line in OpenLines)
+        {
+            decimal? lowest = null;
+            foreach (var supplierId in _rfq!.InvitedSupplierIds)
+            {
+                var quote = _quotes.FirstOrDefault(q => q.SupplierId == supplierId);
+                var ql = quote is null ? null : QuoteLineFor(supplierId, line.Id);
+                var price = quote is null || ql is null ? null : EffectiveUnit(quote, ql);
+                if (price is null) continue;
+                if (lowest is null || price < lowest) { lowest = price; best[line.Id] = supplierId; }
+            }
+        }
+        return best;
+    }
+
+    /// <summary>Lowest effective unit price among the quotes that can be compared (needs at least two).</summary>
     private bool IsLowest(int rfqLineId, Quote quote, QuoteLine quoteLine)
     {
         var comparable = _quotes
-            .Where(q => q.Currency == quote.Currency)
-            .Select(q => q.Lines.FirstOrDefault(l => l.RfqLineId == rfqLineId))
-            .Where(l => l is not null)
-            .Select(l => NetUnit(l!))
+            .Select(q => (Quote: q, Line: q.Lines.FirstOrDefault(l => l.RfqLineId == rfqLineId)))
+            .Where(x => x.Line is not null)
+            .Select(x => EffectiveUnit(x.Quote, x.Line!))
+            .Where(p => p is not null)
             .ToList();
-        return comparable.Count >= 2 && NetUnit(quoteLine) == comparable.Min();
+        var mine = EffectiveUnit(quote, quoteLine);
+        return comparable.Count >= 2 && mine is not null && mine == comparable.Min();
     }
+
+    private async Task RunQuickSelect(Func<Task<string>> action)
+    {
+        _error = null;
+        _info = null;
+        _busy = true;
+        try
+        {
+            _info = await action();
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+        await Load();
+    }
+
+    private async Task SaveDraft()
+    {
+        _error = null;
+        _draftInfo = null;
+        _busy = true;
+        try
+        {
+            _draftInfo = await Procurement.SaveEvaluationDraftAsync(_companyId, RfqId, _evaluationNote, _actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+        var saved = _draftInfo;
+        await Load();
+        _draftInfo = saved;
+    }
+
+    private Task SelectOneSupplier() => RunQuickSelect(async () =>
+    {
+        var name = _suppliersById.GetValueOrDefault(_pickSupplier)?.Name ?? "the supplier";
+        var map = OpenLines.Where(l => QuoteLineFor(_pickSupplier, l.Id) is not null).ToDictionary(l => l.Id, _ => _pickSupplier);
+        var n = await Procurement.AwardLinesAsync(_companyId, RfqId, map, _actor, $"all lines to {name}");
+        return $"{name} selected on {n} line(s).";
+    });
+
+    private Task SelectLowestTotal(TotalRow? lowest) => RunQuickSelect(async () =>
+    {
+        if (lowest is null) return "No complete quote to compare.";
+        var map = OpenLines.ToDictionary(l => l.Id, _ => lowest.Quote.SupplierId);
+        var n = await Procurement.AwardLinesAsync(_companyId, RfqId, map, _actor, $"lowest total quote, {lowest.Supplier}");
+        return $"{lowest.Supplier} selected on {n} line(s) (lowest total quote).";
+    });
+
+    private Task SelectCheapestPerLine(Dictionary<int, int> perLine) => RunQuickSelect(async () =>
+    {
+        var n = await Procurement.AwardLinesAsync(_companyId, RfqId, perLine, _actor, "cheapest quote for each line");
+        var suppliers = perLine.Values.Distinct().Count();
+        return $"Cheapest quote selected on {n} line(s) across {suppliers} supplier(s).";
+    });
+
+    private Task ClearAll() => RunQuickSelect(async () =>
+    {
+        var n = await Procurement.ClearAwardsAsync(_companyId, RfqId, _actor);
+        return $"Cleared the selection on {n} line(s).";
+    });
 
     private async Task Award(int rfqLineId, int supplierId)
     {
         _error = null;
         try
         {
-            await Procurement.AwardLineAsync(_companyId, RfqId, rfqLineId, supplierId);
+            await Procurement.AwardLineAsync(_companyId, RfqId, rfqLineId, supplierId, _actor);
         }
         catch (InvalidOperationException ex)
         {

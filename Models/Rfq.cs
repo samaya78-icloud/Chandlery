@@ -46,6 +46,13 @@ public class Rfq
     public List<RfqLine> Lines { get; set; } = new();
     public List<int> InvitedSupplierIds { get; set; } = new();
 
+    /// <summary>The buyer's note on the draft evaluation (why these suppliers), kept until purchase orders are raised.</summary>
+    public string EvaluationNote { get; set; } = "";
+
+    /// <summary>When the winner selections (or the note) were last changed, and by whom. Null until something is selected.</summary>
+    public DateTime? EvaluationUpdatedAt { get; set; }
+    public string EvaluationUpdatedByName { get; set; } = "";
+
     /// <summary>Quotes are closed once the due date (a whole day, UTC) has passed.</summary>
     public bool IsPastDue => DueDate.HasValue && DateTime.UtcNow.Date > DueDate.Value.Date;
 }

@@ -1285,7 +1285,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Award & Purchase Orders ----
 
-    public async Task AwardLineAsync(int companyId, int rfqId, int rfqLineId, int supplierId)
+    public async Task AwardLineAsync(int companyId, int rfqId, int rfqLineId, int supplierId, Actor? actor = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1296,7 +1296,108 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
         var line = rfq.Lines.First(l => l.Id == rfqLineId);
         line.WinningSupplierId = supplierId;
+        TouchEvaluation(rfq, actor);
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>Winner selections are saved as they are made; this stamps when and by whom, so the draft evaluation can be picked up later.</summary>
+    private static void TouchEvaluation(Rfq rfq, Actor? actor)
+    {
+        rfq.EvaluationUpdatedAt = DateTime.UtcNow;
+        rfq.EvaluationUpdatedByName = actor?.Name ?? rfq.EvaluationUpdatedByName;
+    }
+
+    /// <summary>Saves the buyer's note on the draft evaluation and records a snapshot of the selection in the history.</summary>
+    public async Task<string> SaveEvaluationDraftAsync(int companyId, int rfqId, string note, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+
+        var rfq = await db.Rfqs.Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == rfqId && r.CompanyId == companyId)
+            ?? throw new InvalidOperationException("RFQ not found for this company.");
+
+        var poItemIds = (await db.PurchaseOrders.Where(po => po.RfqId == rfqId && po.CompanyId == companyId)
+            .SelectMany(po => po.Lines).Select(l => l.ItemId).ToListAsync()).ToHashSet();
+        var open = rfq.Lines.Where(l => !poItemIds.Contains(l.ItemId)).ToList();
+        var selected = open.Where(l => l.WinningSupplierId.HasValue).ToList();
+        var names = await db.Suppliers.Where(s => selected.Select(l => l.WinningSupplierId!.Value).Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
+
+        rfq.EvaluationNote = (note ?? "").Trim();
+        TouchEvaluation(rfq, actor);
+
+        var split = selected.GroupBy(l => l.WinningSupplierId!.Value)
+            .Select(g => $"{names.GetValueOrDefault(g.Key) ?? "supplier"} {g.Count()}");
+        var summary = $"SAVED evaluation draft: {selected.Count} of {open.Count} open line(s) selected" +
+                      (selected.Count > 0 ? $" ({string.Join(", ", split)})" : "") +
+                      (rfq.EvaluationNote == "" ? "" : $". Note: {rfq.EvaluationNote}");
+        AuditLog.Add(db, companyId, AuditEntityTypes.Rfq, rfq.Id, actor, summary);
+        await db.SaveChangesAsync();
+        return $"Draft saved: {selected.Count} of {open.Count} open line(s) selected.";
+    }
+
+    /// <summary>
+    /// Picks the winner for many lines at once (the quick-select options on the RFQ page). Lines that already have a purchase order are
+    /// left alone, and a line can only go to a supplier that was invited and quoted that line. Returns how many lines were set.
+    /// </summary>
+    public async Task<int> AwardLinesAsync(int companyId, int rfqId, IReadOnlyDictionary<int, int> supplierByLine, Actor actor, string how)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+
+        var rfq = await db.Rfqs.Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == rfqId && r.CompanyId == companyId)
+            ?? throw new InvalidOperationException("RFQ not found for this company.");
+
+        var quotes = await db.Quotes.Where(q => q.RfqId == rfqId && q.CompanyId == companyId).ToListAsync();
+        var poItemIds = (await db.PurchaseOrders.Where(po => po.RfqId == rfqId && po.CompanyId == companyId)
+            .SelectMany(po => po.Lines).Select(l => l.ItemId).ToListAsync()).ToHashSet();
+
+        var set = 0;
+        foreach (var (lineId, supplierId) in supplierByLine)
+        {
+            var line = rfq.Lines.FirstOrDefault(l => l.Id == lineId);
+            if (line is null || poItemIds.Contains(line.ItemId)) continue;
+            if (!rfq.InvitedSupplierIds.Contains(supplierId)) throw new InvalidOperationException("That supplier was not invited to this RFQ.");
+            var quoted = quotes.FirstOrDefault(q => q.SupplierId == supplierId)?.Lines.Any(l => l.RfqLineId == lineId) == true;
+            if (!quoted) continue;
+            line.WinningSupplierId = supplierId;
+            set++;
+        }
+        if (set > 0)
+        {
+            TouchEvaluation(rfq, actor);
+            AuditLog.Add(db, companyId, AuditEntityTypes.Rfq, rfq.Id, actor, $"SELECTED winners for {set} line(s): {how}");
+            await db.SaveChangesAsync();
+        }
+        return set;
+    }
+
+    /// <summary>Clears the winner on every line that has no purchase order yet.</summary>
+    public async Task<int> ClearAwardsAsync(int companyId, int rfqId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+
+        var rfq = await db.Rfqs.Include(r => r.Lines)
+            .FirstOrDefaultAsync(r => r.Id == rfqId && r.CompanyId == companyId)
+            ?? throw new InvalidOperationException("RFQ not found for this company.");
+        var poItemIds = (await db.PurchaseOrders.Where(po => po.RfqId == rfqId && po.CompanyId == companyId)
+            .SelectMany(po => po.Lines).Select(l => l.ItemId).ToListAsync()).ToHashSet();
+
+        var cleared = 0;
+        foreach (var line in rfq.Lines.Where(l => l.WinningSupplierId.HasValue && !poItemIds.Contains(l.ItemId)))
+        {
+            line.WinningSupplierId = null;
+            cleared++;
+        }
+        if (cleared > 0)
+        {
+            TouchEvaluation(rfq, actor);
+            AuditLog.Add(db, companyId, AuditEntityTypes.Rfq, rfq.Id, actor, $"CLEARED winners on {cleared} line(s)");
+            await db.SaveChangesAsync();
+        }
+        return cleared;
     }
 
     public async Task<List<PurchaseOrder>> RaisePurchaseOrdersAsync(int companyId, int rfqId, Actor? actor = null)

@@ -1069,6 +1069,17 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("EvaluationNote")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("EvaluationUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvaluationUpdatedByName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.PrimitiveCollection<List<int>>("InvitedSupplierIds")
                         .IsRequired()
                         .HasColumnType("integer[]");
