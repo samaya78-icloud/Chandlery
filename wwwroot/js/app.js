@@ -211,7 +211,17 @@
     if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
   }
 
+  // A browser-only address for bytes the server has just read from an upload, so a file that is not saved yet can be previewed.
+  function createObjectUrl(bytes, type) {
+    return URL.createObjectURL(new Blob([bytes], { type: type }));
+  }
+
+  function revokeObjectUrl(url) {
+    if (url) URL.revokeObjectURL(url);
+  }
+
   window.chandlery = {
+    createObjectUrl: createObjectUrl, revokeObjectUrl: revokeObjectUrl,
     scrollActiveOption: scrollActiveOption, positionPopup: positionPopup,
     scrollToOnSmall: scrollToOnSmall,
     applyTheme: apply, toast: toast, replaceQuery: replaceQuery, download: download,

@@ -59,6 +59,7 @@
         </p>
     </div>
 
+    <div class="space-y-6">
     <div class="card p-6">
         <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Amounts</h2>
         <dl class="space-y-1.5 text-sm">
@@ -73,6 +74,26 @@
                 <div class="flex justify-between gap-4 border-t border-line pt-2 text-base font-bold text-ink"><dt>Total with tax</dt><dd class="tabular-nums">@Money.Format(inv.TotalInclTax, inv.Currency)</dd></div>
             }
         </dl>
+    </div>
+
+    <div class="card p-6">
+        <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Invoice file</h2>
+        @if (Detail.Documents.Count == 0)
+        {
+            <p class="text-sm text-muted">No file attached.</p>
+        }
+        else
+        {
+            <p class="mb-3 text-xs text-muted">Click a thumbnail to see it larger.</p>
+            <div class="space-y-3">
+                @foreach (var doc in Detail.Documents)
+                {
+                    <DocThumb Url="@($"/files/invoices/{doc.Id}?inline=true")" DownloadUrl="@($"/files/invoices/{doc.Id}")" FileName="@doc.FileName" ContentType="@doc.ContentType"
+                              SizeBytes="doc.SizeBytes" Note="@($"{doc.UploadedByName} · {doc.UploadedAt:dd MMM}")" />
+                }
+            </div>
+        }
+    </div>
     </div>
 </div>
 
@@ -131,26 +152,6 @@
             }
         </div>
     }
-
-    <div class="card p-6">
-        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Supporting documents</h2>
-        @if (Detail.Documents.Count == 0)
-        {
-            <p class="text-sm text-muted">No documents attached.</p>
-        }
-        else
-        {
-            <ul class="space-y-1.5 text-sm">
-                @foreach (var doc in Detail.Documents)
-                {
-                    <li class="flex flex-wrap items-center justify-between gap-2">
-                        <a href="/files/invoices/@doc.Id" class="link truncate" download>@doc.FileName</a>
-                        <span class="text-xs text-muted">@FormatSize(doc.SizeBytes) &middot; @doc.UploadedByName &middot; @doc.UploadedAt.ToString("dd MMM")</span>
-                    </li>
-                }
-            </ul>
-        }
-    </div>
 </div>
 
 @code {

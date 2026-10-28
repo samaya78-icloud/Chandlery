@@ -1,0 +1,106 @@
+@* A file as a thumbnail card: images show as themselves, PDFs as a first-page preview. Clicking opens a larger view (Esc or a click
+   outside closes it). Used for the invoice file on the supplier's form (a browser object URL for a file not sent yet) and on saved
+   invoices (Url points at the inline file endpoint). *@
+
+<div class="@("overflow-hidden rounded-xl border border-line bg-surface " + Class)">
+    <button type="button" @onclick="Open" class="group relative block w-full bg-slate-100/60 text-left" title="View larger" aria-label="@("View " + FileName + " larger")">
+        <span class="@("block overflow-hidden " + HeightClass)">
+            @if (IsImage)
+            {
+                <img src="@Url" alt="@FileName" loading="lazy" class="h-full w-full object-contain" />
+            }
+            else if (IsPdf)
+            {
+                <iframe src="@(Url + "#toolbar=0&navpanes=0&scrollbar=0&view=FitH")" title="@FileName" tabindex="-1" loading="lazy" class="pointer-events-none h-full w-[calc(100%+20px)] max-w-none border-0 bg-white"></iframe>
+            }
+            else
+            {
+                <span class="flex h-full items-center justify-center text-xs text-muted">No preview</span>
+            }
+        </span>
+        <span class="absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-semibold text-white opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100">View larger</span>
+    </button>
+    <div class="flex items-center gap-2 px-3 py-2 text-xs">
+        <span class="min-w-0 flex-1">
+            <span class="block truncate font-medium text-ink" title="@FileName">@FileName</span>
+            <span class="text-muted">@Size(SizeBytes)@(string.IsNullOrEmpty(Note) ? "" : " · " + Note)</span>
+        </span>
+        <a href="@(DownloadUrl ?? Url)" download="@FileName" class="font-medium text-indigo-600 hover:underline">Download</a>
+        @if (OnRemove.HasDelegate)
+        {
+            <button type="button" @onclick="() => OnRemove.InvokeAsync()" class="font-medium text-rose-600 hover:underline">Remove</button>
+        }
+    </div>
+</div>
+
+@if (_open)
+{
+    <div @ref="_overlay" tabindex="-1" @onkeydown="OnKey" class="fixed inset-0 z-[70] flex flex-col bg-black/75 p-4 outline-none backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="@FileName">
+        <div class="mb-3 flex items-center gap-3 text-sm text-white">
+            <span class="min-w-0 flex-1 truncate font-medium">@FileName</span>
+            <a href="@Url" target="_blank" rel="noopener" class="rounded-lg bg-white/10 px-3 py-1.5 font-medium hover:bg-white/20">Open in new tab</a>
+            <a href="@(DownloadUrl ?? Url)" download="@FileName" class="rounded-lg bg-white/10 px-3 py-1.5 font-medium hover:bg-white/20">Download</a>
+            <button type="button" @onclick="Close" class="rounded-lg bg-white/10 px-3 py-1.5 font-medium hover:bg-white/20">Close</button>
+        </div>
+        <div class="min-h-0 flex-1 overflow-auto rounded-xl bg-white" @onclick="Close">
+            @if (IsImage)
+            {
+                <img src="@Url" alt="@FileName" class="mx-auto max-h-full max-w-full object-contain" />
+            }
+            else
+            {
+                <iframe src="@Url" title="@FileName" class="h-full w-full border-0" @onclick:stopPropagation="true"></iframe>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Url { get; set; } = "";
+    [Parameter, EditorRequired] public string FileName { get; set; } = "";
+    [Parameter] public string ContentType { get; set; } = "";
+    [Parameter] public long SizeBytes { get; set; }
+
+    /// <summary>Where "Download" goes when that differs from the viewing address (saved files are viewed inline and downloaded as attachments).</summary>
+    [Parameter] public string? DownloadUrl { get; set; }
+
+    /// <summary>A short extra line next to the size, such as who uploaded it.</summary>
+    [Parameter] public string? Note { get; set; }
+
+    /// <summary>When set a Remove button shows (files that are not sent yet).</summary>
+    [Parameter] public EventCallback OnRemove { get; set; }
+
+    [Parameter] public string HeightClass { get; set; } = "h-44";
+    [Parameter] public string Class { get; set; } = "";
+
+    private ElementReference _overlay;
+    private bool _open;
+    private bool _focusOverlay;
+
+    private bool IsImage => ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase);
+    private bool IsPdf => string.Equals(ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase);
+
+    private static string Size(long bytes) => bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:0.#} MB" : $"{Math.Max(1, bytes / 1024)} KB";
+
+    private void Open()
+    {
+        _open = true;
+        _focusOverlay = true;
+    }
+
+    private void Close() => _open = false;
+
+    private void OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") _open = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusOverlay)
+        {
+            _focusOverlay = false;
+            try { await _overlay.FocusAsync(); } catch (InvalidOperationException) { } catch (JSDisconnectedException) { }
+        }
+    }
+}

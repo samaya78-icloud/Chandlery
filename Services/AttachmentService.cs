@@ -34,6 +34,10 @@ public static class AttachmentRules
     public static string ContentTypeFor(string fileName) =>
         ContentTypes.GetValueOrDefault(Path.GetExtension(fileName)) ?? throw new InvalidOperationException($"{fileName}: only images (PNG, JPG, WEBP, GIF) and PDF files can be attached.");
 
+    /// <summary>Only these types are ever shown inline; anything else is a download, whatever the file claims to be.</summary>
+    public static bool IsInlineSafe(string? contentType) =>
+        contentType is "application/pdf" or "image/png" or "image/jpeg" or "image/webp" or "image/gif";
+
     public static void Validate(PendingAttachment file)
     {
         ContentTypeFor(file.FileName);

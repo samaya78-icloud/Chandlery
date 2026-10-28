@@ -245,14 +245,22 @@ app.MapGet("/supplier/purchase-orders/{poId:int}/pdf", async (int poId, HttpCont
 }).RequireAuthorization(policy => policy.RequireRole("SupplierAdmin", "SupplierUser"));
 
 // Invoice supporting documents: only the buyer that owns the invoice, or the supplier that sent it, can download them.
-app.MapGet("/files/invoices/{documentId:int}", async (int documentId, HttpContext http, InvoiceService invoices) =>
+// ?inline=true shows a PDF or image in the page (thumbnails, viewer); anything else, and every plain request, downloads.
+app.MapGet("/files/invoices/{documentId:int}", async (int documentId, bool? inline, HttpContext http, InvoiceService invoices) =>
 {
     int? companyId = int.TryParse(http.User.FindFirst("CompanyId")?.Value, out var c) ? c : null;
     int? supplierId = int.TryParse(http.User.FindFirst("SupplierId")?.Value, out var s) ? s : null;
 
     var found = await invoices.OpenDocumentAsync(documentId, companyId, supplierId);
     if (found is null) return Results.NotFound();
-    return Results.File(found.Value.Content, found.Value.Doc.ContentType, found.Value.Doc.FileName);
+    var doc = found.Value.Doc;
+    if (inline == true && AttachmentRules.IsInlineSafe(doc.ContentType))
+    {
+        http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        if (doc.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
+        return Results.File(found.Value.Content, doc.ContentType);
+    }
+    return Results.File(found.Value.Content, doc.ContentType, doc.FileName);
 }).RequireAuthorization();
 
 // Requisition files: the company that owns them, or (when shared) a supplier invited to an RFQ made from the requisition.
@@ -265,7 +273,7 @@ app.MapGet("/files/attachments/{attachmentId:int}", async (int attachmentId, boo
     var found = await attachments.OpenAsync(attachmentId, companyId, supplierId);
     if (found is null) return Results.NotFound();
     http.Response.Headers["X-Content-Type-Options"] = "nosniff";
-    http.Response.Headers["Content-Security-Policy"] = "sandbox";
+    if (found.Value.File.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
     return download == true
         ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
         : Results.File(found.Value.Content, found.Value.File.ContentType);

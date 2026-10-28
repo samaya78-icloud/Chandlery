@@ -4,6 +4,8 @@
 @rendermode InteractiveServer
 @inject InvoiceService InvoiceSvc
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 <PageTitle>@(_isEdit ? "Correct invoice" : "New invoice") · Chandlery</PageTitle>
 
@@ -30,13 +32,24 @@ else
         </div>
     }
 
-    <div class="max-w-5xl space-y-6">
+    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+    <div class="max-w-4xl space-y-6">
         <div class="card p-6">
             <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">Your invoice</h2>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div><label class="label">Invoice number</label><input @bind="_req.SupplierInvoiceRef" class="input" /></div>
                 <div><label class="label">Invoice date</label><input type="date" @bind="_req.InvoiceDate" class="input" /></div>
                 <div><label class="label">Due date (optional)</label><input type="date" @bind="_req.DueDate" class="input" /></div>
+            </div>
+
+            <label class="label mt-5">Invoice file (PDF or image, up to 20 MB each)</label>
+            <div class="relative flex items-center gap-4 rounded-xl border-2 border-dashed border-line bg-surface px-5 py-4 transition hover:border-indigo-400">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 shrink-0 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m0 0 4 4m-4-4L8 8"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+                <div class="text-sm">
+                    <p class="font-medium text-ink">Choose your invoice, or drop it here</p>
+                    <p class="text-xs text-muted">PDF, PNG, JPG or WEBP. You can add more than one file; they appear on the right.</p>
+                </div>
+                <InputFile OnChange="OnFiles" multiple class="absolute inset-0 h-full w-full cursor-pointer opacity-0" accept=".pdf,.png,.jpg,.jpeg,.webp" title="Choose invoice files" />
             </div>
         </div>
 
@@ -99,26 +112,7 @@ else
                 }
             </div>
 
-            <label class="label">Supporting documents (PDF, PNG, JPG, XLSX or DOCX, up to 20 MB each)</label>
-            <InputFile OnChange="OnFiles" multiple class="input max-w-xl" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx" />
-            @if (_ctx.ExistingDocs.Count > 0 || _uploads.Count > 0)
-            {
-                <ul class="mt-3 space-y-1 text-sm">
-                    @foreach (var d in _ctx.ExistingDocs)
-                    {
-                        <li class="text-muted">&#10003; @d.FileName <span class="text-xs">(already attached)</span></li>
-                    }
-                    @foreach (var u in _uploads)
-                    {
-                        var upload = u;
-                        <li class="flex items-center gap-3 text-ink">
-                            &#10003; @u.FileName <span class="text-xs text-muted">@(u.Data.Length / 1024) KB</span>
-                            <button type="button" @onclick="() => _uploads.Remove(upload)" class="text-xs font-medium text-rose-600">Remove</button>
-                        </li>
-                    }
-                </ul>
-            }
-            <div class="mt-5">
+            <div>
                 <label class="label">Remarks (optional)</label>
                 <textarea @bind="_req.Remarks" rows="2" class="textarea"></textarea>
             </div>
@@ -133,6 +127,30 @@ else
             <a href="/supplier/invoices" class="btn btn-secondary">Cancel</a>
         </div>
     </div>
+
+    <aside class="xl:sticky xl:top-6 xl:z-[45] xl:self-start"> @* a sticky box traps z-index, so it sits above the shell for the full-screen viewer *@
+        <div class="card p-5">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Your invoice file</h2>
+            <p class="mb-4 text-xs text-muted">What you upload appears here. Click a thumbnail to see it larger.</p>
+            @if (_ctx.ExistingDocs.Count == 0 && _uploads.Count == 0)
+            {
+                <div class="flex h-40 items-center justify-center rounded-xl border border-dashed border-line px-4 text-center text-sm text-muted">No file yet. Upload your invoice and it shows here.</div>
+            }
+            <div class="space-y-3">
+                @foreach (var d in _ctx.ExistingDocs)
+                {
+                    <DocThumb Url="@($"/files/invoices/{d.Id}?inline=true")" DownloadUrl="@($"/files/invoices/{d.Id}")" FileName="@d.FileName" ContentType="@d.ContentType" SizeBytes="d.SizeBytes" Note="already sent" />
+                }
+                @foreach (var u in _uploads)
+                {
+                    var upload = u;
+                    <DocThumb Url="@_previewUrls[upload]" FileName="@upload.FileName" ContentType="@upload.ContentType" SizeBytes="upload.Data.LongLength" Note="not sent yet"
+                              OnRemove="() => RemoveUpload(upload)" />
+                }
+            </div>
+        </div>
+    </aside>
+    </div>
 }
 
 @code {
@@ -146,6 +164,7 @@ else
     private List<SelectOption<int>> _bankOptions = new();
     private readonly SubmitInvoice _req = new();
     private readonly List<UploadedFile> _uploads = new();
+    private readonly Dictionary<UploadedFile, string> _previewUrls = new(ReferenceEqualityComparer.Instance);
     private bool _loaded;
     private bool _isEdit;
     private bool _amountEdited;
@@ -209,22 +228,58 @@ else
         if (!_amountEdited) _req.InvoiceAmount = SelectedValue;
     }
 
+    /// <summary>The type comes from the extension, never from the browser, and only a PDF or a picture is accepted.</summary>
+    private static string? ContentTypeOf(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
+        _ => null
+    };
+
     private async Task OnFiles(InputFileChangeEventArgs e)
     {
         _error = null;
-        try
+        foreach (var file in e.GetMultipleFiles(10))
         {
-            foreach (var file in e.GetMultipleFiles(10))
+            var contentType = ContentTypeOf(file.Name);
+            if (contentType is null)
+            {
+                _error = $"{file.Name}: upload your invoice as a PDF or an image (PNG, JPG or WEBP).";
+                continue;
+            }
+            try
             {
                 await using var stream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
                 using var memory = new MemoryStream();
                 await stream.CopyToAsync(memory);
-                _uploads.Add(new UploadedFile(file.Name, file.ContentType, memory.ToArray()));
+                var bytes = memory.ToArray();
+                var upload = new UploadedFile(file.Name, contentType, bytes);
+                _previewUrls[upload] = await JS.InvokeAsync<string>("chandlery.createObjectUrl", bytes, contentType);
+                _uploads.Add(upload);
+            }
+            catch (IOException)
+            {
+                _error = $"{file.Name} is larger than 20 MB and was not added.";
             }
         }
-        catch (IOException)
+    }
+
+    private async Task RemoveUpload(UploadedFile upload)
+    {
+        _uploads.Remove(upload);
+        if (_previewUrls.Remove(upload, out var url))
         {
-            _error = "A file is larger than 20 MB and was not added.";
+            try { await JS.InvokeVoidAsync("chandlery.revokeObjectUrl", url); } catch (JSDisconnectedException) { }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var url in _previewUrls.Values)
+        {
+            try { await JS.InvokeVoidAsync("chandlery.revokeObjectUrl", url); } catch (JSDisconnectedException) { } catch (InvalidOperationException) { }
         }
     }
 

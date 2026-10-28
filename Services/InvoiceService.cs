@@ -83,7 +83,20 @@ public record SubmitContext(PurchaseOrder Po, List<DeliveryOrder> Deliveries, Li
 public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFileStore files)
 {
     private const long MaxFileBytes = 20 * 1024 * 1024;
-    private static readonly string[] AllowedExtensions = { ".pdf", ".png", ".jpg", ".jpeg", ".xlsx", ".docx" };
+    private static readonly string[] AllowedExtensions = { ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".xlsx", ".docx" };
+
+    /// <summary>What a supplier may upload as their invoice: a PDF or a picture, so it can be previewed (and read) later.</summary>
+    private static readonly string[] VisualExtensions = { ".pdf", ".png", ".jpg", ".jpeg", ".webp" };
+
+    private static readonly Dictionary<string, string> ContentTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".pdf"] = "application/pdf", [".png"] = "image/png", [".jpg"] = "image/jpeg", [".jpeg"] = "image/jpeg", [".webp"] = "image/webp",
+        [".xlsx"] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        [".docx"] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    };
+
+    /// <summary>The type is decided by the extension, never by what the browser says, because stored files can be shown inline.</summary>
+    private static string ContentTypeFor(string fileName) => ContentTypes.GetValueOrDefault(Path.GetExtension(fileName)) ?? "application/octet-stream";
 
     // ---- Calculations ----
 
@@ -312,7 +325,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
 
         var existingDocs = invoice is null ? 0 : await db.InvoiceDocuments.CountAsync(d => d.InvoiceId == invoice.Id);
         if (uploads.Count + existingDocs == 0) throw new InvalidOperationException("Attach at least one supporting document, such as your invoice as a PDF.");
-        foreach (var upload in uploads) ValidateUpload(upload);
+        foreach (var upload in uploads) ValidateUpload(upload, VisualExtensions);
 
         if (invoice is null)
         {
@@ -359,12 +372,14 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         return invoice;
     }
 
-    private static void ValidateUpload(UploadedFile upload)
+    private static void ValidateUpload(UploadedFile upload, string[]? allowed = null)
     {
         if (upload.Data.Length == 0) throw new InvalidOperationException($"{upload.FileName} is empty.");
         if (upload.Data.LongLength > MaxFileBytes) throw new InvalidOperationException($"{upload.FileName} is larger than 20 MB.");
-        if (!AllowedExtensions.Contains(Path.GetExtension(upload.FileName).ToLowerInvariant()))
-            throw new InvalidOperationException($"{upload.FileName}: only PDF, PNG, JPG, XLSX and DOCX files are accepted.");
+        if (!(allowed ?? AllowedExtensions).Contains(Path.GetExtension(upload.FileName).ToLowerInvariant()))
+            throw new InvalidOperationException(allowed is null
+                ? $"{upload.FileName}: only PDF, PNG, JPG, WEBP, XLSX and DOCX files are accepted."
+                : $"{upload.FileName}: upload your invoice as a PDF or an image (PNG, JPG or WEBP).");
     }
 
     private async Task SaveDocumentsAsync(ChandleryDbContext db, Invoice invoice, List<UploadedFile> uploads, Actor actor)
@@ -376,7 +391,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
             db.InvoiceDocuments.Add(new InvoiceDocument
             {
                 CompanyId = invoice.CompanyId, InvoiceId = invoice.Id, FileName = Path.GetFileName(upload.FileName),
-                ContentType = string.IsNullOrWhiteSpace(upload.ContentType) ? "application/octet-stream" : upload.ContentType,
+                ContentType = ContentTypeFor(upload.FileName),
                 SizeBytes = upload.Data.LongLength, StoredKey = key, UploadedByName = actor.Name, UploadedAt = DateTime.UtcNow
             });
             AuditLog.Add(db, invoice.CompanyId, AuditEntityTypes.Invoice, invoice.Id, actor, $"ATTACHED {Path.GetFileName(upload.FileName)}");
