@@ -2,11 +2,13 @@
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject VesselGroupService Groups
 
 <PageTitle>Vessels · Chandlery</PageTitle>
 
-<PageHeader Eyebrow="Master data" Title="Vessels" Subtitle="@($"{_vessels.Count:N0} vessels — open one to see everything raised for it.")">
+<PageHeader Eyebrow="Master data" Title="Vessels" Subtitle="@($"{_vessels.Count:N0} vessels in {_groups.Count:N0} groups. Open one to see everything raised for it.")">
     <Actions>
+        <a href="/company/vessel-policy" class="btn btn-secondary">Policy</a>
         <button @onclick="StartAdd" class="btn btn-primary">+ Add Vessel</button>
     </Actions>
 </PageHeader>
@@ -22,6 +24,11 @@
         <div class="mb-3">
             <label class="mb-1 block text-sm font-medium text-slate-700">IMO Number</label>
             <input @bind="_imo" placeholder="Optional" class="input" />
+        </div>
+        <div class="mb-3">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Group</label>
+            <SelectBox TValue="Guid" @bind-Value="_formGroupId" Options="_groupOptions" SearchPlaceholder="Search groups…" />
+            <p class="mt-1 text-xs text-muted">The vessel takes the rules of this group and every group above it.</p>
         </div>
         <div class="mb-4">
             <label class="mb-1 block text-sm font-medium text-slate-700">Short code</label>
@@ -41,41 +48,323 @@
     </div>
 }
 
-<DataGrid TItem="Vessel" Items="_vessels" ItemName="vessels" ExportName="vessels" EmptyText="No vessels match these filters.">
-    <GridColumn Title="Name" Text="v => v.Name" Context="v">
-        <DocLink Kind="DocKind.Vessel" Id="v.Id" Text="@v.Name" />
-    </GridColumn>
-    <GridColumn Title="Code" Text="v => v.ShortCode" CellClass="font-semibold text-ink" />
-    <GridColumn Title="IMO Number" Text="v => v.ImoNumber ?? string.Empty" />
-    <GridColumn Title="" Filter="GridFilter.None" Sortable="false" CellClass="whitespace-nowrap text-right" Context="v">
-        <button @onclick="() => StartEdit(v)" class="mr-3 text-xs font-medium text-indigo-600 hover:underline">Edit</button>
-        <a href="/company/vessels/@v.Id" class="link">Open &rarr;</a>
-    </GridColumn>
-</DataGrid>
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[19rem_minmax(0,1fr)]">
+
+    @* ---- Group tree ---- *@
+    <aside class="card flex max-h-[45vh] flex-col overflow-hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-7rem)]">
+        <div class="flex items-center gap-2 border-b border-line p-3">
+            <input @bind="_treeSearch" @bind:event="oninput" placeholder="Find a group…" class="input input-sm" />
+            @if (_isAdmin)
+            {
+                <button @onclick="() => OpenGroupPanel(GroupMode.Add, true)" class="btn btn-primary btn-sm shrink-0" title="Add a top level group">+ Add</button>
+            }
+        </div>
+        <ul class="min-h-0 flex-1 overflow-y-auto py-1">
+            <li>
+                <button @onclick="() => Select(Guid.Empty)" class="@RowClass(Guid.Empty)">
+                    <span class="w-4"></span>
+                    <span class="flex-1 truncate font-semibold">All vessels</span>
+                    <span class="text-xs text-muted">@_vessels.Count.ToString("N0")</span>
+                </button>
+            </li>
+            @foreach (var (group, _, depth) in VisibleTree)
+            {
+                var g = group;
+                var hasChildren = _groups.Any(x => x.ParentId == g.Id);
+                <li>
+                    <div class="@(RowClass(g.Id) + (_dropTarget == g.Id ? " ring-2 ring-inset ring-accent-400" : ""))" style="padding-left: @(8 + depth * 16)px"
+                         draggable="@(_isAdmin ? "true" : "false")"
+                         @ondragstart="() => _dragGroup = g.Id" @ondragend="() => { _dragGroup = null; _dragVessel = null; _dropTarget = null; }"
+                         @ondragover:preventDefault="true" @ondragenter="() => _dropTarget = g.Id" @ondrop="() => DropOn(g.Id)">
+                        @if (hasChildren)
+                        {
+                            <button type="button" @onclick="() => ToggleCollapse(g.Id)" @onclick:stopPropagation="true" class="grid h-4 w-4 place-items-center text-muted" aria-label="Expand or collapse">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="@("h-3 w-3 transition " + (_collapsed.Contains(g.Id) ? "" : "rotate-90"))" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="w-4"></span>
+                        }
+                        <button type="button" @onclick="() => Select(g.Id)" class="flex min-w-0 flex-1 items-center gap-2 text-left">
+                            <span class="@("flex-1 truncate " + (depth == 0 ? "font-semibold" : ""))">@g.Name</span>
+                            <span class="text-xs text-muted">@_subtreeCounts.GetValueOrDefault(g.Id).ToString("N0")</span>
+                        </button>
+                    </div>
+                </li>
+            }
+        </ul>
+        @if (_isAdmin)
+        {
+            <p class="border-t border-line px-3 py-2 text-xs text-muted">Drag a vessel or a group onto a group to move it. Groups go up to 3 levels deep.</p>
+        }
+    </aside>
+
+    @* ---- Selected group and its vessels ---- *@
+    <section class="min-w-0">
+        <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+                <h2 class="font-display text-xl font-bold text-ink">@(_selected is null ? "All vessels" : _pathById.GetValueOrDefault(_selected.Id, _selected.Name))</h2>
+                @if (_selected is not null)
+                {
+                    <p class="mt-1 text-sm text-muted">Level @_selected.Level group, @_subtreeCounts.GetValueOrDefault(_selected.Id).ToString("N0") vessel(s) including the groups inside it.</p>
+                }
+            </div>
+            @if (_isAdmin && _selected is not null)
+            {
+                <div class="flex flex-wrap gap-2">
+                    @if (_selected.Level < VesselGroup.MaxLevel)
+                    {
+                        <button @onclick="() => OpenGroupPanel(GroupMode.Add, false)" class="btn btn-secondary btn-sm">+ Subgroup</button>
+                    }
+                    <button @onclick="() => OpenGroupPanel(GroupMode.Rename, false)" class="btn btn-secondary btn-sm">Rename</button>
+                    <button @onclick="() => OpenGroupPanel(GroupMode.Move, false)" class="btn btn-secondary btn-sm">Move</button>
+                    <button @onclick="DeleteGroup" class="btn btn-secondary btn-sm text-rose-600">Delete</button>
+                </div>
+            }
+        </div>
+
+        @if (_panel is not null)
+        {
+            <div class="mb-4 max-w-md card p-4">
+                <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
+                    @(_panel == GroupMode.Add ? (_panelTop ? "New top level group" : $"New group inside {_selected?.Name}") : _panel == GroupMode.Rename ? "Rename group" : "Move group")
+                </h3>
+                @if (_panel == GroupMode.Move)
+                {
+                    <label class="mb-1 block text-sm font-medium text-slate-700">Move under</label>
+                    <SelectBox TValue="Guid" @bind-Value="_moveParentId" Options="_moveOptions" SearchPlaceholder="Search groups…" />
+                }
+                else
+                {
+                    <input @bind="_groupName" placeholder="e.g. Tankers" maxlength="80" class="input" />
+                }
+                @if (_groupError is not null)
+                {
+                    <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_groupError</div>
+                }
+                <div class="mt-3 flex gap-2">
+                    <button @onclick="SaveGroupPanel" class="btn btn-primary btn-sm">Save</button>
+                    <button @onclick="() => _panel = null" class="btn btn-secondary btn-sm">Cancel</button>
+                </div>
+            </div>
+        }
+
+        @if (_notice is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_notice</div>
+        }
+
+        <DataGrid TItem="Vessel" Items="ShownVessels" ItemName="vessels" ExportName="vessels" EmptyText="No vessels in this group.">
+            <GridColumn Title="Name" Text="v => v.Name" Context="v">
+                <span class="flex items-center gap-2" draggable="@(_isAdmin ? "true" : "false")" @ondragstart="() => _dragVessel = v.Id" @ondragend="() => { _dragGroup = null; _dragVessel = null; _dropTarget = null; }">
+                    @if (_isAdmin) { <span class="cursor-grab text-muted" title="Drag onto a group">⠿</span> }
+                    <DocLink Kind="DocKind.Vessel" Id="v.Id" Text="@v.Name" />
+                </span>
+            </GridColumn>
+            <GridColumn Title="Code" Text="v => v.ShortCode" CellClass="font-semibold text-ink" />
+            <GridColumn Title="Group" Text="v => _pathById.GetValueOrDefault(v.GroupId ?? Guid.Empty, string.Empty)" />
+            <GridColumn Title="IMO Number" Text="v => v.ImoNumber ?? string.Empty" />
+            <GridColumn Title="" Filter="GridFilter.None" Sortable="false" CellClass="whitespace-nowrap text-right" Context="v">
+                <button @onclick="() => StartEdit(v)" class="mr-3 text-xs font-medium text-indigo-600 hover:underline">Edit</button>
+                <a href="/company/vessels/@v.Id" class="link">Open &rarr;</a>
+            </GridColumn>
+        </DataGrid>
+    </section>
+</div>
 
 @code {
+    private enum GroupMode { Add, Rename, Move }
+
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _isAdmin;
     private List<Vessel> _vessels = new();
+    private List<VesselGroup> _groups = new();
+    private List<(VesselGroup Group, string Path, int Depth)> _tree = new();
+    private Dictionary<Guid, string> _pathById = new();
+    private Dictionary<Guid, int> _subtreeCounts = new();
+    private List<SelectOption<Guid>> _groupOptions = new();
+    private List<SelectOption<Guid>> _moveOptions = new();
+    private readonly HashSet<Guid> _collapsed = new();
+    private string _treeSearch = "";
+    private Guid _selectedId;
+    private VesselGroup? _selected => _selectedId == Guid.Empty ? null : _groups.FirstOrDefault(g => g.Id == _selectedId);
+
     private bool _showForm;
     private string _name = "";
     private string _imo = "";
     private string _code = "";
     private Guid _editId;
+    private Guid _formGroupId;
     private string? _error;
+
+    private GroupMode? _panel;
+    private bool _panelTop;
+    private string _groupName = "";
+    private Guid _moveParentId;
+    private string? _groupError;
+    private string? _notice;
+
+    private Guid? _dragGroup, _dragVessel, _dropTarget;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
         _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
-        _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
+        _actor = Actor.From(authState.User);
+        _isAdmin = authState.User.IsInRole("CompanyAdmin");
+        await ReloadAsync();
     }
+
+    private async Task ReloadAsync()
+    {
+        _groups = await Groups.GetGroupsAsync(_companyId);
+        _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
+        _tree = VesselGroup.BuildTree(_groups);
+        _pathById = _tree.ToDictionary(t => t.Group.Id, t => t.Path);
+        _subtreeCounts = _groups.ToDictionary(g => g.Id, g => _vessels.Count(v => v.GroupId.HasValue && VesselGroup.Descendants(_groups, g.Id).Contains(v.GroupId.Value)));
+        _groupOptions = _tree.Select(t => new SelectOption<Guid>(t.Group.Id, t.Path)).ToList();
+        if (_selectedId != Guid.Empty && _selected is null) _selectedId = Guid.Empty;
+    }
+
+    private IReadOnlyList<Vessel> ShownVessels
+    {
+        get
+        {
+            if (_selectedId == Guid.Empty) return _vessels;
+            var ids = VesselGroup.Descendants(_groups, _selectedId);
+            return _vessels.Where(v => v.GroupId.HasValue && ids.Contains(v.GroupId.Value)).ToList();
+        }
+    }
+
+    private IEnumerable<(VesselGroup Group, string Path, int Depth)> VisibleTree
+    {
+        get
+        {
+            var term = _treeSearch.Trim();
+            if (term.Length > 0)
+            {
+                var keep = new HashSet<Guid>();
+                foreach (var t in _tree.Where(t => t.Group.Name.Contains(term, StringComparison.OrdinalIgnoreCase)))
+                    for (Guid? id = t.Group.Id; id.HasValue && keep.Add(id.Value);)
+                        id = _groups.FirstOrDefault(g => g.Id == id)?.ParentId;
+                return _tree.Where(t => keep.Contains(t.Group.Id));
+            }
+            return _tree.Where(t => !HasCollapsedAncestor(t.Group));
+        }
+    }
+
+    private bool HasCollapsedAncestor(VesselGroup group)
+    {
+        for (var parentId = group.ParentId; parentId.HasValue; parentId = _groups.FirstOrDefault(g => g.Id == parentId)?.ParentId)
+            if (_collapsed.Contains(parentId.Value)) return true;
+        return false;
+    }
+
+    private void ToggleCollapse(Guid id)
+    {
+        if (!_collapsed.Remove(id)) _collapsed.Add(id);
+    }
+
+    private string RowClass(Guid id) =>
+        "flex w-full items-center gap-1 px-2 py-1.5 text-left text-sm transition " +
+        (_selectedId == id ? "bg-accent-50 text-accent-700" : "text-ink-2 hover:bg-surface-2");
+
+    private void Select(Guid id)
+    {
+        _selectedId = id;
+        _panel = null;
+        _notice = null;
+    }
+
+    // ---- drag and drop ----
+
+    private async Task DropOn(Guid targetGroupId)
+    {
+        var vessel = _dragVessel;
+        var group = _dragGroup;
+        _dragVessel = _dragGroup = _dropTarget = null;
+        _notice = null;
+        try
+        {
+            if (vessel.HasValue) await Groups.AssignVesselAsync(_companyId, vessel.Value, targetGroupId, _actor);
+            else if (group.HasValue && group.Value != targetGroupId) await Groups.MoveGroupAsync(_companyId, group.Value, targetGroupId, _actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _notice = ex.Message;
+        }
+        await ReloadAsync();
+    }
+
+    // ---- group panel ----
+
+    private void OpenGroupPanel(GroupMode mode, bool top)
+    {
+        _panel = mode;
+        _panelTop = top;
+        _groupError = null;
+        _groupName = mode == GroupMode.Rename ? _selected?.Name ?? "" : "";
+        if (mode == GroupMode.Move && _selected is not null)
+        {
+            var below = VesselGroup.Descendants(_groups, _selected.Id);
+            var height = _groups.Where(g => below.Contains(g.Id)).Max(g => g.Level) - _selected.Level;
+            _moveOptions = _tree.Where(t => !below.Contains(t.Group.Id) && t.Group.Level + 1 + height <= VesselGroup.MaxLevel)
+                .Select(t => new SelectOption<Guid>(t.Group.Id, t.Path)).ToList();
+            _moveOptions.Insert(0, new SelectOption<Guid>(Guid.Empty, "(top level)"));
+            _moveParentId = _selected.ParentId ?? Guid.Empty;
+        }
+    }
+
+    private async Task SaveGroupPanel()
+    {
+        try
+        {
+            if (_panel == GroupMode.Add)
+            {
+                var added = await Groups.AddGroupAsync(_companyId, _panelTop ? null : _selectedId, _groupName, _actor);
+                _selectedId = added.Id;
+            }
+            else if (_panel == GroupMode.Rename && _selected is not null)
+                await Groups.RenameGroupAsync(_companyId, _selected.Id, _groupName, _actor);
+            else if (_panel == GroupMode.Move && _selected is not null)
+                await Groups.MoveGroupAsync(_companyId, _selected.Id, _moveParentId == Guid.Empty ? null : _moveParentId, _actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _groupError = ex.Message;
+            return;
+        }
+        _panel = null;
+        await ReloadAsync();
+    }
+
+    private async Task DeleteGroup()
+    {
+        if (_selected is null) return;
+        _notice = null;
+        try
+        {
+            await Groups.DeleteGroupAsync(_companyId, _selected.Id, _actor);
+            _selectedId = Guid.Empty;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _notice = ex.Message;
+        }
+        await ReloadAsync();
+    }
+
+    // ---- vessel form ----
 
     private void StartAdd()
     {
         _editId = Guid.Empty;
         _name = _imo = _code = "";
+        _formGroupId = _selectedId != Guid.Empty ? _selectedId : _tree.FirstOrDefault().Group?.Id ?? Guid.Empty;
         _error = null;
         _showForm = true;
     }
@@ -86,6 +375,7 @@
         _name = vessel.Name;
         _imo = vessel.ImoNumber ?? "";
         _code = vessel.ShortCode;
+        _formGroupId = vessel.GroupId ?? Guid.Empty;
         _error = null;
         _showForm = true;
     }
@@ -100,8 +390,9 @@
 
         try
         {
-            if (_editId == Guid.Empty) await Procurement.AddVesselAsync(_companyId, _name.Trim(), _imo.Trim(), _code);
-            else await Procurement.UpdateVesselAsync(_companyId, _editId, _name, _imo, _code);
+            var group = _formGroupId == Guid.Empty ? (Guid?)null : _formGroupId;
+            if (_editId == Guid.Empty) await Procurement.AddVesselAsync(_companyId, _name.Trim(), _imo.Trim(), _code, group);
+            else await Procurement.UpdateVesselAsync(_companyId, _editId, _name, _imo, _code, group);
         }
         catch (InvalidOperationException ex)
         {
@@ -109,7 +400,7 @@
             return;
         }
 
-        _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
+        await ReloadAsync();
         _name = _imo = _code = "";
         _editId = Guid.Empty;
         _error = null;

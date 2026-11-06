@@ -21,6 +21,9 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<Item> Items => Set<Item>();
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Vessel> Vessels => Set<Vessel>();
+    public DbSet<VesselGroup> VesselGroups => Set<VesselGroup>();
+    public DbSet<VesselPolicy> VesselPolicies => Set<VesselPolicy>();
+    public DbSet<VesselModuleSwitch> VesselModuleSwitches => Set<VesselModuleSwitch>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Port> Ports => Set<Port>();
     public DbSet<RfqArchive> RfqArchives => Set<RfqArchive>();
@@ -111,7 +114,42 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
         {
             b.HasOne<Company>().WithMany().HasForeignKey(v => v.CompanyId).OnDelete(DeleteBehavior.Cascade);
             b.HasIndex(v => new { v.CompanyId, v.Name }).IsUnique();
+            b.HasOne<VesselGroup>().WithMany().HasForeignKey(v => v.GroupId).OnDelete(DeleteBehavior.Restrict);
             b.HasQueryFilter(v => CurrentCompanyId == null || v.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<VesselGroup>(b =>
+        {
+            b.Property(g => g.Name).HasMaxLength(80);
+            b.HasOne<Company>().WithMany().HasForeignKey(g => g.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<VesselGroup>().WithMany().HasForeignKey(g => g.ParentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(g => new { g.CompanyId, g.ParentId });
+            b.HasQueryFilter(g => CurrentCompanyId == null || g.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<VesselPolicy>(b =>
+        {
+            b.Property(p => p.MasterApprovalLimitUsd).HasColumnType("numeric(18,2)");
+            b.Property(p => p.MonthlyBudgetUsd).HasColumnType("numeric(18,2)");
+            b.Property(p => p.Note).HasMaxLength(300);
+            b.HasOne<Company>().WithMany().HasForeignKey(p => p.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<VesselGroup>().WithMany().HasForeignKey(p => p.GroupId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(p => p.VesselId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Department>().WithMany().HasForeignKey(p => p.DepartmentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Category>().WithMany().HasForeignKey(p => p.CategoryId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(p => new { p.CompanyId, p.GroupId });
+            b.HasIndex(p => new { p.CompanyId, p.VesselId });
+            b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<VesselModuleSwitch>(b =>
+        {
+            b.Property(m => m.Module).HasMaxLength(40);
+            b.HasOne<Company>().WithMany().HasForeignKey(m => m.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<VesselGroup>().WithMany().HasForeignKey(m => m.GroupId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(m => m.VesselId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(m => new { m.CompanyId, m.GroupId, m.VesselId, m.Module }).IsUnique();
+            b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<Department>(b =>

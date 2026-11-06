@@ -298,7 +298,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Adds a vessel. Without a short code one is suggested from its name; the code starts every document reference for the vessel.</summary>
-    public async Task<Vessel> AddVesselAsync(Guid companyId, string name, string? imoNumber, string? shortCode = null)
+    public async Task<Vessel> AddVesselAsync(Guid companyId, string name, string? imoNumber, string? shortCode = null, Guid? groupId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -309,14 +309,20 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         var taken = await db.Vessels.Where(v => v.CompanyId == companyId).Select(v => v.ShortCode).ToListAsync();
         var code = string.IsNullOrWhiteSpace(shortCode) ? VesselCodes.Suggest(name, taken) : await ValidShortCodeAsync(db, companyId, null, shortCode);
 
-        var vessel = new Vessel { CompanyId = companyId, Name = name, ImoNumber = string.IsNullOrWhiteSpace(imoNumber) ? null : imoNumber, ShortCode = code };
+        if (groupId.HasValue && !await db.VesselGroups.AnyAsync(g => g.Id == groupId && g.CompanyId == companyId))
+            throw new InvalidOperationException("Group not found.");
+        var vessel = new Vessel
+        {
+            CompanyId = companyId, Name = name, ImoNumber = string.IsNullOrWhiteSpace(imoNumber) ? null : imoNumber, ShortCode = code,
+            GroupId = groupId ?? await VesselGroupService.DefaultGroupIdAsync(db, companyId)
+        };
         db.Vessels.Add(vessel);
         await db.SaveChangesAsync();
         return vessel;
     }
 
     /// <summary>Changes a vessel's details. A new short code applies to documents created from now on; existing references keep their code.</summary>
-    public async Task<Vessel> UpdateVesselAsync(Guid companyId, Guid vesselId, string name, string? imoNumber, string shortCode)
+    public async Task<Vessel> UpdateVesselAsync(Guid companyId, Guid vesselId, string name, string? imoNumber, string shortCode, Guid? groupId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -330,6 +336,12 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         vessel.Name = name;
         vessel.ImoNumber = string.IsNullOrWhiteSpace(imoNumber) ? null : imoNumber.Trim();
         vessel.ShortCode = await ValidShortCodeAsync(db, companyId, vesselId, shortCode);
+        if (groupId.HasValue)
+        {
+            if (!await db.VesselGroups.AnyAsync(g => g.Id == groupId && g.CompanyId == companyId))
+                throw new InvalidOperationException("Group not found.");
+            vessel.GroupId = groupId;
+        }
         await db.SaveChangesAsync();
         return vessel;
     }

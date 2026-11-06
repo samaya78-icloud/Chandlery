@@ -1,0 +1,346 @@
+@page "/company/vessel-policy"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject VesselGroupService Groups
+
+<PageTitle>Vessel policy · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Vessel policy" Subtitle="What each group or vessel may do, and for which department and catalog. The most specific rule wins: a vessel beats its group, a deeper group beats the one above.">
+    <Actions>
+        <a href="/company/vessels" class="btn btn-secondary">Vessels and groups</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else
+{
+    @* ---------- Effective policy ---------- *@
+    <div class="card mb-6 p-4">
+        <h2 class="mb-1 font-display text-lg font-bold text-ink">Effective policy</h2>
+        <p class="mb-3 text-sm text-muted">Pick a vessel (and optionally a department and catalog) to see what it may do and which rule decided each answer.</p>
+        <div class="grid gap-3 md:grid-cols-3">
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Vessel</label>
+                <SelectBox TValue="Guid" @bind-Value="_effVessel" @bind-Value:after="ComputeEffectiveAsync" Options="_vesselOptions" Placeholder="Select a vessel…" SearchPlaceholder="Search vessels…" />
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Department</label>
+                <SelectBox TValue="Guid" @bind-Value="_effDept" @bind-Value:after="ComputeEffectiveAsync" Options="_deptOptionsAny" SearchPlaceholder="Search…" />
+            </div>
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Catalog category</label>
+                <SelectBox TValue="Guid" @bind-Value="_effCat" @bind-Value:after="ComputeEffectiveAsync" Options="_catOptionsAny" SearchPlaceholder="Search…" />
+            </div>
+        </div>
+
+        @if (_effective is not null)
+        {
+            <p class="mt-4 text-sm text-muted">@_effective.Vessel &middot; group @_effective.GroupPath</p>
+            <div class="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                @Result("Raise requisitions", _effective.Policy.CanRequisition.Value ? "Allowed" : "Not allowed", _effective.Policy.CanRequisition.Value, _effective.Policy.CanRequisition.Source)
+                @Result("Buy directly (RFQ and PO)", _effective.Policy.CanPurchaseDirect.Value ? "Allowed" : "Not allowed", _effective.Policy.CanPurchaseDirect.Value, _effective.Policy.CanPurchaseDirect.Source)
+                @Result("Master approval limit", _effective.Policy.MasterApprovalLimitUsd.Value is { } l ? $"USD {l:N2}" : "Office approves", _effective.Policy.MasterApprovalLimitUsd.Value is not null, _effective.Policy.MasterApprovalLimitUsd.Source)
+                @Result("Monthly budget", _effective.Policy.MonthlyBudgetUsd.Value is { } b ? $"USD {b:N2}" : "No cap", true, _effective.Policy.MonthlyBudgetUsd.Source)
+            </div>
+            <h3 class="mt-4 mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Modules</h3>
+            <div class="flex flex-wrap gap-2">
+                @foreach (var m in _effective.Modules)
+                {
+                    <span class="chip chip-plain" data-tone="@(m.Enabled ? "success" : "neutral")" title="@m.Source">@m.Module: @(m.Enabled ? "on" : "off")</span>
+                }
+            </div>
+        }
+    </div>
+
+    @* ---------- Rules for a target ---------- *@
+    <div class="card mb-6 p-4">
+        <h2 class="mb-1 font-display text-lg font-bold text-ink">Rules</h2>
+        <p class="mb-3 text-sm text-muted">Leave a right as "no opinion" to let a less specific rule decide it. "Denied" overrides anything inherited.</p>
+        <div class="mb-4 max-w-md">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Group or vessel</label>
+            <SelectBox TValue="Guid" @bind-Value="_targetId" @bind-Value:after="OnTargetChanged" Options="_targetOptions" Placeholder="Select…" SearchPlaceholder="Search…" />
+        </div>
+
+        @if (_notice is not null)
+        {
+            <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_notice</div>
+        }
+
+        @if (_targetId != Guid.Empty)
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                            <th class="py-2 pr-3">Department</th><th class="py-2 pr-3">Catalog</th><th class="py-2 pr-3">Requisition</th><th class="py-2 pr-3">Direct purchase</th>
+                            <th class="py-2 pr-3 text-right">Master limit USD</th><th class="py-2 pr-3 text-right">Monthly budget USD</th><th class="py-2 pr-3">Valid</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in TargetRows)
+                        {
+                            var p = r.Policy;
+                            <tr class="border-b border-line/60">
+                                <td class="py-2 pr-3">@r.Department</td>
+                                <td class="py-2 pr-3">@r.Category</td>
+                                <td class="py-2 pr-3">@Tri(p.CanRequisition)</td>
+                                <td class="py-2 pr-3">@Tri(p.CanPurchaseDirect)</td>
+                                <td class="py-2 pr-3 text-right">@(p.MasterApprovalLimitUsd?.ToString("N2") ?? "-")</td>
+                                <td class="py-2 pr-3 text-right">@(p.MonthlyBudgetUsd?.ToString("N2") ?? "-")</td>
+                                <td class="py-2 pr-3 whitespace-nowrap text-xs text-muted">@(p.ValidFrom is null && p.ValidTo is null ? "always" : $"{p.ValidFrom:dd MMM yyyy} to {p.ValidTo:dd MMM yyyy}")</td>
+                                <td class="py-2 text-right whitespace-nowrap">
+                                    @if (_isAdmin)
+                                    {
+                                        <button @onclick="() => Edit(p)" class="mr-3 text-xs font-medium text-indigo-600 hover:underline">Edit</button>
+                                        <button @onclick="() => Remove(p)" class="text-xs font-medium text-rose-600 hover:underline">Remove</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                        @if (!TargetRows.Any())
+                        {
+                            <tr><td colspan="8" class="py-4 text-center text-muted">No rules for this target yet. Without a rule here it uses what its groups above state; with none anywhere, nothing is allowed.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (_isAdmin)
+            {
+                <div class="mt-4 rounded-xl border border-line p-4">
+                    <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_form.Id == Guid.Empty ? "Add a rule" : "Edit rule")</h3>
+                    <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Department</label>
+                            <SelectBox TValue="Guid" @bind-Value="_formDept" Options="_deptOptionsAny" SearchPlaceholder="Search…" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Catalog category</label>
+                            <SelectBox TValue="Guid" @bind-Value="_formCat" Options="_catOptionsAny" SearchPlaceholder="Search…" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Raise requisitions</label>
+                            <SelectBox TValue="int" @bind-Value="_formReq" Options="TriOptions" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Buy directly (RFQ and PO)</label>
+                            <SelectBox TValue="int" @bind-Value="_formDirect" Options="TriOptions" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Master approval limit (USD)</label>
+                            <input type="number" min="0" step="0.01" @bind="_formLimit" placeholder="Blank = no opinion" class="input" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Monthly budget (USD)</label>
+                            <input type="number" min="0" step="0.01" @bind="_formBudget" placeholder="Blank = no cap stated" class="input" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Valid from</label>
+                            <input type="date" @bind="_formFrom" class="input" />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700">Valid to</label>
+                            <input type="date" @bind="_formTo" class="input" />
+                        </div>
+                    </div>
+                    @if (_formError is not null)
+                    {
+                        <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_formError</div>
+                    }
+                    <div class="mt-3 flex gap-2">
+                        <button @onclick="SaveRule" class="btn btn-primary btn-sm">Save rule</button>
+                        @if (_form.Id != Guid.Empty) { <button @onclick="ResetForm" class="btn btn-secondary btn-sm">Cancel</button> }
+                    </div>
+                </div>
+            }
+
+            <h3 class="mt-6 mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Modules for this @(IsVessel(_targetId) ? "vessel" : "group")</h3>
+            <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                @foreach (var module in PolicyModules.All)
+                {
+                    var current = _switches.FirstOrDefault(s => s.Module == module && (IsVessel(_targetId) ? s.VesselId == _targetId : s.GroupId == _targetId));
+                    var m = module;
+                    <div class="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2">
+                        <span class="text-sm font-medium text-ink">@m</span>
+                        @if (_isAdmin)
+                        {
+                            <span class="flex gap-1">
+                                <button @onclick="() => SetModule(m, true)" class="@ModuleBtn(current, true)">On</button>
+                                <button @onclick="() => SetModule(m, false)" class="@ModuleBtn(current, false)">Off</button>
+                                <button @onclick="() => SetModule(m, null)" class="@ModuleBtn(current, null)">Inherit</button>
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="text-xs text-muted">@(current is null ? "inherits" : current.Enabled ? "on" : "off")</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _isAdmin, _loaded;
+    private List<PolicyRow> _rows = new();
+    private List<VesselModuleSwitch> _switches = new();
+    private List<SelectOption<Guid>> _vesselOptions = new(), _deptOptionsAny = new(), _catOptionsAny = new(), _targetOptions = new();
+    private HashSet<Guid> _vesselIds = new();
+    private string? _notice, _formError;
+
+    private Guid _effVessel, _effDept, _effCat;
+    private EffectiveView? _effective;
+
+    private Guid _targetId;
+    private VesselPolicy _form = new();
+    private Guid _formDept, _formCat;
+    private int _formReq, _formDirect;
+    private decimal? _formLimit, _formBudget;
+    private DateTime? _formFrom, _formTo;
+
+    private static readonly List<SelectOption<int>> TriOptions =
+        [new(0, "No opinion (inherit)"), new(1, "Allowed"), new(2, "Denied")];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateTask!;
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
+        _isAdmin = authState.User.IsInRole("CompanyAdmin");
+
+        var groups = await Groups.GetGroupsAsync(_companyId);
+        var vessels = await Procurement.GetVesselsAsync(_companyId);
+        var depts = await Procurement.GetDepartmentsAsync(_companyId);
+        var cats = Category.BuildTree(await Procurement.GetCategoriesAsync(_companyId));
+
+        _vesselIds = vessels.Select(v => v.Id).ToHashSet();
+        _vesselOptions = vessels.Select(v => new SelectOption<Guid>(v.Id, v.Name)).ToList();
+        _deptOptionsAny = new List<SelectOption<Guid>> { new(Guid.Empty, "All departments") }.Concat(depts.Select(d => new SelectOption<Guid>(d.Id, d.Name))).ToList();
+        _catOptionsAny = new List<SelectOption<Guid>> { new(Guid.Empty, "All categories") }.Concat(cats.Select(c => new SelectOption<Guid>(c.Category.Id, c.Path))).ToList();
+        _targetOptions = VesselGroup.BuildTree(groups).Select(t => new SelectOption<Guid>(t.Group.Id, "Group: " + t.Path))
+            .Concat(vessels.Select(v => new SelectOption<Guid>(v.Id, "Vessel: " + v.Name))).ToList();
+
+        await ReloadAsync();
+        _loaded = true;
+    }
+
+    private async Task ReloadAsync()
+    {
+        _rows = await Groups.GetPolicyRowsAsync(_companyId);
+        _switches = await Groups.GetModuleSwitchesAsync(_companyId);
+        if (_effVessel != Guid.Empty) await ComputeEffectiveAsync();
+    }
+
+    private bool IsVessel(Guid id) => _vesselIds.Contains(id);
+
+    private IEnumerable<PolicyRow> TargetRows =>
+        _rows.Where(r => IsVessel(_targetId) ? r.Policy.VesselId == _targetId : r.Policy.GroupId == _targetId);
+
+    private static string Tri(bool? v) => v is null ? "-" : v.Value ? "Allowed" : "Denied";
+
+    private async Task ComputeEffectiveAsync()
+    {
+        if (_effVessel == Guid.Empty) { _effective = null; return; }
+        _effective = await Groups.GetEffectiveAsync(_companyId, _effVessel, _effDept == Guid.Empty ? null : _effDept, _effCat == Guid.Empty ? null : _effCat);
+    }
+
+    private void OnTargetChanged()
+    {
+        _notice = null;
+        ResetForm();
+    }
+
+    private void ResetForm()
+    {
+        _form = new VesselPolicy();
+        _formDept = _formCat = Guid.Empty;
+        _formReq = _formDirect = 0;
+        _formLimit = _formBudget = null;
+        _formFrom = _formTo = null;
+        _formError = null;
+    }
+
+    private void Edit(VesselPolicy p)
+    {
+        _form = p;
+        _formDept = p.DepartmentId ?? Guid.Empty;
+        _formCat = p.CategoryId ?? Guid.Empty;
+        _formReq = p.CanRequisition is null ? 0 : p.CanRequisition.Value ? 1 : 2;
+        _formDirect = p.CanPurchaseDirect is null ? 0 : p.CanPurchaseDirect.Value ? 1 : 2;
+        _formLimit = p.MasterApprovalLimitUsd;
+        _formBudget = p.MonthlyBudgetUsd;
+        _formFrom = p.ValidFrom;
+        _formTo = p.ValidTo;
+        _formError = null;
+    }
+
+    private async Task SaveRule()
+    {
+        _formError = null;
+        var input = new VesselPolicy
+        {
+            Id = _form.Id,
+            GroupId = IsVessel(_targetId) ? null : _targetId,
+            VesselId = IsVessel(_targetId) ? _targetId : null,
+            DepartmentId = _formDept == Guid.Empty ? null : _formDept,
+            CategoryId = _formCat == Guid.Empty ? null : _formCat,
+            CanRequisition = _formReq == 0 ? null : _formReq == 1,
+            CanPurchaseDirect = _formDirect == 0 ? null : _formDirect == 1,
+            MasterApprovalLimitUsd = _formLimit,
+            MonthlyBudgetUsd = _formBudget,
+            ValidFrom = _formFrom,
+            ValidTo = _formTo
+        };
+        try
+        {
+            await Groups.SavePolicyAsync(_companyId, input, _actor);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _formError = ex.Message;
+            return;
+        }
+        ResetForm();
+        await ReloadAsync();
+    }
+
+    private async Task Remove(VesselPolicy p)
+    {
+        _notice = null;
+        try { await Groups.DeletePolicyAsync(_companyId, p.Id, _actor); }
+        catch (InvalidOperationException ex) { _notice = ex.Message; }
+        await ReloadAsync();
+    }
+
+    private async Task SetModule(string module, bool? enabled)
+    {
+        _notice = null;
+        try
+        {
+            await Groups.SetModuleAsync(_companyId, IsVessel(_targetId) ? null : _targetId, IsVessel(_targetId) ? _targetId : null, module, enabled, _actor);
+        }
+        catch (InvalidOperationException ex) { _notice = ex.Message; }
+        await ReloadAsync();
+    }
+
+    private static string ModuleBtn(VesselModuleSwitch? current, bool? option)
+    {
+        var active = option is null ? current is null : current is not null && current.Enabled == option;
+        return "rounded-md px-2 py-1 text-xs font-medium transition " + (active ? "bg-accent-600 text-white" : "bg-surface-2 text-ink-2 hover:bg-line");
+    }
+
+    private RenderFragment Result(string title, string value, bool good, string source) => @<div class="rounded-xl border border-line p-3">
+        <div class="text-xs font-semibold uppercase tracking-wide text-muted">@title</div>
+        <div class="@("mt-1 text-lg font-bold " + (good ? "text-ink" : "text-rose-600"))">@value</div>
+        <div class="mt-1 text-xs text-muted">Decided by: @source</div>
+    </div>;
+}

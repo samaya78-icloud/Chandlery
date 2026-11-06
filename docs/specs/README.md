@@ -38,6 +38,10 @@ One platform used by ship managers and their vessels. The **office (shore)** and
 
 Tank Inspection follows PMS because inspections are driven by PMS jobs. Classification, surveys and certificates are deliberately **out of scope for now** (later phase of PMS).
 
+## Build status
+- Foundation (GUID keys, reference codes, change tracking): done 2026-11-07.
+- Vessel groups and policy, stage 1 (group tree, policy rows, module switches, resolver, effective view): done 2026-11-07. Stage 2 (matrix editor, enforcement in pickers/RFQ/PO, office-user scope, history view) next.
+
 ## Decisions taken
 - PMS for all vessels, with a standard job library and an option to import a vessel's own plan.
 - Jobs can be running-hours driven, calendar driven, or both (whichever first).
