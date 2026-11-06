@@ -1,4 +1,4 @@
-@page "/company/requisitions/{RequisitionId:int}"
+@page "/company/requisitions/{RequisitionId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -237,10 +237,10 @@ else if (_reqn is not null)
     private const string InputClass = "input";
     private const int LinePageSize = 25;
 
-    [Parameter] public int RequisitionId { get; set; }
+    [Parameter] public Guid RequisitionId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private Actor _actor = Actor.System;
     private string _buyerName = "";
     private string _buyerEmail = "";
@@ -251,16 +251,16 @@ else if (_reqn is not null)
 
     private Requisition? _reqn;
     private List<Rfq> _rfqs = new();
-    private Dictionary<int, NameRef> _lineRfq = new();
-    private Dictionary<int, Item> _items = new();
+    private Dictionary<Guid, NameRef> _lineRfq = new();
+    private Dictionary<Guid, Item> _items = new();
     private List<Vessel> _vessels = new();
     private List<Department> _departments = new();
     private List<Port> _ports = new();
-    private Dictionary<int, Dictionary<int, string>> _coverage = new();
+    private Dictionary<Guid, Dictionary<Guid, string>> _coverage = new();
 
-    private readonly Dictionary<int, decimal> _approved = new();
-    private readonly HashSet<int> _selected = new();
-    private readonly HashSet<int> _invited = new();
+    private readonly Dictionary<Guid, decimal> _approved = new();
+    private readonly HashSet<Guid> _selected = new();
+    private readonly HashSet<Guid> _invited = new();
     private bool _approvedChanged;
     private string _lineFilter = "";
     private int _linePage = 1;
@@ -273,19 +273,19 @@ else if (_reqn is not null)
     private string? _fileError;
     private List<AttachmentView> _files = new();
     private readonly List<PendingAttachment> _pendingHeader = new();
-    private readonly Dictionary<int, List<PendingAttachment>> _pendingLine = new();
+    private readonly Dictionary<Guid, List<PendingAttachment>> _pendingLine = new();
 
     private List<AttachmentView> HeaderFiles => _files.Where(f => f.RequisitionLineId is null).ToList();
-    private List<AttachmentView> FilesFor(int lineId) => _files.Where(f => f.RequisitionLineId == lineId).ToList();
+    private List<AttachmentView> FilesFor(Guid lineId) => _files.Where(f => f.RequisitionLineId == lineId).ToList();
 
-    private List<PendingAttachment> PendingFor(int lineId)
+    private List<PendingAttachment> PendingFor(Guid lineId)
     {
         if (!_pendingLine.TryGetValue(lineId, out var list)) _pendingLine[lineId] = list = new();
         return list;
     }
 
     /// <summary>Saves the files just picked straight away (as internal ones; sharing is switched on afterwards from the list).</summary>
-    private async Task SaveFiles(int? lineId, List<PendingAttachment> pending)
+    private async Task SaveFiles(Guid? lineId, List<PendingAttachment> pending)
     {
         _fileError = null;
         var batch = pending.ToList();
@@ -365,7 +365,7 @@ else if (_reqn is not null)
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
         _buyerName = authState.User.Identity?.Name ?? "";
         _buyerEmail = authState.User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "";
@@ -407,7 +407,7 @@ else if (_reqn is not null)
 
     private static string Date(DateTime? d) => d.HasValue ? d.Value.ToString("MMM d, yyyy") : "—";
 
-    private void SetApproved(int lineId, object? value)
+    private void SetApproved(Guid lineId, object? value)
     {
         if (decimal.TryParse(value?.ToString(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var qty) && qty >= 0)
         {
@@ -416,7 +416,7 @@ else if (_reqn is not null)
         }
     }
 
-    private void ToggleLine(int lineId, bool on)
+    private void ToggleLine(Guid lineId, bool on)
     {
         if (on) _selected.Add(lineId); else _selected.Remove(lineId);
         DropUnavailableSuppliers();
@@ -433,12 +433,12 @@ else if (_reqn is not null)
     /// Suppliers that were already sent one of the ticked lines (and the RFQ they are on), so the same line never goes to
     /// the same supplier twice.
     /// </summary>
-    private Dictionary<int, string> ExcludedSuppliers
+    private Dictionary<Guid, string> ExcludedSuppliers
     {
         get
         {
             var ticked = _reqn!.Lines.Where(l => _selected.Contains(l.Id) && _approved.GetValueOrDefault(l.Id) > 0).Select(l => l.Id).ToHashSet();
-            var excluded = new Dictionary<int, string>();
+            var excluded = new Dictionary<Guid, string>();
             foreach (var (supplierId, sent) in _coverage)
             {
                 var rfq = sent.Where(kv => ticked.Contains(kv.Key)).Select(kv => kv.Value).FirstOrDefault();
@@ -456,7 +456,7 @@ else if (_reqn is not null)
         _busy = true;
         try
         {
-            await Requisitions.SetApprovedQuantitiesAsync(_companyId, _reqn!.Id, new Dictionary<int, decimal>(_approved), _actor);
+            await Requisitions.SetApprovedQuantitiesAsync(_companyId, _reqn!.Id, new Dictionary<Guid, decimal>(_approved), _actor);
             await Load(initialSelection: false);
             _message = "Approved quantities saved.";
         }

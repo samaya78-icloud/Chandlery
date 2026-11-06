@@ -30,7 +30,7 @@ else
             </div>
             <ul class="min-h-0 flex-1 overflow-y-auto py-1">
                 <li>
-                    <button @onclick="() => SelectAsync(0)" class="@RowClass(0)">
+                    <button @onclick="() => SelectAsync(Guid.Empty)" class="@RowClass(Guid.Empty)">
                         <span class="w-4"></span>
                         <span class="flex-1 truncate font-semibold">All items</span>
                         <span class="text-xs text-muted">@_count.ToString("N0")</span>
@@ -114,7 +114,7 @@ else
                     </div>
                     <div class="mb-3">
                         <label class="label">Parent category</label>
-                        <SelectBox TValue="int" @bind-Value="_catParentId" Options="ParentCategoryOptions" SearchPlaceholder="Search categories…" />
+                        <SelectBox TValue="Guid" @bind-Value="_catParentId" Options="ParentCategoryOptions" SearchPlaceholder="Search categories…" />
                     </div>
                     @if (_error is not null) { <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
                     <div class="flex gap-3">
@@ -124,10 +124,10 @@ else
                 </div>
             }
 
-            @if (_itemFormId != -1)
+            @if (_itemFormId is not null)
             {
                 <div class="mb-4 max-w-lg card p-4">
-                    <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_itemFormId == 0 ? "New item" : "Edit item")</h3>
+                    <h3 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_itemFormId == Guid.Empty ? "New item" : "Edit item")</h3>
                     <div class="mb-3 grid grid-cols-2 gap-3">
                         <div><label class="label">Code</label><input @bind="_code" class="input" /></div>
                         <div><label class="label">Unit of measure</label><SelectBox TValue="string" @bind-Value="_uom" Options="_uomOptions" Placeholder="Choose…" SearchPlaceholder="Search units…" /></div>
@@ -144,13 +144,13 @@ else
                         }
                         else
                         {
-                            <SelectBox TValue="int" @bind-Value="_itemCategoryId" Options="FormCategoryOptions" Placeholder="Select category…" SearchPlaceholder="Search categories…" />
+                            <SelectBox TValue="Guid" @bind-Value="_itemCategoryId" Options="FormCategoryOptions" Placeholder="Select category…" SearchPlaceholder="Search categories…" />
                         }
                     </div>
                     @if (_error is not null) { <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
                     <div class="flex gap-3">
                         <button @onclick="SaveItem" class="btn btn-primary btn-sm">Save</button>
-                        <button @onclick="() => _itemFormId = -1" class="btn btn-secondary btn-sm">Cancel</button>
+                        <button @onclick="() => _itemFormId = null" class="btn btn-secondary btn-sm">Cancel</button>
                     </div>
                 </div>
             }
@@ -187,53 +187,53 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     /// <summary>The category open on the right; kept in the address as ?c=ID so the view can be shared or revisited.</summary>
-    [SupplyParameterFromQuery(Name = "c")] public int? CategoryQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "c")] public Guid? CategoryQuery { get; set; }
 
     private enum CategoryFormMode { None, Add, Edit }
 
     private static readonly string[] StatusOptions = { "Active", "Disabled" };
 
     private DataGrid<Item>? _grid;
-    private int _companyId;
+    private Guid _companyId;
     private bool _loaded;
     private int _count;
     private List<Category> _categories = new();
     private List<(Category Category, string Path, int Depth)> _tree = new();
-    private Dictionary<int, string> _pathById = new();
-    private Dictionary<int, (int Items, int Children)> _usage = new();
-    private Dictionary<int, int> _subtreeCounts = new();
-    private List<(int DepartmentId, string Department, int CategoryId)> _links = new();
-    private HashSet<int> _used = new();
-    private readonly HashSet<int> _collapsed = new();
+    private Dictionary<Guid, string> _pathById = new();
+    private Dictionary<Guid, (int Items, int Children)> _usage = new();
+    private Dictionary<Guid, int> _subtreeCounts = new();
+    private List<(Guid DepartmentId, string Department, Guid CategoryId)> _links = new();
+    private HashSet<Guid> _used = new();
+    private readonly HashSet<Guid> _collapsed = new();
     private string _treeSearch = "";
-    private int _selectedId;
+    private Guid _selectedId;
     private string? _error;
 
     // Category form
     private CategoryFormMode _categoryForm;
     private string _catName = "";
-    private int _catParentId;
+    private Guid _catParentId;
 
     // Item form: -1 closed, 0 adding, otherwise the id being edited
-    private int _itemFormId = -1;
+    private Guid? _itemFormId;
     private string _code = "", _name = "", _uom = "";
     private List<SelectOption<string>> _uomOptions = new();
-    private int _itemCategoryId;
+    private Guid _itemCategoryId;
     private List<(Category Category, string Path, int Depth)> _formTree = new();
 
-    private List<SelectOption<int>> FormCategoryOptions => _formTree.Select(t => new SelectOption<int>(t.Category.Id, t.Path)).ToList();
+    private List<SelectOption<Guid>> FormCategoryOptions => _formTree.Select(t => new SelectOption<Guid>(t.Category.Id, t.Path)).ToList();
 
-    private List<SelectOption<int>> ParentCategoryOptions =>
-        new List<SelectOption<int>> { new(0, "None (top-level)") }.Concat(ParentChoices.Select(t => new SelectOption<int>(t.Category.Id, t.Path))).ToList();
+    private List<SelectOption<Guid>> ParentCategoryOptions =>
+        new List<SelectOption<Guid>> { new(Guid.Empty, "None (top-level)") }.Concat(ParentChoices.Select(t => new SelectOption<Guid>(t.Category.Id, t.Path))).ToList();
 
-    private Category? _selected => _selectedId == 0 ? null : _categories.FirstOrDefault(c => c.Id == _selectedId);
-    private string? ExtraQuery => _selectedId == 0 ? null : $"c={_selectedId}";
+    private Category? _selected => _selectedId == Guid.Empty ? null : _categories.FirstOrDefault(c => c.Id == _selectedId);
+    private string? ExtraQuery => _selectedId == Guid.Empty ? null : $"c={_selectedId}";
     private bool SelectedIsEmpty => _selected is not null && _usage.GetValueOrDefault(_selected.Id) is { Items: 0, Children: 0 };
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _uomOptions = await UomSvc.GetOptionsAsync(_companyId);
         await LoadCategories();
         _count = await Procurement.GetItemCountAsync(_companyId);
@@ -249,7 +249,7 @@ else
         _usage = await Procurement.GetCategoryUsageAsync(_companyId);
         _links = await Procurement.GetDepartmentCategoryLinksAsync(_companyId);
 
-        _subtreeCounts = new Dictionary<int, int>();
+        _subtreeCounts = new Dictionary<Guid, int>();
         foreach (var c in _categories)
             _subtreeCounts[c.Id] = CategoryIds.Descendants(_categories, c.Id).Sum(id => _usage.GetValueOrDefault(id).Items);
     }
@@ -264,7 +264,7 @@ else
             var term = _treeSearch.Trim();
             if (term != "")
             {
-                var keep = new HashSet<int>();
+                var keep = new HashSet<Guid>();
                 foreach (var t in _tree.Where(t => t.Category.Name.Contains(term, StringComparison.OrdinalIgnoreCase)))
                     for (Category? c = t.Category; c is not null; c = c.ParentCategoryId is { } p ? _categories.FirstOrDefault(x => x.Id == p) : null)
                         keep.Add(c.Id);
@@ -284,25 +284,25 @@ else
         return false;
     }
 
-    private void ToggleCollapse(int id)
+    private void ToggleCollapse(Guid id)
     {
         if (!_collapsed.Remove(id)) _collapsed.Add(id);
     }
 
-    private string RowClass(int id) =>
+    private string RowClass(Guid id) =>
         "flex w-full items-center gap-1 px-2 py-1.5 text-left text-sm transition " +
         (_selectedId == id ? "bg-accent-50 text-accent-700" : "text-ink-2 hover:bg-surface-2");
 
-    private async Task SelectAsync(int id)
+    private async Task SelectAsync(Guid id)
     {
         _selectedId = id;
         _categoryForm = CategoryFormMode.None;
-        _itemFormId = -1;
+        _itemFormId = null;
         _error = null;
         StateHasChanged();
         await Task.Yield(); // let the grid receive the new ExtraQuery before it rewrites the address
         if (_grid is not null) await _grid.ReloadAsync(resetPage: true);
-        if (id != 0) { try { await JS.InvokeVoidAsync("chandlery.scrollToOnSmall", "catalog-items"); } catch (InvalidOperationException) { } catch (JSDisconnectedException) { } }
+        if (id != Guid.Empty) { try { await JS.InvokeVoidAsync("chandlery.scrollToOnSmall", "catalog-items"); } catch (InvalidOperationException) { } catch (JSDisconnectedException) { } }
     }
 
     private List<Department> SelectedDepartments
@@ -310,7 +310,7 @@ else
         get
         {
             if (_selected is null) return new();
-            var upward = new HashSet<int>();
+            var upward = new HashSet<Guid>();
             for (Category? c = _selected; c is not null; c = c.ParentCategoryId is { } p ? _categories.FirstOrDefault(x => x.Id == p) : null)
                 upward.Add(c.Id);
             return _links.Where(l => upward.Contains(l.CategoryId)).Select(l => (l.DepartmentId, l.Department)).Distinct()
@@ -322,13 +322,13 @@ else
 
     private static string StatusText(Item item) => item.IsActive ? "Active" : "Disabled";
 
-    private string CategoryPath(int categoryId) => _pathById.GetValueOrDefault(categoryId, "—");
+    private string CategoryPath(Guid categoryId) => _pathById.GetValueOrDefault(categoryId, "—");
 
     private async Task<IEnumerable<string>> LoadUomOptions() => await Procurement.GetItemUomOptionsAsync(_companyId);
 
     private async Task<GridResult<Item>> LoadPage(GridRequest request)
     {
-        HashSet<int>? allowed = _selectedId == 0 ? null : CategoryIds.Descendants(_categories, _selectedId);
+        HashSet<Guid>? allowed = _selectedId == Guid.Empty ? null : CategoryIds.Descendants(_categories, _selectedId);
 
         // The Category column's text filter narrows by category path, which lives in the tree rather than on the item.
         var term = request.Text("category");
@@ -355,7 +355,7 @@ else
 
     // ---- Item form and actions ----
 
-    private List<(Category Category, string Path, int Depth)> FormChoices(int currentCategoryId)
+    private List<(Category Category, string Path, int Depth)> FormChoices(Guid currentCategoryId)
     {
         var active = Category.ActiveIds(_categories);
         return _tree.Where(t => active.Contains(t.Category.Id) || t.Category.Id == currentCategoryId).ToList();
@@ -364,9 +364,9 @@ else
     private void OpenItemForm()
     {
         _categoryForm = CategoryFormMode.None;
-        _itemFormId = 0;
+        _itemFormId = Guid.Empty;
         _code = _name = _uom = "";
-        _itemCategoryId = _selected is { IsActive: true } ? _selected.Id : 0;
+        _itemCategoryId = _selected is { IsActive: true } ? _selected.Id : Guid.Empty;
         _error = null;
         _formTree = FormChoices(_itemCategoryId);
     }
@@ -388,9 +388,9 @@ else
         _error = null;
         try
         {
-            if (_itemFormId == 0) await Procurement.AddItemAsync(_companyId, _code, _name, _itemCategoryId, _uom);
-            else await Procurement.UpdateItemAsync(_companyId, _itemFormId, _code, _name, _itemCategoryId, _uom);
-            _itemFormId = -1;
+            if (_itemFormId == Guid.Empty) await Procurement.AddItemAsync(_companyId, _code, _name, _itemCategoryId, _uom);
+            else await Procurement.UpdateItemAsync(_companyId, _itemFormId!.Value, _code, _name, _itemCategoryId, _uom);
+            _itemFormId = null;
             await RefreshAfterChangeAsync();
             await Toasts.Success("Item saved");
         }
@@ -436,7 +436,7 @@ else
     {
         get
         {
-            var blocked = _categoryForm == CategoryFormMode.Edit && _selected is not null ? CategoryIds.Descendants(_categories, _selected.Id) : new HashSet<int>();
+            var blocked = _categoryForm == CategoryFormMode.Edit && _selected is not null ? CategoryIds.Descendants(_categories, _selected.Id) : new HashSet<Guid>();
             var active = Category.ActiveIds(_categories);
             return _tree.Where(t => !blocked.Contains(t.Category.Id) && (active.Contains(t.Category.Id) || t.Category.Id == _catParentId));
         }
@@ -444,20 +444,20 @@ else
 
     private void OpenCategoryForm(bool underSelected)
     {
-        _itemFormId = -1;
+        _itemFormId = null;
         _categoryForm = CategoryFormMode.Add;
         _catName = "";
-        _catParentId = underSelected && _selected is not null ? _selected.Id : 0;
+        _catParentId = underSelected && _selected is not null ? _selected.Id : Guid.Empty;
         _error = null;
     }
 
     private void OpenCategoryEdit()
     {
         if (_selected is null) return;
-        _itemFormId = -1;
+        _itemFormId = null;
         _categoryForm = CategoryFormMode.Edit;
         _catName = _selected.Name;
-        _catParentId = _selected.ParentCategoryId ?? 0;
+        _catParentId = _selected.ParentCategoryId ?? Guid.Empty;
         _error = null;
     }
 
@@ -466,7 +466,7 @@ else
         _error = null;
         try
         {
-            var parent = _catParentId == 0 ? (int?)null : _catParentId;
+            var parent = _catParentId == Guid.Empty ? (Guid?)null : _catParentId;
             if (_categoryForm == CategoryFormMode.Add)
             {
                 var created = await Procurement.AddCategoryAsync(_companyId, _catName, parent);
@@ -509,7 +509,7 @@ else
         try
         {
             await Procurement.DeleteCategoryAsync(_companyId, category.Id);
-            _selectedId = category.ParentCategoryId ?? 0;
+            _selectedId = category.ParentCategoryId ?? Guid.Empty;
             await RefreshAfterChangeAsync();
             await Toasts.Success($"{category.Name} deleted");
         }

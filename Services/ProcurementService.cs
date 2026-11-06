@@ -16,7 +16,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Companies ----
 
-    public async Task<Company?> GetCompanyAsync(int companyId)
+    public async Task<Company?> GetCompanyAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.Companies.FirstOrDefaultAsync(c => c.Id == companyId);
@@ -31,7 +31,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return company;
     }
 
-    public async Task UpdateCompanyAsync(int companyId, string name, string? registrationNumber, string? address, string contactEmail)
+    public async Task UpdateCompanyAsync(Guid companyId, string name, string? registrationNumber, string? address, string contactEmail)
     {
         await using var db = await factory.CreateDbContextAsync();
         var company = await db.Companies.FirstAsync(c => c.Id == companyId);
@@ -90,13 +90,13 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return (company, admin);
     }
 
-    public async Task<List<AppUser>> GetCompanyUsersAsync(int companyId)
+    public async Task<List<AppUser>> GetCompanyUsersAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.Users.Where(u => u.CompanyId == companyId).OrderBy(u => u.DisplayName).ToListAsync();
     }
 
-    public async Task<AppUser> AddCompanyUserAsync(int companyId, string email, string displayName, string password, UserRole role)
+    public async Task<AppUser> AddCompanyUserAsync(Guid companyId, string email, string displayName, string password, UserRole role)
     {
         await using var db = await factory.CreateDbContextAsync();
 
@@ -119,21 +119,21 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Items ----
 
-    public async Task<List<Item>> GetItemsAsync(int companyId)
+    public async Task<List<Item>> GetItemsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.Items.Where(i => i.CompanyId == companyId).OrderBy(i => i.Code).ToListAsync();
     }
 
-    public async Task<List<Item>> GetItemsByIdsAsync(IEnumerable<int> itemIds)
+    public async Task<List<Item>> GetItemsByIdsAsync(IEnumerable<Guid> itemIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         var ids = itemIds.Distinct().ToList();
         return await db.Items.IgnoreQueryFilters().Where(i => ids.Contains(i.Id)).ToListAsync();
     }
 
-    public async Task<Item> AddItemAsync(int companyId, string code, string name, int categoryId, string uom)
+    public async Task<Item> AddItemAsync(Guid companyId, string code, string name, Guid categoryId, string uom)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -151,14 +151,14 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return item;
     }
 
-    private static async Task EnsureCategoryUsableAsync(ChandleryDbContext db, int companyId, int categoryId)
+    private static async Task EnsureCategoryUsableAsync(ChandleryDbContext db, Guid companyId, Guid categoryId)
     {
         var all = await db.Categories.Where(c => c.CompanyId == companyId).ToListAsync();
         if (!all.Any(c => c.Id == categoryId)) throw new InvalidOperationException("Choose a category from your tree.");
         if (!Category.ActiveIds(all).Contains(categoryId)) throw new InvalidOperationException("That category is disabled, so items cannot be added to it.");
     }
 
-    public async Task<Item> UpdateItemAsync(int companyId, int itemId, string code, string name, int categoryId, string uom)
+    public async Task<Item> UpdateItemAsync(Guid companyId, Guid itemId, string code, string name, Guid categoryId, string uom)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -181,12 +181,12 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Which of these items appear on any requisition, RFQ, purchase order, delivery or invoice (so they can be disabled but not deleted).</summary>
-    public async Task<HashSet<int>> GetUsedItemIdsAsync(int companyId, IReadOnlyCollection<int> itemIds)
+    public async Task<HashSet<Guid>> GetUsedItemIdsAsync(Guid companyId, IReadOnlyCollection<Guid> itemIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var ids = itemIds.ToList();
-        var used = new HashSet<int>();
+        var used = new HashSet<Guid>();
         used.UnionWith(await db.Requisitions.Where(r => r.CompanyId == companyId).SelectMany(r => r.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
         used.UnionWith(await db.Rfqs.Where(r => r.CompanyId == companyId).SelectMany(r => r.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
         used.UnionWith(await db.PurchaseOrders.Where(p => p.CompanyId == companyId).SelectMany(p => p.Lines).Where(l => ids.Contains(l.ItemId)).Select(l => l.ItemId).Distinct().ToListAsync());
@@ -195,7 +195,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return used;
     }
 
-    public async Task DeleteItemAsync(int companyId, int itemId)
+    public async Task DeleteItemAsync(Guid companyId, Guid itemId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -207,7 +207,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
-    public async Task SetItemActiveAsync(int companyId, int itemId, bool active)
+    public async Task SetItemActiveAsync(Guid companyId, Guid itemId, bool active)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -223,27 +223,27 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     /// Bulk-load catalog items. Missing categories along each path are created in the company's own tree,
     /// items whose code already exists for this company are skipped.
     /// </summary>
-    public async Task<ItemImportResult> ImportItemsAsync(int companyId, List<ItemImportRow> rows)
+    public async Task<ItemImportResult> ImportItemsAsync(Guid companyId, List<ItemImportRow> rows)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
 
         var categories = await db.Categories.ToListAsync();
-        var byKey = new Dictionary<(int Parent, string Name), Category>();
+        var byKey = new Dictionary<(Guid Parent, string Name), Category>();
         foreach (var c in categories)
-            byKey.TryAdd((c.ParentCategoryId ?? 0, c.Name.ToLowerInvariant()), c);
+            byKey.TryAdd((c.ParentCategoryId ?? Guid.Empty, c.Name.ToLowerInvariant()), c);
 
         var categoriesCreated = 0;
-        var pathCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var pathCache = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
-        async Task<int> EnsurePathAsync(string path)
+        async Task<Guid> EnsurePathAsync(string path)
         {
             if (pathCache.TryGetValue(path, out var cached)) return cached;
 
-            int? parentId = null;
+            Guid? parentId = null;
             foreach (var segment in path.Split('>', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
             {
-                var key = (parentId ?? 0, segment.ToLowerInvariant());
+                var key = (parentId ?? Guid.Empty, segment.ToLowerInvariant());
                 if (!byKey.TryGetValue(key, out var category))
                 {
                     category = new Category { CompanyId = companyId, Name = segment, ParentCategoryId = parentId, CreatedAt = DateTime.UtcNow };
@@ -290,14 +290,15 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Vessels (company-scoped) ----
 
-    public async Task<List<Vessel>> GetVesselsAsync(int companyId)
+    public async Task<List<Vessel>> GetVesselsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.Vessels.Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync();
     }
 
-    public async Task<Vessel> AddVesselAsync(int companyId, string name, string? imoNumber)
+    /// <summary>Adds a vessel. Without a short code one is suggested from its name; the code starts every document reference for the vessel.</summary>
+    public async Task<Vessel> AddVesselAsync(Guid companyId, string name, string? imoNumber, string? shortCode = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -305,22 +306,54 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (await db.Vessels.AnyAsync(v => v.CompanyId == companyId && v.Name.ToLower() == name.ToLower()))
             throw new InvalidOperationException("A vessel with that name already exists.");
 
-        var vessel = new Vessel { CompanyId = companyId, Name = name, ImoNumber = string.IsNullOrWhiteSpace(imoNumber) ? null : imoNumber };
+        var taken = await db.Vessels.Where(v => v.CompanyId == companyId).Select(v => v.ShortCode).ToListAsync();
+        var code = string.IsNullOrWhiteSpace(shortCode) ? VesselCodes.Suggest(name, taken) : await ValidShortCodeAsync(db, companyId, null, shortCode);
+
+        var vessel = new Vessel { CompanyId = companyId, Name = name, ImoNumber = string.IsNullOrWhiteSpace(imoNumber) ? null : imoNumber, ShortCode = code };
         db.Vessels.Add(vessel);
         await db.SaveChangesAsync();
         return vessel;
     }
 
+    /// <summary>Changes a vessel's details. A new short code applies to documents created from now on; existing references keep their code.</summary>
+    public async Task<Vessel> UpdateVesselAsync(Guid companyId, Guid vesselId, string name, string? imoNumber, string shortCode)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var vessel = await db.Vessels.FirstOrDefaultAsync(v => v.Id == vesselId && v.CompanyId == companyId)
+            ?? throw new InvalidOperationException("Vessel not found.");
+        name = (name ?? "").Trim();
+        if (name == "") throw new InvalidOperationException("Name is required.");
+        if (await db.Vessels.AnyAsync(v => v.CompanyId == companyId && v.Id != vesselId && v.Name.ToLower() == name.ToLower()))
+            throw new InvalidOperationException("A vessel with that name already exists.");
+
+        vessel.Name = name;
+        vessel.ImoNumber = string.IsNullOrWhiteSpace(imoNumber) ? null : imoNumber.Trim();
+        vessel.ShortCode = await ValidShortCodeAsync(db, companyId, vesselId, shortCode);
+        await db.SaveChangesAsync();
+        return vessel;
+    }
+
+    private static async Task<string> ValidShortCodeAsync(ChandleryDbContext db, Guid companyId, Guid? vesselId, string shortCode)
+    {
+        var code = (shortCode ?? "").Trim().ToUpperInvariant();
+        if (code.Length is < 2 or > 10 || !code.All(char.IsLetterOrDigit))
+            throw new InvalidOperationException("The short code must be 2 to 10 letters or digits, for example MVSF.");
+        if (await db.Vessels.AnyAsync(v => v.CompanyId == companyId && v.Id != vesselId && v.ShortCode == code))
+            throw new InvalidOperationException($"Another vessel already uses the code {code}.");
+        return code;
+    }
+
     // ---- Departments (company-scoped) ----
 
-    public async Task<List<Department>> GetDepartmentsAsync(int companyId)
+    public async Task<List<Department>> GetDepartmentsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.Departments.Where(d => d.CompanyId == companyId).OrderBy(d => d.Name).ToListAsync();
     }
 
-    public async Task<Department> AddDepartmentAsync(int companyId, string name)
+    public async Task<Department> AddDepartmentAsync(Guid companyId, string name)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -358,7 +391,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- Categories (company-owned) ----
 
     /// <summary>The company's categories. With <paramref name="activeOnly"/>, disabled ones and everything beneath them are left out.</summary>
-    public async Task<List<Category>> GetCategoriesAsync(int companyId, bool activeOnly = false)
+    public async Task<List<Category>> GetCategoriesAsync(Guid companyId, bool activeOnly = false)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -376,7 +409,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return name;
     }
 
-    public async Task<Category> AddCategoryAsync(int companyId, string name, int? parentCategoryId)
+    public async Task<Category> AddCategoryAsync(Guid companyId, string name, Guid? parentCategoryId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -393,7 +426,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Renames a category and/or moves it under another one (never under itself or one of its own sub-categories).</summary>
-    public async Task UpdateCategoryAsync(int companyId, int categoryId, string name, int? parentCategoryId)
+    public async Task UpdateCategoryAsync(Guid companyId, Guid categoryId, string name, Guid? parentCategoryId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -416,21 +449,21 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>How many items (any status) and sub-categories each category has, so the page knows whether it can be deleted.</summary>
-    public async Task<Dictionary<int, (int Items, int Children)>> GetCategoryUsageAsync(int companyId)
+    public async Task<Dictionary<Guid, (int Items, int Children)>> GetCategoryUsageAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var items = await db.Items.Where(i => i.CompanyId == companyId).GroupBy(i => i.CategoryId).Select(g => new { Id = g.Key, N = g.Count() }).ToListAsync();
         var children = await db.Categories.Where(c => c.CompanyId == companyId && c.ParentCategoryId != null)
             .GroupBy(c => c.ParentCategoryId!.Value).Select(g => new { Id = g.Key, N = g.Count() }).ToListAsync();
-        var map = new Dictionary<int, (int, int)>();
+        var map = new Dictionary<Guid, (int, int)>();
         foreach (var i in items) map[i.Id] = (i.N, map.GetValueOrDefault(i.Id).Item2);
         foreach (var c in children) map[c.Id] = (map.GetValueOrDefault(c.Id).Item1, c.N);
         return map;
     }
 
     /// <summary>A category can only be deleted when it holds no items and no sub-categories; otherwise it can be disabled.</summary>
-    public async Task DeleteCategoryAsync(int companyId, int categoryId)
+    public async Task DeleteCategoryAsync(Guid companyId, Guid categoryId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -446,7 +479,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
-    public async Task SetCategoryActiveAsync(int companyId, int categoryId, bool active)
+    public async Task SetCategoryActiveAsync(Guid companyId, Guid categoryId, bool active)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -459,7 +492,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- Department <-> category links ----
 
     /// <summary>The categories ticked for a department (not expanded to their sub-categories).</summary>
-    public async Task<HashSet<int>> GetDepartmentCategoryIdsAsync(int companyId, int departmentId)
+    public async Task<HashSet<Guid>> GetDepartmentCategoryIdsAsync(Guid companyId, Guid departmentId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -468,7 +501,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Every department-to-category link of the company with the department's name, for showing who may use a category.</summary>
-    public async Task<List<(int DepartmentId, string Department, int CategoryId)>> GetDepartmentCategoryLinksAsync(int companyId)
+    public async Task<List<(Guid DepartmentId, string Department, Guid CategoryId)>> GetDepartmentCategoryLinksAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -480,7 +513,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return rows.Select(r => (r.DepartmentId, r.Name, r.CategoryId)).ToList();
     }
 
-    public async Task<Dictionary<int, int>> GetDepartmentLinkCountsAsync(int companyId)
+    public async Task<Dictionary<Guid, int>> GetDepartmentLinkCountsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -489,7 +522,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Replaces the department's linked categories. Linking a category also covers everything beneath it.</summary>
-    public async Task SetDepartmentCategoriesAsync(int companyId, int departmentId, IEnumerable<int> categoryIds)
+    public async Task SetDepartmentCategoriesAsync(Guid companyId, Guid departmentId, IEnumerable<Guid> categoryIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -512,14 +545,14 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     /// With no department (a company that has not set any up) every enabled category may be used.
     /// A department with no links gets an empty set, so nothing can be chosen until it is set up.
     /// </summary>
-    public async Task<HashSet<int>> GetPickableCategoryIdsAsync(int companyId, int? departmentId)
+    public async Task<HashSet<Guid>> GetPickableCategoryIdsAsync(Guid companyId, Guid? departmentId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await PickableCategoryIdsAsync(db, companyId, departmentId);
     }
 
-    internal static async Task<HashSet<int>> PickableCategoryIdsAsync(ChandleryDbContext db, int companyId, int? departmentId)
+    internal static async Task<HashSet<Guid>> PickableCategoryIdsAsync(ChandleryDbContext db, Guid companyId, Guid? departmentId)
     {
         var all = await db.Categories.Where(c => c.CompanyId == companyId).ToListAsync();
         var active = Category.ActiveIds(all);
@@ -527,7 +560,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
         var linked = await db.DepartmentCategories.Where(x => x.CompanyId == companyId && x.DepartmentId == departmentId)
             .Select(x => x.CategoryId).ToListAsync();
-        var allowed = new HashSet<int>();
+        var allowed = new HashSet<Guid>();
         foreach (var id in linked) allowed.UnionWith(CategoryIds.Descendants(all, id));
         allowed.IntersectWith(active);
         return allowed;
@@ -537,7 +570,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     /// Server-side guard for requisitions and purchase orders: the department is required when the company has any,
     /// and every item must be enabled and sit in a category the department may use.
     /// </summary>
-    internal static async Task EnsureItemsAllowedAsync(ChandleryDbContext db, int companyId, int? departmentId, IEnumerable<int> itemIds)
+    internal static async Task EnsureItemsAllowedAsync(ChandleryDbContext db, Guid companyId, Guid? departmentId, IEnumerable<Guid> itemIds)
     {
         if (departmentId is null && await db.Departments.AnyAsync(d => d.CompanyId == companyId))
             throw new InvalidOperationException("Choose a department.");
@@ -553,13 +586,13 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Suppliers (global) & CompanySupplier links ----
 
-    public async Task<Supplier?> GetSupplierAsync(int supplierId)
+    public async Task<Supplier?> GetSupplierAsync(Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.Suppliers.FirstOrDefaultAsync(s => s.Id == supplierId);
     }
 
-    public async Task<List<Supplier>> GetSuppliersByIdsAsync(IEnumerable<int> supplierIds)
+    public async Task<List<Supplier>> GetSuppliersByIdsAsync(IEnumerable<Guid> supplierIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         var ids = supplierIds.Distinct().ToList();
@@ -567,7 +600,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The company's suppliers, most recently added to its address book first (for the Suppliers list).</summary>
-    public async Task<List<Supplier>> GetCompanySuppliersNewestFirstAsync(int companyId)
+    public async Task<List<Supplier>> GetCompanySuppliersNewestFirstAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -581,22 +614,22 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     /// For one requisition: which suppliers were already sent which requisition lines, and on which RFQ.
     /// supplier id -> (requisition line id -> RFQ number). Used so a supplier is never sent the same line twice.
     /// </summary>
-    internal static async Task<Dictionary<int, Dictionary<int, string>>> SupplierCoverageAsync(ChandleryDbContext db, int companyId, int requisitionId)
+    internal static async Task<Dictionary<Guid, Dictionary<Guid, string>>> SupplierCoverageAsync(ChandleryDbContext db, Guid companyId, Guid requisitionId)
     {
         var rfqs = await db.Rfqs.Include(r => r.Lines)
             .Where(r => r.CompanyId == companyId && r.RequisitionId == requisitionId).OrderBy(r => r.Id).ToListAsync();
-        var map = new Dictionary<int, Dictionary<int, string>>();
+        var map = new Dictionary<Guid, Dictionary<Guid, string>>();
         foreach (var rfq in rfqs)
         foreach (var supplierId in rfq.InvitedSupplierIds)
         {
-            if (!map.TryGetValue(supplierId, out var lines)) map[supplierId] = lines = new Dictionary<int, string>();
+            if (!map.TryGetValue(supplierId, out var lines)) map[supplierId] = lines = new Dictionary<Guid, string>();
             foreach (var line in rfq.Lines.Where(l => l.RequisitionLineId.HasValue))
                 lines.TryAdd(line.RequisitionLineId!.Value, rfq.RfqNumber);
         }
         return map;
     }
 
-    public async Task<Dictionary<int, Dictionary<int, string>>> GetSupplierCoverageAsync(int companyId, int requisitionId)
+    public async Task<Dictionary<Guid, Dictionary<Guid, string>>> GetSupplierCoverageAsync(Guid companyId, Guid requisitionId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -604,7 +637,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>One page of the company's suppliers matching a name or email search (all of them when the term is empty), A to Z.</summary>
-    public async Task<(List<Supplier> Rows, int Total)> SearchCompanySuppliersAsync(int companyId, string? term, int skip, int take)
+    public async Task<(List<Supplier> Rows, int Total)> SearchCompanySuppliersAsync(Guid companyId, string? term, int skip, int take)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -621,18 +654,18 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Server-side search for a SelectBox of the company's suppliers (name or email), for lists that can grow to hundreds.</summary>
-    public Func<SelectQuery, Task<SelectResult<int>>> SupplierSelectProvider(int companyId) => async query =>
+    public Func<SelectQuery, Task<SelectResult<Guid>>> SupplierSelectProvider(Guid companyId) => async query =>
     {
         var (rows, total) = await SearchCompanySuppliersAsync(companyId, query.Term, query.Skip, query.Take);
-        return new SelectResult<int>(rows.Select(s => new SelectOption<int>(s.Id, s.Name, s.ContactEmail)).ToList(), total);
+        return new SelectResult<Guid>(rows.Select(s => new SelectOption<Guid>(s.Id, s.Name, s.ContactEmail)).ToList(), total);
     };
 
     /// <summary>Turns supplier ids into labels for a server-side SelectBox (a record that is already open, selected chips).</summary>
-    public Func<IReadOnlyCollection<int>, Task<IReadOnlyList<SelectOption<int>>>> SupplierSelectResolver() => async ids =>
-        (await GetSuppliersByIdsAsync(ids)).Select(s => new SelectOption<int>(s.Id, s.Name, s.ContactEmail)).ToList();
+    public Func<IReadOnlyCollection<Guid>, Task<IReadOnlyList<SelectOption<Guid>>>> SupplierSelectResolver() => async ids =>
+        (await GetSuppliersByIdsAsync(ids)).Select(s => new SelectOption<Guid>(s.Id, s.Name, s.ContactEmail)).ToList();
 
     /// <summary>A company's own address-book of suppliers it can invite — not the global directory.</summary>
-    public async Task<List<Supplier>> GetCompanySuppliersAsync(int companyId)
+    public async Task<List<Supplier>> GetCompanySuppliersAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -642,7 +675,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Search-or-create: reuses an existing global Supplier by email if found, otherwise creates a new Supplier + SupplierAdmin login.</summary>
-    public async Task<(Supplier Supplier, bool WasCreated)> AddOrLinkSupplierAsync(int companyId, string name, string contactEmail, string initialPassword)
+    public async Task<(Supplier Supplier, bool WasCreated)> AddOrLinkSupplierAsync(Guid companyId, string name, string contactEmail, string initialPassword)
     {
         await using var db = await factory.CreateDbContextAsync();
 
@@ -681,7 +714,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- RFQs ----
 
-    public async Task<List<Rfq>> GetRfqsAsync(int companyId)
+    public async Task<List<Rfq>> GetRfqsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -689,7 +722,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             .OrderByDescending(r => r.CreatedDate).ToListAsync();
     }
 
-    public async Task<Rfq?> GetRfqAsync(int companyId, int rfqId)
+    public async Task<Rfq?> GetRfqAsync(Guid companyId, Guid rfqId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -697,14 +730,14 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Unscoped batch lookup — used by Supplier-side pages to show RFQ number/vessel for POs spanning multiple companies.</summary>
-    public async Task<List<Rfq>> GetRfqsByIdsAsync(IEnumerable<int> rfqIds)
+    public async Task<List<Rfq>> GetRfqsByIdsAsync(IEnumerable<Guid> rfqIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         var ids = rfqIds.Distinct().ToList();
         return await db.Rfqs.IgnoreQueryFilters().Where(r => ids.Contains(r.Id)).ToListAsync();
     }
 
-    public async Task<List<Rfq>> GetRfqsForSupplierAsync(int supplierId)
+    public async Task<List<Rfq>> GetRfqsForSupplierAsync(Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.Rfqs.IgnoreQueryFilters().Include(r => r.Lines)
@@ -712,7 +745,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             .OrderByDescending(r => r.CreatedDate).ToListAsync();
     }
 
-    public async Task<Rfq?> GetRfqForSupplierAsync(int supplierId, int rfqId)
+    public async Task<Rfq?> GetRfqForSupplierAsync(Guid supplierId, Guid rfqId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.Rfqs.IgnoreQueryFilters().Include(r => r.Lines)
@@ -722,7 +755,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     /// <summary>Date-only values from the UI are stored as UTC midnight (Npgsql rejects non-UTC DateTimes for timestamptz).</summary>
     private static DateTime? Utc(DateTime? d) => d.HasValue ? DateTime.SpecifyKind(d.Value.Date, DateTimeKind.Utc) : null;
 
-    public async Task<Rfq> CreateRfqAsync(int companyId, NewRfq request, Actor? actor = null)
+    public async Task<Rfq> CreateRfqAsync(Guid companyId, NewRfq request, Actor? actor = null)
     {
         actor ??= Actor.System;
         await using var db = await factory.CreateDbContextAsync();
@@ -791,13 +824,12 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
 
         var unitCodes = await ActiveUnitCodesAsync(db, companyId);
-        var nextSeq = 1001 + await db.Rfqs.IgnoreQueryFilters().CountAsync();
         var isSpares = request.Type == RfqType.Spares;
 
         var rfq = new Rfq
         {
             CompanyId = companyId,
-            RfqNumber = $"RFQ-{nextSeq}",
+            RfqNumber = await DocumentNumbers.NextAsync(db, companyId, request.VesselId, DocType.Rfq),
             RequisitionId = requisition?.Id,
             Type = request.Type,
             Vessel = vesselName,
@@ -850,7 +882,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Quotes ----
 
-    public async Task<List<Quote>> GetQuotesForRfqAsync(int companyId, int rfqId)
+    public async Task<List<Quote>> GetQuotesForRfqAsync(Guid companyId, Guid rfqId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -858,27 +890,27 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>All quotes across the company's RFQs — used to show a per-RFQ quote count on the RFQ list without N+1 queries.</summary>
-    public async Task<List<Quote>> GetQuotesForCompanyAsync(int companyId)
+    public async Task<List<Quote>> GetQuotesForCompanyAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.Quotes.Where(q => q.CompanyId == companyId).ToListAsync();
     }
 
-    public async Task<Quote?> GetQuoteAsync(int rfqId, int supplierId)
+    public async Task<Quote?> GetQuoteAsync(Guid rfqId, Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.Quotes.IgnoreQueryFilters().FirstOrDefaultAsync(q => q.RfqId == rfqId && q.SupplierId == supplierId);
     }
 
     /// <summary>Whether a supplier may still submit or revise a quote on this RFQ (not past due, nothing awarded to them).</summary>
-    public static bool CanQuote(Rfq rfq, int supplierId, bool hasPo) =>
+    public static bool CanQuote(Rfq rfq, Guid supplierId, bool hasPo) =>
         !rfq.IsPastDue
         && rfq.Status != RfqStatus.Awarded
         && !hasPo
         && !rfq.Lines.Any(l => l.WinningSupplierId == supplierId);
 
-    public async Task<Quote> SubmitQuoteAsync(int rfqId, int supplierId, QuoteInput input)
+    public async Task<Quote> SubmitQuoteAsync(Guid rfqId, Guid supplierId, QuoteInput input)
     {
         await using var db = await factory.CreateDbContextAsync();
 
@@ -965,7 +997,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Invite further suppliers to an existing RFQ, so the same items aren't re-entered on a new RFQ.</summary>
-    public async Task AddSuppliersToRfqAsync(int companyId, int rfqId, IEnumerable<int> supplierIds)
+    public async Task AddSuppliersToRfqAsync(Guid companyId, Guid rfqId, IEnumerable<Guid> supplierIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -987,7 +1019,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Server-side paged lists (filters run in SQL; used by DataGrid's ItemsProvider) ----
 
-    public async Task<GridResult<RfqListRow>> GetRfqPageAsync(int companyId, GridRequest req)
+    public async Task<GridResult<RfqListRow>> GetRfqPageAsync(Guid companyId, GridRequest req)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1038,7 +1070,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return new GridResult<RfqListRow>(rows, total);
     }
 
-    public async Task<int> GetRfqCountAsync(int companyId)
+    public async Task<int> GetRfqCountAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1046,7 +1078,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Distinct "quotes in" counts across the company's RFQs, for the list's drop-down filter.</summary>
-    public async Task<List<string>> GetRfqQuoteCountOptionsAsync(int companyId)
+    public async Task<List<string>> GetRfqQuoteCountOptionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1055,7 +1087,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return counts.Order().Select(n => n.ToString()).ToList();
     }
 
-    public async Task<GridResult<PoListRow>> GetPurchaseOrderPageAsync(int companyId, GridRequest req)
+    public async Task<GridResult<PoListRow>> GetPurchaseOrderPageAsync(Guid companyId, GridRequest req)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1108,14 +1140,14 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return new GridResult<PoListRow>(rows, total);
     }
 
-    public async Task<int> GetPurchaseOrderCountAsync(int companyId)
+    public async Task<int> GetPurchaseOrderCountAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.PurchaseOrders.CountAsync(p => p.CompanyId == companyId);
     }
 
-    public async Task<List<string>> GetPurchaseOrderLineCountOptionsAsync(int companyId)
+    public async Task<List<string>> GetPurchaseOrderLineCountOptionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1124,7 +1156,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>One page of the company's items. <paramref name="categoryIds"/> restricts to those categories (null = all).</summary>
-    public async Task<GridResult<Item>> GetItemPageAsync(int companyId, GridRequest req, IReadOnlyCollection<int>? categoryIds)
+    public async Task<GridResult<Item>> GetItemPageAsync(Guid companyId, GridRequest req, IReadOnlyCollection<Guid>? categoryIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1156,7 +1188,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return new GridResult<Item>(rows, total);
     }
 
-    private static IQueryable<Item> ItemSearchQuery(ChandleryDbContext db, int companyId, string? term, IReadOnlyCollection<int>? categoryIds, IReadOnlyCollection<int> pickableCategoryIds)
+    private static IQueryable<Item> ItemSearchQuery(ChandleryDbContext db, Guid companyId, string? term, IReadOnlyCollection<Guid>? categoryIds, IReadOnlyCollection<Guid> pickableCategoryIds)
     {
         var pickable = pickableCategoryIds.ToList();
         var q = db.Items.Where(i => i.CompanyId == companyId && i.IsActive && pickable.Contains(i.CategoryId));
@@ -1174,7 +1206,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>One page of enabled items in the allowed categories matching a code/name search (and optionally a narrower category set), for the item pickers.</summary>
-    public async Task<(List<Item> Rows, int Total)> SearchItemsAsync(int companyId, string? term, IReadOnlyCollection<int>? categoryIds, IReadOnlyCollection<int> pickableCategoryIds, int skip, int take)
+    public async Task<(List<Item> Rows, int Total)> SearchItemsAsync(Guid companyId, string? term, IReadOnlyCollection<Guid>? categoryIds, IReadOnlyCollection<Guid> pickableCategoryIds, int skip, int take)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1185,7 +1217,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Every item matching the search, for "add all matching".</summary>
-    public async Task<List<Item>> FindItemsAsync(int companyId, string? term, IReadOnlyCollection<int>? categoryIds, IReadOnlyCollection<int> pickableCategoryIds)
+    public async Task<List<Item>> FindItemsAsync(Guid companyId, string? term, IReadOnlyCollection<Guid>? categoryIds, IReadOnlyCollection<Guid> pickableCategoryIds)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1193,7 +1225,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Looks items up by code (case-insensitive) for "paste from Excel".</summary>
-    public async Task<List<Item>> GetItemsByCodesAsync(int companyId, IEnumerable<string> codes)
+    public async Task<List<Item>> GetItemsByCodesAsync(Guid companyId, IEnumerable<string> codes)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1201,14 +1233,14 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return await db.Items.Where(i => i.CompanyId == companyId && lower.Contains(i.Code.ToLower())).ToListAsync();
     }
 
-    public async Task<int> GetItemCountAsync(int companyId)
+    public async Task<int> GetItemCountAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.Items.CountAsync(i => i.CompanyId == companyId);
     }
 
-    public async Task<List<string>> GetItemUomOptionsAsync(int companyId)
+    public async Task<List<string>> GetItemUomOptionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1245,7 +1277,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Supplier-side RFQ list ----
 
-    public async Task<SupplierRfqPage> GetSupplierRfqPageAsync(int supplierId, SupplierRfqTab tab, string? search, int page, int pageSize)
+    public async Task<SupplierRfqPage> GetSupplierRfqPageAsync(Guid supplierId, SupplierRfqTab tab, string? search, int page, int pageSize)
     {
         await using var db = await factory.CreateDbContextAsync();
 
@@ -1292,7 +1324,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return new SupplierRfqPage(paged, all.Count);
     }
 
-    public async Task SetRfqArchivedAsync(int supplierId, int rfqId, bool archived)
+    public async Task SetRfqArchivedAsync(Guid supplierId, Guid rfqId, bool archived)
     {
         await using var db = await factory.CreateDbContextAsync();
 
@@ -1308,7 +1340,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
-    public async Task UpdateSupplierNotificationEmailsAsync(int supplierId, string emails)
+    public async Task UpdateSupplierNotificationEmailsAsync(Guid supplierId, string emails)
     {
         await using var db = await factory.CreateDbContextAsync();
         var supplier = await db.Suppliers.FirstAsync(s => s.Id == supplierId);
@@ -1319,7 +1351,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- Units of measure on lines ----
 
     /// <summary>The company's enabled unit codes (lower-case code to code as stored).</summary>
-    internal static async Task<Dictionary<string, string>> ActiveUnitCodesAsync(ChandleryDbContext db, int companyId) =>
+    internal static async Task<Dictionary<string, string>> ActiveUnitCodesAsync(ChandleryDbContext db, Guid companyId) =>
         (await db.Uoms.Where(u => u.CompanyId == companyId && u.IsActive).Select(u => u.Code).ToListAsync())
         .ToDictionary(c => c.ToLower(), c => c);
 
@@ -1333,7 +1365,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Award & Purchase Orders ----
 
-    public async Task AwardLineAsync(int companyId, int rfqId, int rfqLineId, int supplierId, Actor? actor = null)
+    public async Task AwardLineAsync(Guid companyId, Guid rfqId, Guid rfqLineId, Guid supplierId, Actor? actor = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1356,7 +1388,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Saves the buyer's note on the draft evaluation and records a snapshot of the selection in the history.</summary>
-    public async Task<string> SaveEvaluationDraftAsync(int companyId, int rfqId, string note, Actor actor)
+    public async Task<string> SaveEvaluationDraftAsync(Guid companyId, Guid rfqId, string note, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1388,7 +1420,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     /// Picks the winner for many lines at once (the quick-select options on the RFQ page). Lines that already have a purchase order are
     /// left alone, and a line can only go to a supplier that was invited and quoted that line. Returns how many lines were set.
     /// </summary>
-    public async Task<int> AwardLinesAsync(int companyId, int rfqId, IReadOnlyDictionary<int, int> supplierByLine, Actor actor, string how)
+    public async Task<int> AwardLinesAsync(Guid companyId, Guid rfqId, IReadOnlyDictionary<Guid, Guid> supplierByLine, Actor actor, string how)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1422,7 +1454,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Clears the winner on every line that has no purchase order yet.</summary>
-    public async Task<int> ClearAwardsAsync(int companyId, int rfqId, Actor actor)
+    public async Task<int> ClearAwardsAsync(Guid companyId, Guid rfqId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1448,7 +1480,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return cleared;
     }
 
-    public async Task<List<PurchaseOrder>> RaisePurchaseOrdersAsync(int companyId, int rfqId, Actor? actor = null)
+    public async Task<List<PurchaseOrder>> RaisePurchaseOrdersAsync(Guid companyId, Guid rfqId, Actor? actor = null)
     {
         actor ??= Actor.System;
         await using var db = await factory.CreateDbContextAsync();
@@ -1468,7 +1500,6 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             .SelectMany(po => po.Lines).Select(l => l.ItemId).ToListAsync();
         var alreadyPoItemIdSet = alreadyPoItemIds.ToHashSet();
 
-        var nextSeq = 5001 + await db.PurchaseOrders.IgnoreQueryFilters().CountAsync();
         var newPos = new List<PurchaseOrder>();
 
         var awardedGroups = rfq.Lines
@@ -1482,9 +1513,10 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             var po = new PurchaseOrder
             {
                 CompanyId = companyId,
-                PoNumber = $"PO-{nextSeq++}",
+                PoNumber = await DocumentNumbers.NextAsync(db, companyId, rfq.VesselId, DocType.PurchaseOrder),
                 RfqId = rfqId,
                 SupplierId = group.Key,
+                VesselId = rfq.VesselId,
                 CreatedDate = DateTime.UtcNow,
                 Status = PoStatus.PendingApproval,
                 RequisitionId = requisition?.Id,
@@ -1546,7 +1578,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Raises a PO directly with a supplier (no RFQ). Priced lines are required unless it is a record-only PO.</summary>
-    public async Task<PurchaseOrder> CreateSpotPoAsync(int companyId, NewSpotPo request, Actor? actor = null)
+    public async Task<PurchaseOrder> CreateSpotPoAsync(Guid companyId, NewSpotPo request, Actor? actor = null)
     {
         actor ??= Actor.System;
         await using var db = await factory.CreateDbContextAsync();
@@ -1589,11 +1621,10 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         var unitCodes = await ActiveUnitCodesAsync(db, companyId);
         var itemUnits = await db.Items.Where(i => i.CompanyId == companyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.UnitOfMeasure);
 
-        var nextSeq = 5001 + await db.PurchaseOrders.IgnoreQueryFilters().CountAsync();
         var po = new PurchaseOrder
         {
             CompanyId = companyId,
-            PoNumber = $"PO-{nextSeq}",
+            PoNumber = await DocumentNumbers.NextAsync(db, companyId, vessel.Id, DocType.PurchaseOrder),
             RfqId = null,
             SupplierId = supplier.Id,
             CreatedDate = DateTime.UtcNow,
@@ -1639,21 +1670,21 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return po;
     }
 
-    public async Task<List<PurchaseOrder>> GetPurchaseOrdersAsync(int companyId)
+    public async Task<List<PurchaseOrder>> GetPurchaseOrdersAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.PurchaseOrders.Where(p => p.CompanyId == companyId).OrderByDescending(p => p.CreatedDate).ToListAsync();
     }
 
-    public async Task<PurchaseOrder?> GetPurchaseOrderAsync(int companyId, int poId)
+    public async Task<PurchaseOrder?> GetPurchaseOrderAsync(Guid companyId, Guid poId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.PurchaseOrders.FirstOrDefaultAsync(p => p.Id == poId && p.CompanyId == companyId);
     }
 
-    public async Task<List<PurchaseOrder>> GetPurchaseOrdersForSupplierAsync(int supplierId)
+    public async Task<List<PurchaseOrder>> GetPurchaseOrdersForSupplierAsync(Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.PurchaseOrders.IgnoreQueryFilters()

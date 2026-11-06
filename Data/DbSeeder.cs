@@ -28,6 +28,7 @@ public static class DbSeeder
             await EnsureTaxCodesAsync(db);
             await EnsureCurrenciesAsync(db);
             await EnsureUomsAsync(db);
+            await EnsureVesselCodesAsync(db);
             return;
         }
 
@@ -92,8 +93,8 @@ public static class DbSeeder
         db.Items.AddRange(items);
         await db.SaveChangesAsync();
 
-        var seaFalcon = new Vessel { CompanyId = company.Id, Name = "MV Sea Falcon", ImoNumber = "9000001" };
-        var coralTrader = new Vessel { CompanyId = company.Id, Name = "MV Coral Trader", ImoNumber = "9000002" };
+        var seaFalcon = new Vessel { CompanyId = company.Id, Name = "MV Sea Falcon", ImoNumber = "9000001", ShortCode = "MVSF" };
+        var coralTrader = new Vessel { CompanyId = company.Id, Name = "MV Coral Trader", ImoNumber = "9000002", ShortCode = "MVCT" };
         db.Vessels.AddRange(seaFalcon, coralTrader);
 
         db.Departments.AddRange(
@@ -204,6 +205,22 @@ public static class DbSeeder
         await EnsureTaxCodesAsync(db);
         await EnsureCurrenciesAsync(db);
         await EnsureUomsAsync(db);
+        await EnsureVesselCodesAsync(db);
+    }
+
+    /// <summary>Gives every vessel without a short code one suggested from its name (the vessel reference prefix). Idempotent.</summary>
+    private static async Task EnsureVesselCodesAsync(ChandleryDbContext db)
+    {
+        foreach (var group in (await db.Vessels.IgnoreQueryFilters().ToListAsync()).GroupBy(v => v.CompanyId))
+        {
+            var taken = group.Where(v => v.ShortCode != "").Select(v => v.ShortCode).ToList();
+            foreach (var vessel in group.Where(v => v.ShortCode == "").OrderBy(v => v.Name))
+            {
+                vessel.ShortCode = Chandlery.Services.VesselCodes.Suggest(vessel.Name, taken);
+                taken.Add(vessel.ShortCode);
+            }
+        }
+        await db.SaveChangesAsync();
     }
 
     /// <summary>Gives every company the starter units of measure and conversions it does not have yet. Idempotent.</summary>
@@ -281,7 +298,7 @@ public static class DbSeeder
         db.PurchaseOrders.Add(po);
         await db.SaveChangesAsync();
 
-        var nextDo = 1001 + (await db.DeliveryOrders.IgnoreQueryFilters().MaxAsync(d => (int?)d.Id) ?? 0);
+        var nextDo = 1001 + await db.DeliveryOrders.IgnoreQueryFilters().CountAsync();
         db.DeliveryOrders.Add(new DeliveryOrder
         {
             CompanyId = companyId,

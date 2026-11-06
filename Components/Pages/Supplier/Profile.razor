@@ -68,7 +68,7 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _supplierId;
+    private Guid _supplierId;
     private bool _loaded;
     private bool _showForm;
     private string? _error;
@@ -78,7 +78,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
         _currencyOptions = await FxSvc.GetAllCurrencyOptionsAsync();
         await Load();
         _loaded = true;

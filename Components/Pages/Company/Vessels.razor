@@ -7,20 +7,26 @@
 
 <PageHeader Eyebrow="Master data" Title="Vessels" Subtitle="@($"{_vessels.Count:N0} vessels — open one to see everything raised for it.")">
     <Actions>
-        <button @onclick="() => _showForm = !_showForm" class="btn btn-primary">+ Add Vessel</button>
+        <button @onclick="StartAdd" class="btn btn-primary">+ Add Vessel</button>
     </Actions>
 </PageHeader>
 
 @if (_showForm)
 {
     <div class="mb-6 max-w-md card p-4">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">@(_editId == Guid.Empty ? "New vessel" : "Edit vessel")</h2>
         <div class="mb-3">
             <label class="mb-1 block text-sm font-medium text-slate-700">Name</label>
             <input @bind="_name" placeholder="e.g. MV Sea Falcon" class="input" />
         </div>
-        <div class="mb-4">
+        <div class="mb-3">
             <label class="mb-1 block text-sm font-medium text-slate-700">IMO Number</label>
             <input @bind="_imo" placeholder="Optional" class="input" />
+        </div>
+        <div class="mb-4">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Short code</label>
+            <input @bind="_code" maxlength="10" placeholder="@(_editId == Guid.Empty ? "Leave blank to suggest one" : "e.g. MVSF")" class="input uppercase" />
+            <p class="mt-1 text-xs text-muted">Starts every document reference for this vessel, e.g. <b>@(string.IsNullOrWhiteSpace(_code) ? "MVSF" : _code.ToUpperInvariant())</b>-REQ-2026-H0007. A changed code applies to new documents only.</p>
         </div>
 
         @if (_error is not null)
@@ -28,7 +34,10 @@
             <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
         }
 
-        <button @onclick="Add" class="btn btn-primary">Save</button>
+        <div class="flex gap-2">
+            <button @onclick="Save" class="btn btn-primary">Save</button>
+            <button @onclick="() => _showForm = false" class="btn btn-secondary">Cancel</button>
+        </div>
     </div>
 }
 
@@ -36,28 +45,52 @@
     <GridColumn Title="Name" Text="v => v.Name" Context="v">
         <DocLink Kind="DocKind.Vessel" Id="v.Id" Text="@v.Name" />
     </GridColumn>
+    <GridColumn Title="Code" Text="v => v.ShortCode" CellClass="font-semibold text-ink" />
     <GridColumn Title="IMO Number" Text="v => v.ImoNumber ?? string.Empty" />
-    <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right"><span class="link">Open &rarr;</span></GridColumn>
+    <GridColumn Title="" Filter="GridFilter.None" Sortable="false" CellClass="whitespace-nowrap text-right" Context="v">
+        <button @onclick="() => StartEdit(v)" class="mr-3 text-xs font-medium text-indigo-600 hover:underline">Edit</button>
+        <a href="/company/vessels/@v.Id" class="link">Open &rarr;</a>
+    </GridColumn>
 </DataGrid>
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private List<Vessel> _vessels = new();
     private bool _showForm;
     private string _name = "";
     private string _imo = "";
+    private string _code = "";
+    private Guid _editId;
     private string? _error;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
     }
 
-    private async Task Add()
+    private void StartAdd()
+    {
+        _editId = Guid.Empty;
+        _name = _imo = _code = "";
+        _error = null;
+        _showForm = true;
+    }
+
+    private void StartEdit(Vessel vessel)
+    {
+        _editId = vessel.Id;
+        _name = vessel.Name;
+        _imo = vessel.ImoNumber ?? "";
+        _code = vessel.ShortCode;
+        _error = null;
+        _showForm = true;
+    }
+
+    private async Task Save()
     {
         if (string.IsNullOrWhiteSpace(_name))
         {
@@ -67,7 +100,8 @@
 
         try
         {
-            await Procurement.AddVesselAsync(_companyId, _name.Trim(), _imo.Trim());
+            if (_editId == Guid.Empty) await Procurement.AddVesselAsync(_companyId, _name.Trim(), _imo.Trim(), _code);
+            else await Procurement.UpdateVesselAsync(_companyId, _editId, _name, _imo, _code);
         }
         catch (InvalidOperationException ex)
         {
@@ -76,8 +110,8 @@
         }
 
         _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
-        _name = "";
-        _imo = "";
+        _name = _imo = _code = "";
+        _editId = Guid.Empty;
         _error = null;
         _showForm = false;
     }

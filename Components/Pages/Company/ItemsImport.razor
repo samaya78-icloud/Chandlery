@@ -60,7 +60,7 @@ PRV-0002,Long grain rice 25kg,Store &gt; Provisions &gt; Dry Goods,bag</pre>
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private string? _fileName;
     private List<ItemImportRow> _rows = new();
     private List<string> _errors = new();
@@ -72,7 +72,7 @@ PRV-0002,Long grain rice 25kg,Store &gt; Provisions &gt; Dry Goods,bag</pre>
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
     }
 
     private async Task OnFileSelected(InputFileChangeEventArgs e)

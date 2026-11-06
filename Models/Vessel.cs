@@ -3,8 +3,11 @@ namespace Chandlery.Models;
 /// <summary>A vessel belonging to a company. Company-scoped.</summary>
 public class Vessel
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
     public string Name { get; set; } = "";
     public string? ImoNumber { get; set; }
+
+    /// <summary>Short code that starts every document reference for this vessel (MVSF-REQ-2026-H0007). Unique within the company.</summary>
+    public string ShortCode { get; set; } = "";
 }

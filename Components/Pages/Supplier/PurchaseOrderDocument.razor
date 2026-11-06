@@ -1,4 +1,4 @@
-@page "/supplier/purchase-orders/{PoId:int}/document"
+@page "/supplier/purchase-orders/{PoId:guid}/document"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject PoDocumentService Documents
@@ -24,7 +24,7 @@ else if (_doc is not null)
 }
 
 @code {
-    [Parameter] public int PoId { get; set; }
+    [Parameter] public Guid PoId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private PoDocument? _doc;
@@ -33,7 +33,7 @@ else if (_doc is not null)
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        var supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
         _doc = await Documents.GetForSupplierAsync(supplierId, PoId);
         _loaded = true;
     }

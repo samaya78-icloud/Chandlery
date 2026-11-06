@@ -15,12 +15,15 @@ Everything else depends on this spec. The product is pre-production, so these ch
   1. every record has an indexed `OriginNodeId` and, where relevant, a `VesselId`, shown in every grid and filter;
   2. human-visible **document numbers carry the vessel code** (`REQ-MVSF-2026-0007`, section 3), and users see numbers, not keys;
   3. support tools resolve a GUID to "type, vessel, number" in one lookup (a "who owns this id" search box).
-- Human-readable numbers are separate from keys (section 3). Recommendation recorded in the README open questions for confirmation.
+- Human-readable numbers are separate from keys (section 3). **Decision (product owner, 2026-11-06): GUID keys, plus the vessel-prefixed reference code of section 3.**
 
-## 3. Document numbering
-- Format: `{TYPE}-{ORIGIN}-{YEAR}-{SEQ}` where ORIGIN is a short code (`HO` for shore, vessel short code onboard), e.g. `REQ-MVSF-2026-0007`.
-- Sequences are per (type, origin, year) and allocated locally, so no collisions and no round trip.
-- A number is assigned when the document is created and never reused.
+## 3. Reference codes (document numbers)
+Every document has a **human reference code** in addition to its GUID key. Users and parties quote the code; keys stay internal.
+- Format: **`{VESSEL}-{TYPE}-{YEAR}-{SEQ}`**, for example `MVSF-REQ-2026-0007` (vessel short code first, so any party can see at a glance which vessel it concerns).
+- `VESSEL` is the vessel's **short code** (unique per company, set on the Vessels page). Documents with no vessel (for example a company-level invoice) use the company's office code, e.g. `HO`.
+- **Collision rule:** a vessel and the office can both create documents for the same vessel while disconnected. Sequences therefore have two lanes: documents created **onboard** use `0007`; documents created **ashore** use an `H` marker, `H0007`, e.g. `MVSF-REQ-2026-H0007`. The marker also tells everyone where the document was born.
+- Sequences are per (vessel code, type, year, lane) and allocated locally and atomically, so there is no round trip and no collision.
+- A code is assigned at creation and never reused. Existing numbers (e.g. `REQ-1001`) stay as they are and remain searchable.
 
 ## 4. Change tracking columns (every synced table)
 `Id`, `CreatedAt`, `CreatedBy`, `UpdatedAt`, `UpdatedBy`, `RowVersion` (monotonic per record), `OriginNodeId`, `IsDeleted` + `DeletedAt` (soft delete, tombstones sync like any change).

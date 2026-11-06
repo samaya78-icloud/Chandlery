@@ -12,7 +12,7 @@
     </Actions>
 </PageHeader>
 
-@if (_companyId != 0)
+@if (_companyId != Guid.Empty)
 {
     <DataGrid TItem="RequisitionListRow" ItemsProvider="LoadPage" ItemName="requisitions" ExportName="requisitions" PageSize="25" EmptyText="No requisitions match these filters." OnRowClick="Open">
         <GridColumn Title="Reqn #" Key="reqn" Text="r => r.Requisition.ReqnNumber" Context="row">
@@ -54,13 +54,13 @@
     private static readonly string[] UrgencyOptions = Enum.GetNames<Urgency>();
     private static readonly string[] StatusOptions = Enum.GetNames<RequisitionStatus>();
 
-    private int _companyId;
+    private Guid _companyId;
     private int _count;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _count = await ReqnService.GetCountAsync(companyId);
         _companyId = companyId; // the grid is only rendered once this is set
     }

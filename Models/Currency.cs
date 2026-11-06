@@ -12,7 +12,7 @@ public class Currency
 /// <summary>Says a company uses a currency, so it appears in that company's currency lists.</summary>
 public class CompanyCurrency
 {
-    public int CompanyId { get; set; }
+    public Guid CompanyId { get; set; }
     public string CurrencyCode { get; set; } = "";
 }
 
@@ -22,8 +22,8 @@ public class CompanyCurrency
 /// </summary>
 public class ExchangeRate
 {
-    public int Id { get; set; }
-    public int? CompanyId { get; set; }
+    public Guid Id { get; set; }
+    public Guid? CompanyId { get; set; }
     public string CurrencyCode { get; set; } = "";
     public DateTime RateDate { get; set; }
 

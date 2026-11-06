@@ -55,7 +55,7 @@
         <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <div class="mb-3 flex flex-wrap items-center gap-3">
                 <input @bind="_pickSearch" @bind:after="SearchChanged" placeholder="Search code or name…" class="@(InputClass + " w-60")" />
-                <SelectBox TValue="int" @bind-Value="_pickCategoryId" @bind-Value:after="SearchChanged" Options="CategoryFilterOptions" Class="w-72 max-w-full" SearchPlaceholder="Search categories…" />
+                <SelectBox TValue="Guid" @bind-Value="_pickCategoryId" @bind-Value:after="SearchChanged" Options="CategoryFilterOptions" Class="w-72 max-w-full" SearchPlaceholder="Search categories…" />
                 <span class="text-sm text-slate-500">@_pickTotal matching</span>
                 <button type="button" @onclick="AddAllMatching" disabled="@(_pickTotal == 0 || _busy)"
                         class="ml-auto btn btn-primary btn-sm">
@@ -134,8 +134,8 @@
         <div class="mb-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p class="mb-2 text-sm text-slate-600">Reuse the item lines of an earlier @CopySourceLabel, for example last month's provisions list.</p>
             <div class="flex flex-wrap items-center gap-3">
-                <SelectBox TValue="int" @bind-Value="_copyId" Options="CopyOptions" Placeholder="@($"Choose {CopySourceLabel}…")" Class="min-w-72" />
-                <button type="button" @onclick="CopyFromSource" disabled="@(_copyId == 0 || _busy)"
+                <SelectBox TValue="Guid" @bind-Value="_copyId" Options="CopyOptions" Placeholder="@($"Choose {CopySourceLabel}…")" Class="min-w-72" />
+                <button type="button" @onclick="CopyFromSource" disabled="@(_copyId == Guid.Empty || _busy)"
                         class="btn btn-primary btn-sm">
                     Copy lines
                 </button>
@@ -245,7 +245,7 @@
 
     private enum Panel { None, Catalog, Paste, Copy }
 
-    [Parameter, EditorRequired] public int CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
     [Parameter, EditorRequired] public List<NewRfqLine> Lines { get; set; } = new();
     [Parameter] public bool ShowDrawingNo { get; set; }
 
@@ -265,44 +265,44 @@
     [Parameter] public EventCallback OnChanged { get; set; }
 
     /// <summary>The document's department: only items in the categories it may use can be added.</summary>
-    [Parameter] public int? DepartmentId { get; set; }
+    [Parameter] public Guid? DepartmentId { get; set; }
 
     /// <summary>True when the company has departments, so a department must be chosen before any item can be added.</summary>
     [Parameter] public bool RequireDepartment { get; set; }
 
     private bool Locked => RequireDepartment && DepartmentId is null;
 
-    private List<SelectOption<int>> CategoryFilterOptions =>
-        new List<SelectOption<int>> { new(0, "All categories") }.Concat(_tree.Select(t => new SelectOption<int>(t.Category.Id, t.Path))).ToList();
+    private List<SelectOption<Guid>> CategoryFilterOptions =>
+        new List<SelectOption<Guid>> { new(Guid.Empty, "All categories") }.Concat(_tree.Select(t => new SelectOption<Guid>(t.Category.Id, t.Path))).ToList();
 
-    private List<SelectOption<int>> CopyOptions => CopySources.Select(s => new SelectOption<int>(s.Id, s.Label)).ToList();
+    private List<SelectOption<Guid>> CopyOptions => CopySources.Select(s => new SelectOption<Guid>(s.Id, s.Label)).ToList();
 
-    private HashSet<int> _pickable = new();
+    private HashSet<Guid> _pickable = new();
     private bool _pickableLoaded;
-    private int? _pickableFor;
+    private Guid? _pickableFor;
 
-    private readonly Dictionary<int, Item> _itemsById = new();
-    private readonly Dictionary<int, decimal> _pickQty = new();
+    private readonly Dictionary<Guid, Item> _itemsById = new();
+    private readonly Dictionary<Guid, decimal> _pickQty = new();
     private List<(Category Category, string Path, int Depth)> _tree = new();
     private List<Category> _categories = new();
-    private Dictionary<int, string> _categoryNames = new();
+    private Dictionary<Guid, string> _categoryNames = new();
     private int _catalogCount = 1;
 
     private Panel _panel = Panel.None;
     private string _pickSearch = "";
-    private int _pickCategoryId;
+    private Guid _pickCategoryId;
     private int _pickPage = 1;
     private List<Item> _pickRows = new();
     private int _pickTotal;
     private string _paste = "";
-    private int _copyId;
+    private Guid _copyId;
     private string _lineFilter = "";
     private int _linePage = 1;
     private string? _toolMessage;
     private bool _busy;
     private bool _loaded;
 
-    private HashSet<int> AddedIds => Lines.Select(l => l.ItemId).ToHashSet();
+    private HashSet<Guid> AddedIds => Lines.Select(l => l.ItemId).ToHashSet();
 
     private List<NewRfqLine> FilteredLines
     {
@@ -344,11 +344,11 @@
         var departmentChanged = !_pickableLoaded || _pickableFor != DepartmentId;
         if (departmentChanged)
         {
-            _pickable = Locked ? new HashSet<int>() : await Procurement.GetPickableCategoryIdsAsync(CompanyId, DepartmentId);
+            _pickable = Locked ? new HashSet<Guid>() : await Procurement.GetPickableCategoryIdsAsync(CompanyId, DepartmentId);
             _pickableLoaded = true;
             _pickableFor = DepartmentId;
             _tree = Category.BuildTree(_categories).Where(t => _pickable.Contains(t.Category.Id)).ToList();
-            _pickCategoryId = 0;
+            _pickCategoryId = Guid.Empty;
             _pickPage = 1;
             if (_panel == Panel.Catalog) await LoadPickAsync();
         }
@@ -378,7 +378,7 @@
             if (item.CompanyId == CompanyId) _itemsById[item.Id] = item;
     }
 
-    private string CategoryName(int categoryId) => _categoryNames.GetValueOrDefault(categoryId, "—");
+    private string CategoryName(Guid categoryId) => _categoryNames.GetValueOrDefault(categoryId, "—");
 
     private string PanelButtonClass(Panel p) =>
         (_panel == p ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50") + " rounded-md px-3 py-1.5 font-medium";
@@ -394,7 +394,7 @@
 
     // ---- Catalog picker ----
 
-    private IReadOnlyCollection<int>? PickCategoryIds => _pickCategoryId == 0 ? null : CategoryIds.Descendants(_categories, _pickCategoryId);
+    private IReadOnlyCollection<Guid>? PickCategoryIds => _pickCategoryId == Guid.Empty ? null : CategoryIds.Descendants(_categories, _pickCategoryId);
 
     private async Task LoadPickAsync()
     {
@@ -415,9 +415,9 @@
         await LoadPickAsync();
     }
 
-    private decimal PickQty(int itemId) => _pickQty.GetValueOrDefault(itemId, 1m);
+    private decimal PickQty(Guid itemId) => _pickQty.GetValueOrDefault(itemId, 1m);
 
-    private void SetPickQty(int itemId, object? value)
+    private void SetPickQty(Guid itemId, object? value)
     {
         if (decimal.TryParse(value?.ToString(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var qty) && qty > 0)
             _pickQty[itemId] = qty;

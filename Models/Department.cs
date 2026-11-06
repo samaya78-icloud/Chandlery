@@ -3,8 +3,8 @@ namespace Chandlery.Models;
 /// <summary>A department within a company (Deck, Engine, ...). Company-scoped.</summary>
 public class Department
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
     public string Name { get; set; } = "";
 }
 
@@ -14,7 +14,7 @@ public class Department
 /// </summary>
 public class DepartmentCategory
 {
-    public int CompanyId { get; set; }
-    public int DepartmentId { get; set; }
-    public int CategoryId { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid DepartmentId { get; set; }
+    public Guid CategoryId { get; set; }
 }

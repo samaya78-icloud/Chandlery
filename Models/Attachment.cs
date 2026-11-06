@@ -7,12 +7,12 @@ namespace Chandlery.Models;
 /// </summary>
 public class Attachment
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
-    public int RequisitionId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RequisitionId { get; set; }
 
     /// <summary>The requisition line this file belongs to; null for a file on the requisition header.</summary>
-    public int? RequisitionLineId { get; set; }
+    public Guid? RequisitionLineId { get; set; }
 
     public string FileName { get; set; } = "";
     public string ContentType { get; set; } = "";

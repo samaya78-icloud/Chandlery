@@ -2,10 +2,10 @@ namespace Chandlery.Models;
 
 public class Quote
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
-    public int RfqId { get; set; }
-    public int SupplierId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RfqId { get; set; }
+    public Guid SupplierId { get; set; }
     public DateTime SubmittedDate { get; set; }
 
     public string SupplierRef { get; set; } = "";
@@ -32,7 +32,7 @@ public class Quote
 
 public class QuoteLine
 {
-    public int RfqLineId { get; set; }
+    public Guid RfqLineId { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal DiscountPct { get; set; }
     /// <summary>The unit the price is per, when the supplier quoted in a different unit than the RFQ line (null: the RFQ line's unit).</summary>

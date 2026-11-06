@@ -18,7 +18,7 @@ public static class Fx
     /// The rate to use on a date: a company's own rate beats the market rate for the same day, and otherwise the latest rate on or
     /// before the date is used. If nothing is that old yet, the earliest rate we have is used. Null when the currency has no rates at all.
     /// </summary>
-    public static async Task<FxRate?> LookupAsync(ChandleryDbContext db, int? companyId, string? currency, DateTime date)
+    public static async Task<FxRate?> LookupAsync(ChandleryDbContext db, Guid? companyId, string? currency, DateTime date)
     {
         var code = (currency ?? "USD").Trim().ToUpperInvariant();
         var day = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
@@ -46,7 +46,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
         return await db.Currencies.OrderBy(c => c.Code).ToListAsync();
     }
 
-    public async Task<HashSet<string>> GetCompanyCurrencyCodesAsync(int companyId)
+    public async Task<HashSet<string>> GetCompanyCurrencyCodesAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -54,7 +54,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
     }
 
     /// <summary>Replaces the company's list. USD is always kept, because every rate is quoted against it.</summary>
-    public async Task SetCompanyCurrenciesAsync(int companyId, IEnumerable<string> codes)
+    public async Task SetCompanyCurrenciesAsync(Guid companyId, IEnumerable<string> codes)
     {
         var wanted = codes.Select(c => c.Trim().ToUpperInvariant()).Where(CurrencyCatalog.Contains).Append("USD").Distinct().ToList();
         await using var db = await factory.CreateDbContextAsync();
@@ -67,7 +67,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
     }
 
     /// <summary>The currencies a company can choose on its documents, as select options ("SGD · Singapore Dollar").</summary>
-    public async Task<List<SelectOption<string>>> GetCompanyCurrencyOptionsAsync(int companyId)
+    public async Task<List<SelectOption<string>>> GetCompanyCurrencyOptionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -96,7 +96,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
 
     // ---- Looking up and converting ----
 
-    public async Task<FxRate?> GetRateAsync(int? companyId, string currency, DateTime? date = null)
+    public async Task<FxRate?> GetRateAsync(Guid? companyId, string currency, DateTime? date = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -104,7 +104,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
     }
 
     /// <summary>The current rate for each of the given currencies (those with no rate are left out).</summary>
-    public async Task<Dictionary<string, FxRate>> GetRatesAsync(int? companyId, IEnumerable<string> currencies, DateTime? date = null)
+    public async Task<Dictionary<string, FxRate>> GetRatesAsync(Guid? companyId, IEnumerable<string> currencies, DateTime? date = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -188,7 +188,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
 
     // ---- The company's own rates ----
 
-    public async Task AddCompanyRateAsync(int companyId, string currency, DateTime date, decimal unitsPerUsd, string userName)
+    public async Task AddCompanyRateAsync(Guid companyId, string currency, DateTime date, decimal unitsPerUsd, string userName)
     {
         var code = (currency ?? "").Trim().ToUpperInvariant();
         if (!CurrencyCatalog.Contains(code)) throw new InvalidOperationException("Choose a currency.");
@@ -212,7 +212,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
         await db.SaveChangesAsync();
     }
 
-    public async Task DeleteCompanyRateAsync(int companyId, int rateId)
+    public async Task DeleteCompanyRateAsync(Guid companyId, Guid rateId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -224,7 +224,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
 
     // ---- The rates grid ----
 
-    public async Task<GridResult<ExchangeRateRow>> GetPageAsync(int companyId, GridRequest req)
+    public async Task<GridResult<ExchangeRateRow>> GetPageAsync(Guid companyId, GridRequest req)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -250,7 +250,7 @@ public class FxService(IDbContextFactory<ChandleryDbContext> factory, FxFeed fee
         return new GridResult<ExchangeRateRow>(rows.Select(r => new ExchangeRateRow(r, names.GetValueOrDefault(r.CurrencyCode) ?? "")).ToList(), total);
     }
 
-    public async Task<List<string>> GetSourceOptionsAsync(int companyId)
+    public async Task<List<string>> GetSourceOptionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;

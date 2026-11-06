@@ -1,5 +1,6 @@
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace Chandlery.Data;
 
@@ -11,7 +12,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     /// Null bypasses the company filter entirely — used for Supplier-side cross-company queries,
     /// which apply their own explicit filtering instead.
     /// </summary>
-    public int? CurrentCompanyId { get; set; }
+    public Guid? CurrentCompanyId { get; set; }
 
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<Supplier> Suppliers => Set<Supplier>();
@@ -43,10 +44,38 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<Currency> Currencies => Set<Currency>();
     public DbSet<CompanyCurrency> CompanyCurrencies => Set<CompanyCurrency>();
     public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
+    public DbSet<NodeInfo> NodeInfos => Set<NodeInfo>();
+    public DbSet<NumberSequence> NumberSequences => Set<NumberSequence>();
+
+    // Change tracking for sync, kept as shadow properties so the entity classes stay clean.
+    internal const string SyncCreatedAt = "SyncCreatedAt";
+    internal const string SyncUpdatedAt = "SyncUpdatedAt";
+    internal const string SyncVersion = "SyncVersion";
+    internal const string OriginNodeId = "OriginNodeId";
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Company>();
+        modelBuilder.Entity<Company>(b => b.Property(c => c.OfficeCode).HasMaxLength(10).HasDefaultValue("HO"));
+
+        modelBuilder.Entity<NodeInfo>(b =>
+        {
+            b.Property(n => n.Profile).HasMaxLength(20);
+            b.Property(n => n.Name).HasMaxLength(120);
+        });
+
+        modelBuilder.Entity<NumberSequence>(b =>
+        {
+            b.HasKey(n => new { n.Scope, n.Type, n.Year, n.Lane });
+            b.Property(n => n.Scope).HasMaxLength(20);
+            b.Property(n => n.Type).HasMaxLength(10);
+            b.Property(n => n.Lane).HasMaxLength(2);
+        });
+
+        modelBuilder.Entity<Vessel>(b =>
+        {
+            b.Property(v => v.ShortCode).HasMaxLength(10).HasDefaultValue("");
+            b.HasIndex(v => new { v.CompanyId, v.ShortCode }).IsUnique().HasFilter("\"ShortCode\" <> ''");
+        });
 
         modelBuilder.Entity<Supplier>();
 
@@ -106,14 +135,14 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Port>().WithMany().HasForeignKey(r => r.DeliveryPortId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Requisition>().WithMany().HasForeignKey(r => r.RequisitionId).OnDelete(DeleteBehavior.Restrict);
-            b.Property(r => r.InvitedSupplierIds).HasColumnType("integer[]");
+            b.Property(r => r.InvitedSupplierIds).HasColumnType("uuid[]");
             b.HasMany(r => r.Lines).WithOne().HasForeignKey("RfqId").OnDelete(DeleteBehavior.Cascade);
             b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<RfqLine>(b =>
         {
-            b.Property<int>("RfqId");
+            b.Property<Guid>("RfqId");
             b.Property(l => l.Quantity).HasPrecision(18, 3);
         });
 
@@ -171,7 +200,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
 
         modelBuilder.Entity<RequisitionLine>(b =>
         {
-            b.Property<int>("RequisitionId");
+            b.Property<Guid>("RequisitionId");
             b.Property(l => l.Quantity).HasPrecision(18, 3);
             b.Property(l => l.ApprovedQuantity).HasPrecision(18, 3);
         });
@@ -341,5 +370,89 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.HasIndex(a => new { a.CompanyId, a.EntityType, a.EntityId });
             b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
         });
+
+        // Every root record (single GUID key) gets created/updated time, a version counter and the node that created it.
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes().ToList())
+        {
+            if (entityType.IsOwned()) continue;
+            var key = entityType.FindPrimaryKey();
+            if (key is null || key.Properties.Count != 1 || key.Properties[0].Name != "Id" || key.Properties[0].ClrType != typeof(Guid)) continue;
+            var entity = modelBuilder.Entity(entityType.ClrType);
+            entity.Property<DateTime>(SyncCreatedAt).HasDefaultValueSql("now()");
+            entity.Property<DateTime>(SyncUpdatedAt).HasDefaultValueSql("now()");
+            entity.Property<int>(SyncVersion).HasDefaultValue(1);
+            entity.Property<Guid?>(OriginNodeId);
+        }
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        StampChanges();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        StampChanges();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    /// <summary>
+    /// Stamps created/updated time, version and origin node on the records being saved. A change to a child line counts as a change
+    /// to the document that owns it, so the document's version moves whenever anything inside it does.
+    /// </summary>
+    private void StampChanges()
+    {
+        ChangeTracker.DetectChanges();
+        var autoDetect = ChangeTracker.AutoDetectChangesEnabled;
+        ChangeTracker.AutoDetectChangesEnabled = false;
+        try
+        {
+            var now = DateTime.UtcNow;
+            var entries = ChangeTracker.Entries().Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted).ToList();
+            var stamped = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach (var entry in entries)
+            {
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry;
+                if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
+                if (!stamped.Add(root.Entity)) continue;
+
+                if (root.State == EntityState.Added)
+                {
+                    root.Property(SyncCreatedAt).CurrentValue = now;
+                    root.Property(SyncUpdatedAt).CurrentValue = now;
+                    root.Property(SyncVersion).CurrentValue = 1;
+                    root.Property(OriginNodeId).CurrentValue = NodeContext.NodeId;
+                }
+                else
+                {
+                    root.Property(SyncUpdatedAt).CurrentValue = now;
+                    root.Property(SyncVersion).CurrentValue = (int)(root.Property(SyncVersion).CurrentValue ?? 0) + 1;
+                }
+            }
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetect;
+        }
+    }
+
+    /// <summary>The tracked document that owns a child line, found through the line's owner key.</summary>
+    private EntityEntry? OwnerOf(EntityEntry owned)
+    {
+        var ownership = owned.Metadata.FindOwnership();
+        if (ownership is null) return null;
+        var principalType = ownership.PrincipalEntityType;
+        var keyProperties = principalType.FindPrimaryKey()!.Properties;
+        var values = ownership.Properties.Select(p => owned.Property(p.Name).CurrentValue).ToArray();
+        foreach (var candidate in ChangeTracker.Entries())
+        {
+            if (candidate.Metadata != principalType) continue;
+            var match = true;
+            for (var i = 0; i < keyProperties.Count; i++)
+                if (!Equals(candidate.Property(keyProperties[i].Name).CurrentValue, values[i])) { match = false; break; }
+            if (match) return candidate;
+        }
+        return null;
     }
 }

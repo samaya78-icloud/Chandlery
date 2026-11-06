@@ -16,13 +16,13 @@ public enum DeliveryStatus
 
 public class PurchaseOrder
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
     public string PoNumber { get; set; } = "";
 
     /// <summary>Null for a Spot PO, which is raised without an RFQ.</summary>
-    public int? RfqId { get; set; }
-    public int SupplierId { get; set; }
+    public Guid? RfqId { get; set; }
+    public Guid SupplierId { get; set; }
     public DateTime CreatedDate { get; set; }
 
     public bool IsSpot { get; set; }
@@ -30,8 +30,8 @@ public class PurchaseOrder
     /// <summary>A "record-only" spot PO (the field keeps its old name): no value, used only so deliveries and invoices have something to attach to.</summary>
     public bool IsDummy { get; set; }
     public string SupplierRef { get; set; } = "";
-    public int? VesselId { get; set; }
-    public int? OrderPortId { get; set; }
+    public Guid? VesselId { get; set; }
+    public Guid? OrderPortId { get; set; }
     public string Remarks { get; set; } = "";
 
     /// <summary>Kept up to date whenever a delivery order is recorded or deleted, so it can be filtered.</summary>
@@ -39,8 +39,8 @@ public class PurchaseOrder
 
     /// <summary>Suppliers only see approved POs.</summary>
     public PoStatus Status { get; set; } = PoStatus.Approved;
-    public int? RequisitionId { get; set; }
-    public int? DepartmentId { get; set; }
+    public Guid? RequisitionId { get; set; }
+    public Guid? DepartmentId { get; set; }
 
     public string Currency { get; set; } = "USD";
 
@@ -60,7 +60,7 @@ public class PurchaseOrder
 
 public class PoLine
 {
-    public int ItemId { get; set; }
+    public Guid ItemId { get; set; }
 
     /// <summary>The unit the quantity and price are in. Blank on older orders, which use the item's unit.</summary>
     public string Uom { get; set; } = "";

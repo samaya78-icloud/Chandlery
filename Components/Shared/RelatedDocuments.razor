@@ -93,9 +93,9 @@
 }
 
 @code {
-    [Parameter, EditorRequired] public int CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
     [Parameter, EditorRequired] public DocKind Kind { get; set; }
-    [Parameter, EditorRequired] public int Id { get; set; }
+    [Parameter, EditorRequired] public Guid Id { get; set; }
 
     /// <summary>Change to force a reload after the parent changed something.</summary>
     [Parameter] public int Version { get; set; }

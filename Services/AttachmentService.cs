@@ -13,7 +13,7 @@ public class PendingAttachment
     public bool Share { get; set; }
 }
 
-public record AttachmentView(int Id, int? RequisitionLineId, string FileName, string ContentType, long SizeBytes, bool ShareWithSuppliers, string UploadedByName, DateTime UploadedAt)
+public record AttachmentView(Guid Id, Guid? RequisitionLineId, string FileName, string ContentType, long SizeBytes, bool ShareWithSuppliers, string UploadedByName, DateTime UploadedAt)
 {
     public bool IsImage => ContentType.StartsWith("image/", StringComparison.Ordinal);
 }
@@ -62,12 +62,12 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
         for (var i = -1; i < perLine.Count; i++)
         {
             var group = i < 0 ? header : perLine[i];
-            int? lineId = i < 0 ? null : requisition.Lines[i].Id;
+            Guid? lineId = i < 0 ? null : requisition.Lines[i].Id;
             foreach (var file in group) await AddRowAsync(db, requisition, lineId, file, actor);
         }
     }
 
-    private async Task AddRowAsync(ChandleryDbContext db, Requisition requisition, int? lineId, PendingAttachment file, Actor actor)
+    private async Task AddRowAsync(ChandleryDbContext db, Requisition requisition, Guid? lineId, PendingAttachment file, Actor actor)
     {
         var name = Path.GetFileName(file.FileName);
         await using var stream = new MemoryStream(file.Data);
@@ -82,7 +82,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
             $"ATTACHED {name}{(lineId.HasValue ? " to a line" : "")}{(file.Share ? " (shown to suppliers on the RFQ)" : " (internal)")}");
     }
 
-    public async Task<List<AttachmentView>> ListAsync(int companyId, int requisitionId)
+    public async Task<List<AttachmentView>> ListAsync(Guid companyId, Guid requisitionId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -92,7 +92,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
     }
 
     /// <summary>Adds one file to an existing requisition (header when <paramref name="lineId"/> is null).</summary>
-    public async Task AddAsync(int companyId, int requisitionId, int? lineId, PendingAttachment file, Actor actor)
+    public async Task AddAsync(Guid companyId, Guid requisitionId, Guid? lineId, PendingAttachment file, Actor actor)
     {
         AttachmentRules.Validate(file);
         await using var db = await factory.CreateDbContextAsync();
@@ -111,7 +111,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
         await db.SaveChangesAsync();
     }
 
-    public async Task SetShareAsync(int companyId, int attachmentId, bool share, Actor actor)
+    public async Task SetShareAsync(Guid companyId, Guid attachmentId, bool share, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -124,7 +124,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
         await db.SaveChangesAsync();
     }
 
-    public async Task DeleteAsync(int companyId, int attachmentId, Actor actor)
+    public async Task DeleteAsync(Guid companyId, Guid attachmentId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -140,7 +140,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
     /// The files on the requisition behind an RFQ, for the company's own users: everything, with the sharing flag.
     /// Line files are keyed by the RFQ line they belong to.
     /// </summary>
-    public async Task<RfqFiles> ForRfqAsync(int companyId, int rfqId)
+    public async Task<RfqFiles> ForRfqAsync(Guid companyId, Guid rfqId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -149,7 +149,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
     }
 
     /// <summary>The files a supplier may see on an RFQ: only shared ones, and only when the supplier was invited.</summary>
-    public async Task<RfqFiles> ForRfqSupplierAsync(int supplierId, int rfqId)
+    public async Task<RfqFiles> ForRfqSupplierAsync(Guid supplierId, Guid rfqId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var rfq = await db.Rfqs.IgnoreQueryFilters().Include(r => r.Lines).FirstOrDefaultAsync(r => r.Id == rfqId);
@@ -165,7 +165,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
         var rows = await query.OrderBy(a => a.Id).ToListAsync();
 
         var header = rows.Where(a => a.RequisitionLineId is null).Select(ToView).ToList();
-        var byLine = new Dictionary<int, List<AttachmentView>>();
+        var byLine = new Dictionary<Guid, List<AttachmentView>>();
         foreach (var line in rfq.Lines.Where(l => l.RequisitionLineId.HasValue))
         {
             var mine = rows.Where(a => a.RequisitionLineId == line.RequisitionLineId).Select(ToView).ToList();
@@ -178,7 +178,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
     /// Opens a file if the caller may see it: the company that owns it, or a supplier invited to an RFQ made from the requisition
     /// (for a line file, an RFQ that includes the line) when the file is shared.
     /// </summary>
-    public async Task<(Attachment File, Stream Content)?> OpenAsync(int attachmentId, int? companyId, int? supplierId)
+    public async Task<(Attachment File, Stream Content)?> OpenAsync(Guid attachmentId, Guid? companyId, Guid? supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var a = await db.Attachments.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == attachmentId);
@@ -200,7 +200,7 @@ public class AttachmentService(IDbContextFactory<ChandleryDbContext> factory, IF
 }
 
 /// <summary>Files for one RFQ: those on the requisition header, and those on lines, keyed by RFQ line id.</summary>
-public record RfqFiles(List<AttachmentView> Header, Dictionary<int, List<AttachmentView>> ByLine)
+public record RfqFiles(List<AttachmentView> Header, Dictionary<Guid, List<AttachmentView>> ByLine)
 {
     public static readonly RfqFiles Empty = new(new(), new());
     public bool Any => Header.Count > 0 || ByLine.Count > 0;

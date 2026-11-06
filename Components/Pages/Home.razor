@@ -253,13 +253,13 @@ else if (_supplier is { } s)
 
         var isCompany = user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser");
         if (isCompany
-            && int.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
-            && int.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId))
+            && Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
+            && Guid.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId))
         {
             _company = await Dashboards.GetCompanyAsync(companyId, userId);
             _levelNames = await ApprovalSvc.GetLevelNamesAsync(companyId);
         }
-        else if (int.TryParse(user.FindFirst("SupplierId")?.Value, out var supplierId))
+        else if (Guid.TryParse(user.FindFirst("SupplierId")?.Value, out var supplierId))
         {
             _supplier = await Dashboards.GetSupplierAsync(supplierId);
         }

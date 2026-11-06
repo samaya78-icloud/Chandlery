@@ -4,7 +4,7 @@ namespace Chandlery.Services;
 public interface IFileStore
 {
     /// <summary>Saves the stream and returns the key to read it back with.</summary>
-    Task<string> SaveAsync(int companyId, Stream content, CancellationToken ct = default);
+    Task<string> SaveAsync(Guid companyId, Stream content, CancellationToken ct = default);
     Stream? OpenRead(string key);
     void Delete(string key);
 }
@@ -14,7 +14,7 @@ public class DiskFileStore(IWebHostEnvironment environment) : IFileStore
 {
     private string Root => Path.Combine(environment.ContentRootPath, "App_Data", "invoices");
 
-    public async Task<string> SaveAsync(int companyId, Stream content, CancellationToken ct = default)
+    public async Task<string> SaveAsync(Guid companyId, Stream content, CancellationToken ct = default)
     {
         var key = $"{companyId}/{Guid.NewGuid():N}";
         var path = PathFor(key);

@@ -16,16 +16,16 @@ public enum RfqType
 
 public class Rfq
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
     public string RfqNumber { get; set; } = "";
     public RfqType Type { get; set; } = RfqType.Stores;
     public string Vessel { get; set; } = "";
-    public int? VesselId { get; set; }
-    public int? DeliveryPortId { get; set; }
+    public Guid? VesselId { get; set; }
+    public Guid? DeliveryPortId { get; set; }
 
     /// <summary>Set when the RFQ was created from a requisition.</summary>
-    public int? RequisitionId { get; set; }
+    public Guid? RequisitionId { get; set; }
     public DateTime? VesselEta { get; set; }
     public DateTime? DateRequired { get; set; }
     public DateTime? DueDate { get; set; }
@@ -44,7 +44,7 @@ public class Rfq
     public DateTime CreatedDate { get; set; }
     public RfqStatus Status { get; set; } = RfqStatus.Draft;
     public List<RfqLine> Lines { get; set; } = new();
-    public List<int> InvitedSupplierIds { get; set; } = new();
+    public List<Guid> InvitedSupplierIds { get; set; } = new();
 
     /// <summary>The buyer's note on the draft evaluation (why these suppliers), kept until purchase orders are raised.</summary>
     public string EvaluationNote { get; set; } = "";
@@ -59,14 +59,14 @@ public class Rfq
 
 public class RfqLine
 {
-    public int Id { get; set; }
-    public int ItemId { get; set; }
+    public Guid Id { get; set; }
+    public Guid ItemId { get; set; }
     public decimal Quantity { get; set; }
     public string Uom { get; set; } = "";
     public string? Description { get; set; }
     public string? DrawingNo { get; set; }
-    public int? RequisitionLineId { get; set; }
-    public int? WinningSupplierId { get; set; }
+    public Guid? RequisitionLineId { get; set; }
+    public Guid? WinningSupplierId { get; set; }
 
     /// <summary>When true the supplier may quote in another unit of measure that can be converted from <see cref="Uom"/>.</summary>
     public bool AllowUomChange { get; set; }
@@ -75,8 +75,8 @@ public class RfqLine
 /// <summary>A supplier's own archive flag for an RFQ (works even if they never quoted).</summary>
 public class RfqArchive
 {
-    public int Id { get; set; }
-    public int RfqId { get; set; }
-    public int SupplierId { get; set; }
+    public Guid Id { get; set; }
+    public Guid RfqId { get; set; }
+    public Guid SupplierId { get; set; }
     public DateTime ArchivedAt { get; set; }
 }

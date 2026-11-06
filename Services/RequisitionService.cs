@@ -7,9 +7,9 @@ namespace Chandlery.Services;
 public class NewRequisition
 {
     public RfqType Type { get; set; } = RfqType.Stores;
-    public int VesselId { get; set; }
-    public int? DepartmentId { get; set; }
-    public int? DeliveryPortId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid? DepartmentId { get; set; }
+    public Guid? DeliveryPortId { get; set; }
     public Urgency Urgency { get; set; } = Urgency.Normal;
     public DateTime? ReqnDate { get; set; } = DateTime.UtcNow.Date;
     public DateTime? VesselEta { get; set; }
@@ -32,7 +32,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
     private static DateTime? Utc(DateTime? date) =>
         date.HasValue ? DateTime.SpecifyKind(date.Value.Date, DateTimeKind.Utc) : null;
 
-    public async Task<Requisition> CreateAsync(int companyId, NewRequisition request, Actor actor)
+    public async Task<Requisition> CreateAsync(Guid companyId, NewRequisition request, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -61,12 +61,11 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
         var unitCodes = await ProcurementService.ActiveUnitCodesAsync(db, companyId);
 
         var isSpares = request.Type == RfqType.Spares;
-        var nextSeq = 1001 + await db.Requisitions.IgnoreQueryFilters().CountAsync();
 
         var requisition = new Requisition
         {
             CompanyId = companyId,
-            ReqnNumber = $"REQ-{nextSeq}",
+            ReqnNumber = await DocumentNumbers.NextAsync(db, companyId, request.VesselId, DocType.Requisition),
             Type = request.Type,
             VesselId = request.VesselId,
             DepartmentId = request.DepartmentId,
@@ -103,7 +102,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
         return requisition;
     }
 
-    public async Task<Requisition?> GetAsync(int companyId, int requisitionId)
+    public async Task<Requisition?> GetAsync(Guid companyId, Guid requisitionId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -111,7 +110,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
             .FirstOrDefaultAsync(r => r.Id == requisitionId && r.CompanyId == companyId);
     }
 
-    public async Task<int> GetCountAsync(int companyId)
+    public async Task<int> GetCountAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -119,7 +118,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
     }
 
     /// <summary>Earlier requisitions as copy sources for the "copy lines from previous" tool.</summary>
-    public async Task<List<Requisition>> GetRecentAsync(int companyId, int take = 50)
+    public async Task<List<Requisition>> GetRecentAsync(Guid companyId, int take = 50)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -127,7 +126,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
             .OrderByDescending(r => r.CreatedAt).Take(take).ToListAsync();
     }
 
-    public async Task<List<Rfq>> GetRfqsAsync(int companyId, int requisitionId)
+    public async Task<List<Rfq>> GetRfqsAsync(Guid companyId, Guid requisitionId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -136,7 +135,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
     }
 
     /// <summary>For each requisition line already sent on an RFQ, the number of the latest RFQ that carried it.</summary>
-    public async Task<Dictionary<int, NameRef>> GetLineRfqNumbersAsync(int companyId, int requisitionId)
+    public async Task<Dictionary<Guid, NameRef>> GetLineRfqNumbersAsync(Guid companyId, Guid requisitionId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -144,14 +143,14 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
             .Where(r => r.CompanyId == companyId && r.RequisitionId == requisitionId)
             .OrderBy(r => r.CreatedDate).ToListAsync();
 
-        var map = new Dictionary<int, NameRef>();
+        var map = new Dictionary<Guid, NameRef>();
         foreach (var rfq in rfqs)
             foreach (var line in rfq.Lines.Where(l => l.RequisitionLineId.HasValue))
                 map[line.RequisitionLineId!.Value] = new NameRef(rfq.Id, rfq.RfqNumber);
         return map;
     }
 
-    public async Task<GridResult<RequisitionListRow>> GetPageAsync(int companyId, GridRequest req)
+    public async Task<GridResult<RequisitionListRow>> GetPageAsync(Guid companyId, GridRequest req)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -208,7 +207,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
         return new GridResult<RequisitionListRow>(rows, total);
     }
 
-    public async Task<List<string>> GetRfqCountOptionsAsync(int companyId)
+    public async Task<List<string>> GetRfqCountOptionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -218,7 +217,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
     }
 
     /// <summary>The approver trims or confirms the quantity that may be ordered.</summary>
-    public async Task SetApprovedQuantitiesAsync(int companyId, int requisitionId, Dictionary<int, decimal> approvedByLineId, Actor actor)
+    public async Task SetApprovedQuantitiesAsync(Guid companyId, Guid requisitionId, Dictionary<Guid, decimal> approvedByLineId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -243,7 +242,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
         await db.SaveChangesAsync();
     }
 
-    public async Task CancelAsync(int companyId, int requisitionId, Actor actor)
+    public async Task CancelAsync(Guid companyId, Guid requisitionId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;

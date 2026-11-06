@@ -9,7 +9,7 @@ namespace Chandlery.Services;
 /// <summary>What a supplier fills in to invoice a purchase order.</summary>
 public class SubmitInvoice
 {
-    public int PurchaseOrderId { get; set; }
+    public Guid PurchaseOrderId { get; set; }
     public string SupplierInvoiceRef { get; set; } = "";
     public DateTime? InvoiceDate { get; set; } = DateTime.UtcNow.Date;
     public DateTime? DueDate { get; set; }
@@ -17,26 +17,26 @@ public class SubmitInvoice
     public decimal AdditionalItemsCost { get; set; }
     public decimal AdditionalDeliveryCost { get; set; }
     public decimal DiscountOrCredit { get; set; }
-    public int BankAccountId { get; set; }
+    public Guid BankAccountId { get; set; }
     public string Remarks { get; set; } = "";
     public string VarianceReason { get; set; } = "";
-    public List<int> DeliveryOrderIds { get; set; } = new();
+    public List<Guid> DeliveryOrderIds { get; set; } = new();
 }
 
 /// <summary>What the company fills in to enter an invoice that has no purchase order.</summary>
 public class NewSpotInvoice
 {
-    public int SupplierId { get; set; }
+    public Guid SupplierId { get; set; }
     public string SupplierInvoiceRef { get; set; } = "";
     public DateTime? InvoiceDate { get; set; } = DateTime.UtcNow.Date;
     public DateTime? DueDate { get; set; }
     public string Currency { get; set; } = "USD";
-    public int? DepartmentId { get; set; }
-    public int? VesselId { get; set; }
+    public Guid? DepartmentId { get; set; }
+    public Guid? VesselId { get; set; }
     public string CostCentre { get; set; } = "";
     public string Remarks { get; set; } = "";
-    public int? TaxCodeId { get; set; }
-    public int? BankAccountId { get; set; }
+    public Guid? TaxCodeId { get; set; }
+    public Guid? BankAccountId { get; set; }
     public decimal AdditionalItemsCost { get; set; }
     public decimal AdditionalDeliveryCost { get; set; }
     public decimal DiscountOrCredit { get; set; }
@@ -72,13 +72,13 @@ public class InvoiceInfo
     public string Department { get; init; } = "";
     public string Vessel { get; init; } = "";
     public InvoiceMatch? Match { get; init; }
-    public Dictionary<int, Item> Items { get; init; } = new();
+    public Dictionary<Guid, Item> Items { get; init; } = new();
 }
 
 /// <summary>A PO a supplier can invoice: approved, with deliveries not yet on an invoice.</summary>
 public record InvoiceablePo(PurchaseOrder Po, int OpenDeliveries, decimal OpenValue);
 
-public record SubmitContext(PurchaseOrder Po, List<DeliveryOrder> Deliveries, List<SupplierBankAccount> Banks, Invoice? Existing, List<InvoiceDocument> ExistingDocs, Dictionary<int, Item> Items);
+public record SubmitContext(PurchaseOrder Po, List<DeliveryOrder> Deliveries, List<SupplierBankAccount> Banks, Invoice? Existing, List<InvoiceDocument> ExistingDocs, Dictionary<Guid, Item> Items);
 
 public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFileStore files)
 {
@@ -109,27 +109,27 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     }
 
     /// <summary>The PO's additional charges are expected on its first live invoice only.</summary>
-    private static async Task<decimal> ExpectedChargesAsync(ChandleryDbContext db, PurchaseOrder po, int thisInvoiceId)
+    private static async Task<decimal> ExpectedChargesAsync(ChandleryDbContext db, PurchaseOrder po, Guid thisInvoiceId)
     {
         var earlier = await db.Invoices.AnyAsync(i => i.PurchaseOrderId == po.Id && i.Status != InvoiceStatus.Rejected
-                                                      && i.Id != thisInvoiceId && (thisInvoiceId == 0 || i.Id < thisInvoiceId));
+                                                      && i.Id != thisInvoiceId && (thisInvoiceId == Guid.Empty || i.Id < thisInvoiceId));
         return earlier ? 0m : po.AdditionalCharges;
     }
 
     private static async Task<InvoiceMatch> MatchAsync(ChandleryDbContext db, PurchaseOrder po, IEnumerable<DeliveryOrder> deliveries, Invoice? invoice)
     {
         var delivered = DeliveredValue(po, deliveries);
-        var charges = await ExpectedChargesAsync(db, po, invoice?.Id ?? 0);
+        var charges = await ExpectedChargesAsync(db, po, invoice?.Id ?? Guid.Empty);
         var variance = (invoice?.TotalExclTax ?? 0m) - (delivered + charges);
         return new InvoiceMatch(po.Total, delivered, charges, variance);
     }
 
-    private static async Task<string> NextNumberAsync(ChandleryDbContext db) =>
-        $"INV-{1001 + (await db.Invoices.IgnoreQueryFilters().MaxAsync(i => (int?)i.Id) ?? 0)}";
+    private static Task<string> NextNumberAsync(ChandleryDbContext db, Guid companyId, Guid? vesselId) =>
+        DocumentNumbers.NextAsync(db, companyId, vesselId, DocType.Invoice);
 
     // ---- Company: lists and detail ----
 
-    public async Task<GridResult<InvoiceListRow>> GetPageAsync(int companyId, GridRequest req)
+    public async Task<GridResult<InvoiceListRow>> GetPageAsync(Guid companyId, GridRequest req)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -139,7 +139,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         return await PageAsync(db, q, req);
     }
 
-    public async Task<GridResult<InvoiceListRow>> GetSupplierPageAsync(int supplierId, GridRequest req)
+    public async Task<GridResult<InvoiceListRow>> GetSupplierPageAsync(Guid supplierId, GridRequest req)
     {
         await using var db = await factory.CreateDbContextAsync();
         var q = db.Invoices.Where(i => i.SupplierId == supplierId);
@@ -194,21 +194,21 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
                 i.PurchaseOrderId.HasValue ? pos.GetValueOrDefault(i.PurchaseOrderId.Value) ?? "" : "")).ToList(), total);
     }
 
-    public async Task<int> GetCountAsync(int companyId)
+    public async Task<int> GetCountAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.Invoices.CountAsync(i => i.CompanyId == companyId);
     }
 
-    public async Task<int> GetSupplierCountAsync(int supplierId)
+    public async Task<int> GetSupplierCountAsync(Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.Invoices.CountAsync(i => i.SupplierId == supplierId);
     }
 
     /// <summary>Everything the invoice page shows. Pass companyId for the buyer's view or supplierId for the supplier's view.</summary>
-    public async Task<InvoiceInfo?> GetDetailAsync(int invoiceId, int? companyId, int? supplierId)
+    public async Task<InvoiceInfo?> GetDetailAsync(Guid invoiceId, Guid? companyId, Guid? supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -234,7 +234,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         var names = await db.Users.IgnoreQueryFilters().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName);
 
         InvoiceMatch? match = po is null ? null : await MatchAsync(db, po, deliveries, invoice);
-        var itemIds = (po?.Lines.Select(l => l.ItemId) ?? Enumerable.Empty<int>()).Distinct().ToList();
+        var itemIds = (po?.Lines.Select(l => l.ItemId) ?? Enumerable.Empty<Guid>()).Distinct().ToList();
         var items = await db.Items.IgnoreQueryFilters().Where(i => itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id);
 
         return new InvoiceInfo
@@ -249,7 +249,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     // ---- Supplier: submitting ----
 
     /// <summary>Approved POs of this supplier that have deliveries which no invoice covers yet.</summary>
-    public async Task<List<InvoiceablePo>> GetInvoiceablePosAsync(int supplierId)
+    public async Task<List<InvoiceablePo>> GetInvoiceablePosAsync(Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var open = await db.DeliveryOrders.Where(d => d.SupplierId == supplierId && d.InvoiceId == null).ToListAsync();
@@ -264,7 +264,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     }
 
     /// <summary>What the submit form needs. When <paramref name="invoiceId"/> is given, the (rejected) invoice is being corrected.</summary>
-    public async Task<SubmitContext?> GetSubmitContextAsync(int supplierId, int poId, int? invoiceId)
+    public async Task<SubmitContext?> GetSubmitContextAsync(Guid supplierId, Guid poId, Guid? invoiceId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var po = await db.PurchaseOrders.FirstOrDefaultAsync(p => p.Id == poId && p.SupplierId == supplierId && p.Status == PoStatus.Approved);
@@ -287,7 +287,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         return new SubmitContext(po, deliveries, banks, existing, docs, items);
     }
 
-    public async Task<Invoice> SubmitAsync(int supplierId, SubmitInvoice request, List<UploadedFile> uploads, Actor actor, int? resubmitInvoiceId = null)
+    public async Task<Invoice> SubmitAsync(Guid supplierId, SubmitInvoice request, List<UploadedFile> uploads, Actor actor, Guid? resubmitInvoiceId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
 
@@ -309,7 +309,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         if (request.InvoiceAmount < 0 || request.AdditionalItemsCost < 0 || request.AdditionalDeliveryCost < 0 || request.DiscountOrCredit < 0)
             throw new InvalidOperationException("Amounts cannot be negative.");
 
-        var excludeId = invoice?.Id ?? 0;
+        var excludeId = invoice?.Id ?? Guid.Empty;
         if (await db.Invoices.AnyAsync(i => i.CompanyId == companyId && i.SupplierId == supplierId && i.SupplierInvoiceRef == reference
                                             && i.Status != InvoiceStatus.Rejected && i.Id != excludeId))
             throw new InvalidOperationException($"You have already sent an invoice numbered {reference} to this buyer.");
@@ -327,11 +327,12 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         if (uploads.Count + existingDocs == 0) throw new InvalidOperationException("Attach at least one supporting document, such as your invoice as a PDF.");
         foreach (var upload in uploads) ValidateUpload(upload, VisualExtensions);
 
+        var poVesselId = await DocumentNumbers.VesselOfPoAsync(db, po);
         if (invoice is null)
         {
             invoice = new Invoice
             {
-                CompanyId = companyId, InvoiceNumber = await NextNumberAsync(db), Kind = InvoiceKind.PoInvoice,
+                CompanyId = companyId, InvoiceNumber = await NextNumberAsync(db, companyId, poVesselId), Kind = InvoiceKind.PoInvoice,
                 PurchaseOrderId = po.Id, SupplierId = supplierId
             };
             db.Invoices.Add(invoice);
@@ -347,7 +348,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         invoice.DiscountOrCredit = request.DiscountOrCredit;
         invoice.BankAccountId = bank.Id;
         invoice.DepartmentId = po.DepartmentId;
-        invoice.VesselId = po.VesselId;
+        invoice.VesselId = poVesselId;
         invoice.Remarks = request.Remarks.Trim();
         invoice.VarianceReason = request.VarianceReason.Trim();
         invoice.RejectionReason = "";
@@ -401,7 +402,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     // ---- Documents ----
 
     /// <summary>Opens a document for download if the caller may see it: the buyer that owns the invoice or the supplier that sent it.</summary>
-    public async Task<(InvoiceDocument Doc, Stream Content)?> OpenDocumentAsync(int documentId, int? companyId, int? supplierId)
+    public async Task<(InvoiceDocument Doc, Stream Content)?> OpenDocumentAsync(Guid documentId, Guid? companyId, Guid? supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var doc = await db.InvoiceDocuments.FirstOrDefaultAsync(d => d.Id == documentId);
@@ -416,12 +417,12 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
 
     // ---- Company: verify, reject, approve, finalize ----
 
-    private static async Task ReleaseDeliveriesAsync(ChandleryDbContext db, int invoiceId)
+    private static async Task ReleaseDeliveriesAsync(ChandleryDbContext db, Guid invoiceId)
     {
         foreach (var d in await db.DeliveryOrders.Where(d => d.InvoiceId == invoiceId).ToListAsync()) d.InvoiceId = null;
     }
 
-    public async Task VerifyAsync(int companyId, int invoiceId, Actor actor, int? taxCodeId, string varianceReason)
+    public async Task VerifyAsync(Guid companyId, Guid invoiceId, Actor actor, Guid? taxCodeId, string varianceReason)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -467,7 +468,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     }
 
     /// <summary>Creates the approval slots from the matrix by the invoice total before tax; no rules means approved at once.</summary>
-    private static async Task RouteAsync(ChandleryDbContext db, Invoice invoice, int? departmentId, Actor actor)
+    private static async Task RouteAsync(ChandleryDbContext db, Invoice invoice, Guid? departmentId, Actor actor)
     {
         var rules = await db.ApprovalRules.Where(r => r.CompanyId == invoice.CompanyId).ToListAsync();
         var comparable = await ApprovalEngine.ComparableAsync(db, invoice.CompanyId, invoice.Currency, DateTime.UtcNow, invoice.TotalExclTax);
@@ -494,7 +495,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     }
 
     /// <summary>Sends a submitted invoice back to the supplier with a reason; its deliveries are freed so it can be corrected.</summary>
-    public async Task RejectAsync(int companyId, int invoiceId, Actor actor, string reason)
+    public async Task RejectAsync(Guid companyId, Guid invoiceId, Actor actor, string reason)
     {
         reason = (reason ?? "").Trim();
         if (reason == "") throw new InvalidOperationException("Give a reason for rejecting the invoice.");
@@ -512,7 +513,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         await db.SaveChangesAsync();
     }
 
-    public async Task DecideAsync(int companyId, int invoiceId, Actor actor, bool approve, string comment)
+    public async Task DecideAsync(Guid companyId, Guid invoiceId, Actor actor, bool approve, string comment)
     {
         if (actor.UserId is not { } userId) throw new InvalidOperationException("You must be signed in.");
         comment = (comment ?? "").Trim();
@@ -556,7 +557,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         await db.SaveChangesAsync();
     }
 
-    public async Task FinalizeAsync(int companyId, int invoiceId, Actor actor, bool isCompanyAdmin)
+    public async Task FinalizeAsync(Guid companyId, Guid invoiceId, Actor actor, bool isCompanyAdmin)
     {
         if (!isCompanyAdmin) throw new InvalidOperationException("Only a company admin can finalize an invoice.");
         await using var db = await factory.CreateDbContextAsync();
@@ -572,7 +573,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         await db.SaveChangesAsync();
     }
 
-    public async Task<List<PendingInvoiceRow>> GetPendingForUserAsync(int companyId, int userId)
+    public async Task<List<PendingInvoiceRow>> GetPendingForUserAsync(Guid companyId, Guid userId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -597,7 +598,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
     }
 
     /// <summary>Invoices waiting for the buyer: to verify, and to finalize (the dashboard queue).</summary>
-    public async Task<(int ToVerify, int ToFinalize)> GetQueueCountsAsync(int companyId)
+    public async Task<(int ToVerify, int ToFinalize)> GetQueueCountsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -608,7 +609,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
 
     // ---- Company: spot invoice ----
 
-    public async Task<Invoice> CreateSpotAsync(int companyId, NewSpotInvoice request, List<UploadedFile> uploads, Actor actor)
+    public async Task<Invoice> CreateSpotAsync(Guid companyId, NewSpotInvoice request, List<UploadedFile> uploads, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -651,7 +652,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
 
         var invoice = new Invoice
         {
-            CompanyId = companyId, InvoiceNumber = await NextNumberAsync(db), Kind = InvoiceKind.SpotInvoice, SupplierId = supplier.Id,
+            CompanyId = companyId, InvoiceNumber = await NextNumberAsync(db, companyId, request.VesselId), Kind = InvoiceKind.SpotInvoice, SupplierId = supplier.Id,
             SupplierInvoiceRef = reference,
             InvoiceDate = DateTime.SpecifyKind(request.InvoiceDate.Value.Date, DateTimeKind.Utc),
             DueDate = request.DueDate.HasValue ? DateTime.SpecifyKind(request.DueDate.Value.Date, DateTimeKind.Utc) : null,
@@ -684,14 +685,14 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
 
     // ---- Tax codes ----
 
-    public async Task<List<TaxCode>> GetTaxCodesAsync(int companyId)
+    public async Task<List<TaxCode>> GetTaxCodesAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await db.TaxCodes.Where(t => t.CompanyId == companyId).OrderBy(t => t.Code).ToListAsync();
     }
 
-    public async Task AddTaxCodeAsync(int companyId, string code, string description, decimal ratePct)
+    public async Task AddTaxCodeAsync(Guid companyId, string code, string description, decimal ratePct)
     {
         code = (code ?? "").Trim().ToUpperInvariant();
         if (code == "") throw new InvalidOperationException("Enter a code.");
@@ -704,7 +705,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         await db.SaveChangesAsync();
     }
 
-    public async Task DeleteTaxCodeAsync(int companyId, int taxCodeId)
+    public async Task DeleteTaxCodeAsync(Guid companyId, Guid taxCodeId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -718,13 +719,13 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
 
     // ---- Supplier bank accounts ----
 
-    public async Task<List<SupplierBankAccount>> GetBankAccountsAsync(int supplierId)
+    public async Task<List<SupplierBankAccount>> GetBankAccountsAsync(Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await db.SupplierBankAccounts.Where(b => b.SupplierId == supplierId).OrderBy(b => b.BankName).ThenBy(b => b.AccountNumber).ToListAsync();
     }
 
-    public async Task AddBankAccountAsync(int supplierId, SupplierBankAccount account)
+    public async Task AddBankAccountAsync(Guid supplierId, SupplierBankAccount account)
     {
         if (string.IsNullOrWhiteSpace(account.BankName)) throw new InvalidOperationException("Enter the bank name.");
         if (string.IsNullOrWhiteSpace(account.AccountName)) throw new InvalidOperationException("Enter the account holder's name.");
@@ -743,7 +744,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
         await db.SaveChangesAsync();
     }
 
-    public async Task DeleteBankAccountAsync(int supplierId, int accountId)
+    public async Task DeleteBankAccountAsync(Guid supplierId, Guid accountId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var account = await db.SupplierBankAccounts.FirstOrDefaultAsync(b => b.Id == accountId && b.SupplierId == supplierId);

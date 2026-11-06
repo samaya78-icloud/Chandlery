@@ -3,8 +3,8 @@ namespace Chandlery.Models;
 /// <summary>A unit of measure a company buys in (Pcs, Drum, Litre...). Items and document lines refer to it by its code.</summary>
 public class Uom
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
     public string Code { get; set; } = "";
     public string Name { get; set; } = "";
 
@@ -18,26 +18,26 @@ public class Uom
 /// </summary>
 public class UomConversion
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
-    public int FromUomId { get; set; }
-    public int ToUomId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid FromUomId { get; set; }
+    public Guid ToUomId { get; set; }
     public decimal Factor { get; set; }
 
     /// <summary>Null for a general conversion; set when the factor is only true for one item.</summary>
-    public int? ItemId { get; set; }
+    public Guid? ItemId { get; set; }
 }
 
 /// <summary>Works out how many of one unit make another, from a company's conversion table.</summary>
 public class UomConverter
 {
     private readonly Dictionary<string, Dictionary<string, decimal>> _general = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<int, Dictionary<string, Dictionary<string, decimal>>> _byItem = new();
+    private readonly Dictionary<Guid, Dictionary<string, Dictionary<string, decimal>>> _byItem = new();
 
     public static UomConverter Empty { get; } = new();
 
     /// <summary>Adds one stored conversion (and its reverse). Codes are matched ignoring case.</summary>
-    public void Add(string from, string to, decimal factor, int? itemId)
+    public void Add(string from, string to, decimal factor, Guid? itemId)
     {
         if (factor <= 0 || string.Equals(from, to, StringComparison.OrdinalIgnoreCase)) return;
         var graph = itemId is null ? _general : _byItem.TryGetValue(itemId.Value, out var g) ? g : _byItem[itemId.Value] = new(StringComparer.OrdinalIgnoreCase);
@@ -52,7 +52,7 @@ public class UomConverter
     }
 
     /// <summary>How many <paramref name="to"/> make one <paramref name="from"/>, or null when no chain of conversions connects them.</summary>
-    public decimal? Factor(string? from, string? to, int? itemId = null)
+    public decimal? Factor(string? from, string? to, Guid? itemId = null)
     {
         from = (from ?? "").Trim();
         to = (to ?? "").Trim();

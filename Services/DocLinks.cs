@@ -17,7 +17,7 @@ public enum DocKind
 /// <summary>One place that knows where each kind of record lives.</summary>
 public static class DocLinks
 {
-    public static string For(DocKind kind, int id, bool supplierPortal = false) => kind switch
+    public static string For(DocKind kind, Guid id, bool supplierPortal = false) => kind switch
     {
         DocKind.Requisition => $"/company/requisitions/{id}",
         DocKind.Rfq => supplierPortal ? $"/supplier/rfqs/{id}" : $"/company/rfqs/{id}",

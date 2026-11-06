@@ -47,7 +47,7 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _supplierId;
+    private Guid _supplierId;
     private int _count;
     private bool _loaded;
     private List<InvoiceablePo> _ready = new();
@@ -55,7 +55,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
         _count = await InvoiceSvc.GetSupplierCountAsync(_supplierId);
         _ready = await InvoiceSvc.GetInvoiceablePosAsync(_supplierId);
         _loaded = true;

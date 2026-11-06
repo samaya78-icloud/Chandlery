@@ -1,5 +1,5 @@
-@page "/supplier/invoices/po/{PoId:int}"
-@page "/supplier/invoices/{InvoiceId:int}/edit"
+@page "/supplier/invoices/po/{PoId:guid}"
+@page "/supplier/invoices/{InvoiceId:guid}/edit"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject InvoiceService InvoiceSvc
@@ -108,7 +108,7 @@ else
                 }
                 else
                 {
-                    <SelectBox TValue="int" @bind-Value="_req.BankAccountId" Options="_bankOptions" Placeholder="Choose an account…" Class="max-w-xl" />
+                    <SelectBox TValue="Guid" @bind-Value="_req.BankAccountId" Options="_bankOptions" Placeholder="Choose an account…" Class="max-w-xl" />
                 }
             </div>
 
@@ -154,14 +154,14 @@ else
 }
 
 @code {
-    [Parameter] public int PoId { get; set; }
-    [Parameter] public int InvoiceId { get; set; }
+    [Parameter] public Guid PoId { get; set; }
+    [Parameter] public Guid InvoiceId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _supplierId;
+    private Guid _supplierId;
     private Actor _actor = Actor.System;
     private SubmitContext? _ctx;
-    private List<SelectOption<int>> _bankOptions = new();
+    private List<SelectOption<Guid>> _bankOptions = new();
     private readonly SubmitInvoice _req = new();
     private readonly List<UploadedFile> _uploads = new();
     private readonly Dictionary<UploadedFile, string> _previewUrls = new(ReferenceEqualityComparer.Instance);
@@ -178,11 +178,11 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
         _actor = Actor.From(authState.User);
-        _isEdit = InvoiceId != 0;
+        _isEdit = InvoiceId != Guid.Empty;
 
-        int? invoiceId = _isEdit ? InvoiceId : null;
+        Guid? invoiceId = _isEdit ? InvoiceId : null;
         var poId = PoId;
         if (_isEdit)
         {
@@ -205,7 +205,7 @@ else
                 _req.AdditionalItemsCost = e.AdditionalItemsCost;
                 _req.AdditionalDeliveryCost = e.AdditionalDeliveryCost;
                 _req.DiscountOrCredit = e.DiscountOrCredit;
-                _req.BankAccountId = e.BankAccountId ?? 0;
+                _req.BankAccountId = e.BankAccountId ?? Guid.Empty;
                 _req.Remarks = e.Remarks;
                 _req.VarianceReason = e.VarianceReason;
                 _amountEdited = true;
@@ -221,7 +221,7 @@ else
         _loaded = true;
     }
 
-    private void ToggleDelivery(int id, bool on)
+    private void ToggleDelivery(Guid id, bool on)
     {
         if (on) { if (!_req.DeliveryOrderIds.Contains(id)) _req.DeliveryOrderIds.Add(id); }
         else _req.DeliveryOrderIds.Remove(id);

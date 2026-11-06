@@ -55,7 +55,7 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private bool _loaded;
     private bool _showForm;
     private string _code = "";
@@ -67,7 +67,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         await Load();
         _loaded = true;
     }

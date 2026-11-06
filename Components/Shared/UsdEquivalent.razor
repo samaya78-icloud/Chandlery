@@ -39,8 +39,8 @@
             return;
         }
 
-        int? companyId = null;
-        if (AuthStateTask is not null && int.TryParse((await AuthStateTask).User.FindFirst("CompanyId")?.Value, out var id)) companyId = id;
+        Guid? companyId = null;
+        if (AuthStateTask is not null && Guid.TryParse((await AuthStateTask).User.FindFirst("CompanyId")?.Value, out var id)) companyId = id;
         var rate = (await FxSvc.GetRatesAsync(companyId, new[] { code }, Date)).GetValueOrDefault(code);
         if (rate is null) { _usd = null; return; }
         _usd = Fx.ToUsd(Amount, rate.UnitsPerUsd);

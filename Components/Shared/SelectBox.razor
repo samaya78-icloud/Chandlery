@@ -4,8 +4,8 @@
 @*
   A styled, searchable drop-down that replaces the native <select>. One component for every case:
 
-  - Single choice:   <SelectBox TValue="int" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="Choose a vessel…" />
-  - Multiple choice: <SelectBox TValue="int" Multiple="true" Values="_ids" Options="_options" OnChanged="StateHasChanged" />
+  - Single choice:   <SelectBox TValue="Guid" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="Choose a vessel…" />
+  - Multiple choice: <SelectBox TValue="Guid" Multiple="true" Values="_ids" Options="_options" OnChanged="StateHasChanged" />
   - Small lists: pass Options; typing filters them in the browser's memory (no server call).
   - Large lists: pass Provider (and Resolve for labels of values that are not on the loaded page); typing asks the server,
     and "Load more" pages through the matches.

@@ -46,7 +46,7 @@ else
 
     private record CurrencyRow(Currency Currency, FxRate? Rate);
 
-    private int _companyId;
+    private Guid _companyId;
     private bool _isAdmin;
     private bool _loaded;
     private bool _saving;
@@ -58,7 +58,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _isAdmin = authState.User.IsInRole("CompanyAdmin");
         _master = await FxSvc.GetMasterAsync();
         _options = _master.Select(c => new SelectOption<string>(c.Code, $"{c.Code} · {c.Name}")).ToList();

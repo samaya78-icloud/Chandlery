@@ -8,7 +8,7 @@ namespace Chandlery.Data;
 /// </summary>
 public static class StarterCategories
 {
-    public static async Task<Dictionary<string, Category>> CreateAsync(ChandleryDbContext db, int companyId)
+    public static async Task<Dictionary<string, Category>> CreateAsync(ChandleryDbContext db, Guid companyId)
     {
         var now = DateTime.UtcNow;
         var all = new Dictionary<string, Category>();

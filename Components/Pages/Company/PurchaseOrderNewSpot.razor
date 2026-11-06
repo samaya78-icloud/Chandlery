@@ -10,7 +10,7 @@
 <PageHeader Eyebrow="Procurement" Title="New Spot PO"
             Subtitle="Order straight from a supplier without an RFQ. The order goes through the approval matrix by its total, like any other PO." />
 
-@if (_companyId != 0)
+@if (_companyId != Guid.Empty)
 {
 <div class="max-w-5xl space-y-6">
 
@@ -19,15 +19,15 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
                 <label class="label">Vessel</label>
-                <SelectBox TValue="int" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="Choose a vessel…" />
+                <SelectBox TValue="Guid" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="Choose a vessel…" />
             </div>
             <div>
                 <label class="label">Department @if (_departments.Count > 0) { <span class="text-rose-500">*</span> }</label>
-                <SelectBox TValue="int" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "No department")" />
+                <SelectBox TValue="Guid" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "No department")" />
             </div>
             <div>
                 <label class="label">Supplier</label>
-                <SelectBox TValue="int" @bind-Value="_supplierId" Provider="Procurement.SupplierSelectProvider(_companyId)" Resolve="Procurement.SupplierSelectResolver()"
+                <SelectBox TValue="Guid" @bind-Value="_supplierId" Provider="Procurement.SupplierSelectProvider(_companyId)" Resolve="Procurement.SupplierSelectResolver()"
                            Placeholder="Choose a supplier…" SearchPlaceholder="Search suppliers by name or email…" />
             </div>
             <div>
@@ -40,7 +40,7 @@
             </div>
             <div>
                 <label class="label">Order port</label>
-                <SelectBox TValue="int" @bind-Value="_portId" Options="_portOptions" Placeholder="Not specified" AllowClear="true" SearchPlaceholder="Search ports…" />
+                <SelectBox TValue="Guid" @bind-Value="_portId" Options="_portOptions" Placeholder="Not specified" AllowClear="true" SearchPlaceholder="Search ports…" />
             </div>
         </div>
 
@@ -59,7 +59,7 @@
     </div>
 
     <ItemLinePicker CompanyId="_companyId" Lines="_po.Lines" ShowPrice="@(!_po.IsDummy)" OnChanged="StateHasChanged"
-                    DepartmentId="@(_departmentId == 0 ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)" />
+                    DepartmentId="@(_departmentId == Guid.Empty ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)" />
 
     @if (!_po.IsDummy)
     {
@@ -111,14 +111,14 @@
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private Actor _actor = Actor.System;
-    private int _vesselId;
-    private int _departmentId;
-    private int _supplierId;
-    private int _portId;
+    private Guid _vesselId;
+    private Guid _departmentId;
+    private Guid _supplierId;
+    private Guid _portId;
     private List<SelectOption<string>> _currencyOptions = new();
-    private List<SelectOption<int>> _vesselOptions = new(), _departmentOptions = new(), _portOptions = new();
+    private List<SelectOption<Guid>> _vesselOptions = new(), _departmentOptions = new(), _portOptions = new();
     private readonly NewSpotPo _po = new();
     private List<Vessel> _vessels = new();
     private List<Department> _departments = new();
@@ -133,7 +133,7 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
 
         _vessels = await Procurement.GetVesselsAsync(companyId);
@@ -151,9 +151,9 @@
     {
         _error = null;
 
-        if (_vesselId == 0) { _error = "Choose the vessel this order is for."; return; }
-        if (_supplierId == 0) { _error = "Choose a supplier."; return; }
-        if (_departments.Count > 0 && _departmentId == 0) { _error = "Choose a department."; return; }
+        if (_vesselId == Guid.Empty) { _error = "Choose the vessel this order is for."; return; }
+        if (_supplierId == Guid.Empty) { _error = "Choose a supplier."; return; }
+        if (_departments.Count > 0 && _departmentId == Guid.Empty) { _error = "Choose a department."; return; }
         if (_po.Lines.Count == 0) { _error = "Add at least one line item."; return; }
 
         var zeroQty = _po.Lines.Count(l => l.Quantity <= 0);
@@ -175,11 +175,11 @@
         var request = new NewSpotPo
         {
             VesselId = _vesselId,
-            DepartmentId = _departmentId == 0 ? null : _departmentId,
+            DepartmentId = _departmentId == Guid.Empty ? null : _departmentId,
             SupplierId = _supplierId,
             SupplierRef = _po.SupplierRef,
             Currency = Currency,
-            OrderPortId = _portId == 0 ? null : _portId,
+            OrderPortId = _portId == Guid.Empty ? null : _portId,
             Remarks = _po.Remarks,
             IsDummy = _po.IsDummy,
             DiscountPct = _po.DiscountPct,

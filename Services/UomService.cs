@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Chandlery.Services;
 
 public record UomRow(Uom Uom, int UsedOn);
-public record UomConversionRow(int Id, string From, string To, decimal Factor, int? ItemId, string ItemLabel);
+public record UomConversionRow(Guid Id, string From, string To, decimal Factor, Guid? ItemId, string ItemLabel);
 
 /// <summary>The unit-of-measure master and the conversion table between units.</summary>
 public class UomService(IDbContextFactory<ChandleryDbContext> factory)
@@ -13,7 +13,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- Starter data ----
 
     /// <summary>Adds the starter units and conversions that are missing. Safe to run repeatedly; never touches what the company already has.</summary>
-    internal static async Task EnsureStarterAsync(ChandleryDbContext db, int companyId)
+    internal static async Task EnsureStarterAsync(ChandleryDbContext db, Guid companyId)
     {
         var have = (await db.Uoms.IgnoreQueryFilters().Where(u => u.CompanyId == companyId).Select(u => u.Code).ToListAsync())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -32,7 +32,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Makes sure a unit with this code exists (an import or older data may name one that was never set up), and returns its code as stored.</summary>
-    internal static async Task<string> EnsureExistsAsync(ChandleryDbContext db, int companyId, string? code)
+    internal static async Task<string> EnsureExistsAsync(ChandleryDbContext db, Guid companyId, string? code)
     {
         code = (code ?? "").Trim();
         if (code == "") return "";
@@ -47,7 +47,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Units ----
 
-    public async Task<List<UomRow>> GetAllAsync(int companyId)
+    public async Task<List<UomRow>> GetAllAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -57,7 +57,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>How many items and document lines use each unit (lower-case code), so unused ones can be deleted and the rest only disabled.</summary>
-    private static async Task<Dictionary<string, int>> UsageAsync(ChandleryDbContext db, int companyId)
+    private static async Task<Dictionary<string, int>> UsageAsync(ChandleryDbContext db, Guid companyId)
     {
         var counts = new Dictionary<string, int>();
         void Add(IEnumerable<string?> codes)
@@ -73,7 +73,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The enabled units as select options (code as the label, the full name underneath).</summary>
-    public async Task<List<SelectOption<string>>> GetOptionsAsync(int companyId)
+    public async Task<List<SelectOption<string>>> GetOptionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -81,7 +81,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
         return units.Select(u => new SelectOption<string>(u.Code, u.Code, u.Name == u.Code ? null : u.Name)).ToList();
     }
 
-    public async Task<Uom> AddAsync(int companyId, string code, string name)
+    public async Task<Uom> AddAsync(Guid companyId, string code, string name)
     {
         code = (code ?? "").Trim();
         name = (name ?? "").Trim();
@@ -99,7 +99,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The code is not editable (documents refer to it); the name and enabled flag are.</summary>
-    public async Task UpdateAsync(int companyId, int uomId, string name, bool isActive)
+    public async Task UpdateAsync(Guid companyId, Guid uomId, string name, bool isActive)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -110,7 +110,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
-    public async Task DeleteAsync(int companyId, int uomId)
+    public async Task DeleteAsync(Guid companyId, Guid uomId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -126,7 +126,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- Item pickers (for item-specific conversions) ----
 
     /// <summary>Server-side search over the company's catalog for a SelectBox (code or name).</summary>
-    public Func<SelectQuery, Task<SelectResult<int>>> ItemSelectProvider(int companyId) => async query =>
+    public Func<SelectQuery, Task<SelectResult<Guid>>> ItemSelectProvider(Guid companyId) => async query =>
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -139,20 +139,20 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
         }
         var total = await items.CountAsync();
         var rows = await items.OrderBy(i => i.Code).Skip(query.Skip).Take(query.Take).ToListAsync();
-        return new SelectResult<int>(rows.Select(i => new SelectOption<int>(i.Id, i.Code, i.Name)).ToList(), total);
+        return new SelectResult<Guid>(rows.Select(i => new SelectOption<Guid>(i.Id, i.Code, i.Name)).ToList(), total);
     };
 
-    public Func<IReadOnlyCollection<int>, Task<IReadOnlyList<SelectOption<int>>>> ItemSelectResolver() => async ids =>
+    public Func<IReadOnlyCollection<Guid>, Task<IReadOnlyList<SelectOption<Guid>>>> ItemSelectResolver() => async ids =>
     {
         await using var db = await factory.CreateDbContextAsync();
         var list = ids.ToList();
         var rows = await db.Items.IgnoreQueryFilters().Where(i => list.Contains(i.Id)).ToListAsync();
-        return rows.Select(i => new SelectOption<int>(i.Id, i.Code, i.Name)).ToList();
+        return rows.Select(i => new SelectOption<Guid>(i.Id, i.Code, i.Name)).ToList();
     };
 
     // ---- Conversions ----
 
-    public async Task<List<UomConversionRow>> GetConversionsAsync(int companyId)
+    public async Task<List<UomConversionRow>> GetConversionsAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -166,7 +166,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
             .OrderBy(r => r.ItemId.HasValue).ThenBy(r => r.From).ThenBy(r => r.To).ToList();
     }
 
-    public async Task AddConversionAsync(int companyId, string fromCode, string toCode, decimal factor, int? itemId)
+    public async Task AddConversionAsync(Guid companyId, string fromCode, string toCode, decimal factor, Guid? itemId)
     {
         if (string.Equals(fromCode, toCode, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Choose two different units.");
         if (factor <= 0) throw new InvalidOperationException("The factor must be above zero.");
@@ -186,7 +186,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
-    public async Task DeleteConversionAsync(int companyId, int conversionId)
+    public async Task DeleteConversionAsync(Guid companyId, Guid conversionId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -197,13 +197,13 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The company's whole conversion table as a converter. Suppliers get the buyer's table for the RFQ they are quoting on.</summary>
-    public async Task<UomConverter> GetConverterAsync(int companyId)
+    public async Task<UomConverter> GetConverterAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await BuildConverterAsync(db, companyId);
     }
 
-    internal static async Task<UomConverter> BuildConverterAsync(ChandleryDbContext db, int companyId)
+    internal static async Task<UomConverter> BuildConverterAsync(ChandleryDbContext db, Guid companyId)
     {
         var codes = await db.Uoms.IgnoreQueryFilters().Where(u => u.CompanyId == companyId).ToDictionaryAsync(u => u.Id, u => u.Code);
         var converter = new UomConverter();
@@ -214,7 +214,7 @@ public class UomService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The units a quote on this line may be priced in: the requested one, then every enabled unit it can be converted to.</summary>
-    public static List<SelectOption<string>> QuotableOptions(UomConverter converter, IEnumerable<SelectOption<string>> all, string requestedUom, int itemId) =>
+    public static List<SelectOption<string>> QuotableOptions(UomConverter converter, IEnumerable<SelectOption<string>> all, string requestedUom, Guid itemId) =>
         all.Where(o => string.Equals(o.Value, requestedUom, StringComparison.OrdinalIgnoreCase) || converter.Factor(requestedUom, o.Value, itemId) is not null)
            .OrderBy(o => !string.Equals(o.Value, requestedUom, StringComparison.OrdinalIgnoreCase)).ThenBy(o => o.Value).ToList();
 }

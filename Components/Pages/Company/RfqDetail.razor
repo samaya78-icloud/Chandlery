@@ -1,4 +1,4 @@
-@page "/company/rfqs/{RfqId:int}"
+@page "/company/rfqs/{RfqId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -137,7 +137,7 @@ else
         var perLine = BestPerLine();
         var bySupplier = perLine.GroupBy(kv => kv.Value).Select(g => (Supplier: _suppliersById.GetValueOrDefault(g.Key)?.Name ?? "", Lines: g.Count())).OrderByDescending(x => x.Lines).ToList();
         var openCount = OpenLines.Count();
-        var chosenCount = _pickSupplier == 0 ? 0 : OpenLines.Count(l => QuoteLineFor(_pickSupplier, l.Id) is not null);
+        var chosenCount = _pickSupplier == Guid.Empty ? 0 : OpenLines.Count(l => QuoteLineFor(_pickSupplier, l.Id) is not null);
 
         <div class="mb-6 card p-5 print:hidden">
             <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -155,12 +155,12 @@ else
                 <div class="rounded-xl border border-line p-4">
                     <p class="text-sm font-semibold text-ink">One supplier for everything</p>
                     <p class="mb-3 text-xs text-muted">Choose the supplier yourself.</p>
-                    <SelectBox TValue="int" @bind-Value="_pickSupplier" Options="_quotedSupplierOptions" Placeholder="Choose a supplier…" SearchPlaceholder="Search…" />
-                    @if (_pickSupplier != 0)
+                    <SelectBox TValue="Guid" @bind-Value="_pickSupplier" Options="_quotedSupplierOptions" Placeholder="Choose a supplier…" SearchPlaceholder="Search…" />
+                    @if (_pickSupplier != Guid.Empty)
                     {
                         <p class="mt-2 text-xs text-muted">Quoted @chosenCount of @openCount open lines@(chosenCount < openCount ? "; the rest stay as they are." : ".")</p>
                     }
-                    <button @onclick="SelectOneSupplier" disabled="@(_busy || _pickSupplier == 0 || chosenCount == 0)" class="btn btn-secondary btn-sm mt-3">Select all lines</button>
+                    <button @onclick="SelectOneSupplier" disabled="@(_busy || _pickSupplier == Guid.Empty || chosenCount == 0)" class="btn btn-secondary btn-sm mt-3">Select all lines</button>
                 </div>
 
                 <div class="rounded-xl border border-line p-4">
@@ -382,22 +382,22 @@ else
 }
 
 @code {
-    [Parameter] public int RfqId { get; set; }
+    [Parameter] public Guid RfqId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private Actor _actor = Actor.System;
     private int _auditVersion;
     private Requisition? _requisition;
     private Rfq? _rfq;
     private List<Quote> _quotes = new();
-    private HashSet<int> _poItemIds = new();
+    private HashSet<Guid> _poItemIds = new();
     private List<PurchaseOrder> _newlyRaisedPos = new();
-    private Dictionary<int, Item> _itemsById = new();
-    private Dictionary<int, Supplier> _suppliersById = new();
+    private Dictionary<Guid, Item> _itemsById = new();
+    private Dictionary<Guid, Supplier> _suppliersById = new();
     private List<Port> _ports = new();
-    private IReadOnlyDictionary<int, string> AlreadyInvited => _rfq!.InvitedSupplierIds.ToDictionary(id => id, _ => "Already invited");
-    private HashSet<int> _toInvite = new();
+    private IReadOnlyDictionary<Guid, string> AlreadyInvited => _rfq!.InvitedSupplierIds.ToDictionary(id => id, _ => "Already invited");
+    private HashSet<Guid> _toInvite = new();
     private string? _error;
     private string? _info;
     private RfqFiles _files = RfqFiles.Empty;
@@ -405,8 +405,8 @@ else
     private string _evaluationNote = "";
     private bool _noteLoaded;
     private bool _busy;
-    private int _pickSupplier;
-    private List<SelectOption<int>> _quotedSupplierOptions = new();
+    private Guid _pickSupplier;
+    private List<SelectOption<Guid>> _quotedSupplierOptions = new();
     private Dictionary<string, decimal> _unitsPerUsd = new();
 
     private const int LinePageSize = 25;
@@ -432,7 +432,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
         await Load();
     }
@@ -462,8 +462,8 @@ else
 
         _unitsPerUsd = (await FxSvc.GetRatesAsync(_companyId, _quotes.Select(q => q.Currency))).ToDictionary(r => r.Key, r => r.Value.UnitsPerUsd);
         _quotedSupplierOptions = _rfq.InvitedSupplierIds.Where(id => _quotes.Any(q => q.SupplierId == id))
-            .Select(id => new SelectOption<int>(id, _suppliersById.GetValueOrDefault(id)?.Name ?? "Supplier " + id)).ToList();
-        if (_pickSupplier != 0 && _quotedSupplierOptions.All(o => o.Value != _pickSupplier)) _pickSupplier = 0;
+            .Select(id => new SelectOption<Guid>(id, _suppliersById.GetValueOrDefault(id)?.Name ?? "Supplier " + id)).ToList();
+        if (_pickSupplier != Guid.Empty && _quotedSupplierOptions.All(o => o.Value != _pickSupplier)) _pickSupplier = Guid.Empty;
 
         _toInvite.Clear();
     }
@@ -494,7 +494,7 @@ else
         return _unitsPerUsd.TryGetValue(currency, out var rate) && rate > 0 ? amount / rate : null;
     }
 
-    private QuoteLine? QuoteLineFor(int supplierId, int rfqLineId) =>
+    private QuoteLine? QuoteLineFor(Guid supplierId, Guid rfqLineId) =>
         _quotes.FirstOrDefault(q => q.SupplierId == supplierId)?.Lines.FirstOrDefault(l => l.RfqLineId == rfqLineId);
 
     /// <summary>What one unit really costs: the line discount, then the supplier's header discount.</summary>
@@ -524,9 +524,9 @@ else
     }
 
     /// <summary>The cheapest comparable quote for each open line (the first invited supplier wins a tie).</summary>
-    private Dictionary<int, int> BestPerLine()
+    private Dictionary<Guid, Guid> BestPerLine()
     {
-        var best = new Dictionary<int, int>();
+        var best = new Dictionary<Guid, Guid>();
         foreach (var line in OpenLines)
         {
             decimal? lowest = null;
@@ -543,7 +543,7 @@ else
     }
 
     /// <summary>Lowest effective unit price among the quotes that can be compared (needs at least two).</summary>
-    private bool IsLowest(int rfqLineId, Quote quote, QuoteLine quoteLine)
+    private bool IsLowest(Guid rfqLineId, Quote quote, QuoteLine quoteLine)
     {
         var comparable = _quotes
             .Select(q => (Quote: q, Line: q.Lines.FirstOrDefault(l => l.RfqLineId == rfqLineId)))
@@ -613,7 +613,7 @@ else
         return $"{lowest.Supplier} selected on {n} line(s) (lowest total quote).";
     });
 
-    private Task SelectCheapestPerLine(Dictionary<int, int> perLine) => RunQuickSelect(async () =>
+    private Task SelectCheapestPerLine(Dictionary<Guid, Guid> perLine) => RunQuickSelect(async () =>
     {
         var n = await Procurement.AwardLinesAsync(_companyId, RfqId, perLine, _actor, "cheapest quote for each line");
         var suppliers = perLine.Values.Distinct().Count();
@@ -626,7 +626,7 @@ else
         return $"Cleared the selection on {n} line(s).";
     });
 
-    private async Task Award(int rfqLineId, int supplierId)
+    private async Task Award(Guid rfqLineId, Guid supplierId)
     {
         _error = null;
         try

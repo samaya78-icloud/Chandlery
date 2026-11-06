@@ -14,14 +14,14 @@ public class NewDelivery
 }
 
 /// <summary>One PO line with how much has been received so far.</summary>
-public record DeliveryProgress(int ItemId, decimal Ordered, decimal Delivered)
+public record DeliveryProgress(Guid ItemId, decimal Ordered, decimal Delivered)
 {
     public decimal Remaining => Math.Max(0m, Ordered - Delivered);
 }
 
 public class DeliveryService(IDbContextFactory<ChandleryDbContext> factory)
 {
-    public async Task<List<DeliveryOrder>> GetForPoAsync(int companyId, int poId)
+    public async Task<List<DeliveryOrder>> GetForPoAsync(Guid companyId, Guid poId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -32,7 +32,7 @@ public class DeliveryService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The delivery orders for a PO a supplier may see: only when the PO is approved and theirs.</summary>
-    public async Task<List<DeliveryOrder>> GetForSupplierAsync(int supplierId, int poId)
+    public async Task<List<DeliveryOrder>> GetForSupplierAsync(Guid supplierId, Guid poId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var visible = await db.PurchaseOrders.IgnoreQueryFilters()
@@ -45,7 +45,7 @@ public class DeliveryService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Deliveries for several of a supplier's POs at once (callers pass POs the supplier may already see).</summary>
-    public async Task<Dictionary<int, List<DeliveryOrder>>> GetForSupplierPosAsync(int supplierId, IEnumerable<int> poIds)
+    public async Task<Dictionary<Guid, List<DeliveryOrder>>> GetForSupplierPosAsync(Guid supplierId, IEnumerable<Guid> poIds)
     {
         var ids = poIds.Distinct().ToList();
         await using var db = await factory.CreateDbContextAsync();
@@ -69,7 +69,7 @@ public class DeliveryService(IDbContextFactory<ChandleryDbContext> factory)
         return progress.All(p => p.Delivered >= p.Ordered) ? DeliveryStatus.Delivered : DeliveryStatus.Partial;
     }
 
-    public async Task<DeliveryOrder> RecordAsync(int companyId, int poId, NewDelivery request, Actor actor)
+    public async Task<DeliveryOrder> RecordAsync(Guid companyId, Guid poId, NewDelivery request, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -99,12 +99,10 @@ public class DeliveryService(IDbContextFactory<ChandleryDbContext> factory)
                     $"{names.GetValueOrDefault(line.ItemId) ?? "An item"}: only {Money.Qty(progress.Remaining)} left to receive, you entered {Money.Qty(line.Quantity)}.");
         }
 
-        // Based on the highest id (not a count) so a deleted delivery never makes the next number collide.
-        var nextSeq = 1001 + (await db.DeliveryOrders.IgnoreQueryFilters().MaxAsync(d => (int?)d.Id) ?? 0);
         var delivery = new DeliveryOrder
         {
             CompanyId = companyId,
-            DoNumber = $"DO-{nextSeq}",
+            DoNumber = await DocumentNumbers.NextAsync(db, companyId, await DocumentNumbers.VesselOfPoAsync(db, po), DocType.Delivery),
             PurchaseOrderId = poId,
             SupplierId = po.SupplierId,
             ReceivedDate = DateTime.SpecifyKind(request.ReceivedDate.Value.Date, DateTimeKind.Utc),
@@ -130,7 +128,7 @@ public class DeliveryService(IDbContextFactory<ChandleryDbContext> factory)
         return delivery;
     }
 
-    public async Task DeleteAsync(int companyId, int deliveryId, Actor actor)
+    public async Task DeleteAsync(Guid companyId, Guid deliveryId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;

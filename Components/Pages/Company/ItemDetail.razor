@@ -1,4 +1,4 @@
-@page "/company/items/{ItemId:int}"
+@page "/company/items/{ItemId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject HubService Hub
@@ -57,7 +57,7 @@ else
 }
 
 @code {
-    [Parameter] public int ItemId { get; set; }
+    [Parameter] public Guid ItemId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private ItemHub? _hub;
@@ -68,7 +68,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _hub = await Hub.GetItemAsync(companyId, ItemId);
         _loaded = true;
     }

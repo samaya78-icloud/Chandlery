@@ -13,8 +13,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Chandlery.Migrations
 {
     [DbContext(typeof(ChandleryDbContext))]
-    [Migration("20261026141146_CurrencyAndRates")]
-    partial class CurrencyAndRates
+    [Migration("20261106161533_InitialGuidSchema")]
+    partial class InitialGuidSchema
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -28,14 +28,12 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.AppUser", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int?>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -48,6 +46,9 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("PasswordHash")
                         .IsRequired()
                         .HasColumnType("text");
@@ -55,8 +56,23 @@ namespace Chandlery.Migrations
                     b.Property<int>("Role")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("SupplierId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -72,23 +88,39 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.ApprovalRule", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                    b.Property<Guid>("ApproverUserId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("ApproverUserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("DepartmentId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("Level")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<decimal?>("UpToAmount")
                         .HasPrecision(18, 2)
@@ -105,33 +137,118 @@ namespace Chandlery.Migrations
                     b.ToTable("ApprovalRules");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.Attachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RequisitionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("RequisitionLineId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("ShareWithSuppliers")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StoredKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UploadedByName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId");
+
+                    b.HasIndex("RequisitionId", "RequisitionLineId");
+
+                    b.ToTable("Attachments");
+                });
+
             modelBuilder.Entity("Chandlery.Models.AuditEntry", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("At")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("EntityId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("EntityId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("EntityType")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.Property<string>("Text")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("UserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("UserName")
                         .IsRequired()
@@ -146,14 +263,12 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Category", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -167,8 +282,26 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("ParentCategoryId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ParentCategoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -181,11 +314,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Company", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Address")
                         .HasColumnType("text");
@@ -213,8 +344,33 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("OfficeCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("HO");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("RegistrationNumber")
                         .HasColumnType("text");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -223,8 +379,8 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.CompanyCurrency", b =>
                 {
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("CurrencyCode")
                         .HasMaxLength(3)
@@ -237,20 +393,36 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.CompanySupplier", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("AddedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -283,14 +455,12 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.DeliveryOrder", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -299,15 +469,18 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("InvoiceId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Place")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("PurchaseOrderId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("PurchaseOrderId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("ReceivedDate")
                         .HasColumnType("timestamp with time zone");
@@ -316,15 +489,30 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("RecordedByUserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("RecordedByUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Remarks")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -342,18 +530,34 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Department", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -365,14 +569,14 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.DepartmentCategory", b =>
                 {
-                    b.Property<int>("DepartmentId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("DepartmentId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("CategoryId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CategoryId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("DepartmentId", "CategoryId");
 
@@ -385,14 +589,12 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.ExchangeRate", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int?>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -406,6 +608,9 @@ namespace Chandlery.Migrations
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
 
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime>("RateDate")
                         .HasColumnType("timestamp with time zone");
 
@@ -413,6 +618,21 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<decimal>("UnitsPerUsd")
                         .HasPrecision(18, 8)
@@ -433,11 +653,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Invoice", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<decimal>("AdditionalDeliveryCost")
                         .HasPrecision(18, 2)
@@ -447,11 +665,11 @@ namespace Chandlery.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
-                    b.Property<int?>("BankAccountId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("BankAccountId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("CostCentre")
                         .IsRequired()
@@ -461,8 +679,8 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("DepartmentId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid");
 
                     b.Property<decimal>("DiscountOrCredit")
                         .HasPrecision(18, 2)
@@ -492,8 +710,11 @@ namespace Chandlery.Migrations
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("PurchaseOrderId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PurchaseOrderId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("RejectionReason")
                         .IsRequired()
@@ -513,15 +734,30 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("SupplierInvoiceRef")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("TaxCodeId")
-                        .HasColumnType("integer");
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<Guid?>("TaxCodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<decimal>("TaxRatePct")
                         .HasPrecision(5, 2)
@@ -542,8 +778,8 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("VesselId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("VesselId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -567,36 +803,52 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.InvoiceApproval", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("ApproverUserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("ApproverUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Comment")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("DecidedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("DecidedByUserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DecidedByUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("Decision")
                         .HasColumnType("integer");
 
-                    b.Property<int>("InvoiceId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("Level")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -611,14 +863,12 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.InvoiceDocument", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ContentType")
                         .IsRequired()
@@ -628,8 +878,11 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("InvoiceId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<long>("SizeBytes")
                         .HasColumnType("bigint");
@@ -637,6 +890,21 @@ namespace Chandlery.Migrations
                     b.Property<string>("StoredKey")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<DateTime>("UploadedAt")
                         .HasColumnType("timestamp with time zone");
@@ -656,21 +924,19 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Item", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CategoryId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CategoryId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -680,6 +946,24 @@ namespace Chandlery.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<string>("UnitOfMeasure")
                         .IsRequired()
@@ -694,29 +978,94 @@ namespace Chandlery.Migrations
                     b.ToTable("Items");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.NodeInfo", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Profile")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.HasKey("Id");
+
+                    b.ToTable("NodeInfos");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.NumberSequence", b =>
+                {
+                    b.Property<string>("Scope")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("Type")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<int>("Year")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Lane")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)");
+
+                    b.Property<int>("LastValue")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Scope", "Type", "Year", "Lane");
+
+                    b.ToTable("NumberSequences");
+                });
+
             modelBuilder.Entity("Chandlery.Models.PoApproval", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("ApproverUserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("ApproverUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Comment")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("DecidedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("DecidedByUserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DecidedByUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("Decision")
                         .HasColumnType("integer");
@@ -724,8 +1073,26 @@ namespace Chandlery.Migrations
                     b.Property<int>("Level")
                         .HasColumnType("integer");
 
-                    b.Property<int>("PurchaseOrderId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PurchaseOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -740,11 +1107,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Port", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Country")
                         .IsRequired()
@@ -753,6 +1118,24 @@ namespace Chandlery.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -764,11 +1147,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.PurchaseOrder", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("AdditionalChargeDescription")
                         .IsRequired()
@@ -778,8 +1159,8 @@ namespace Chandlery.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedDate")
                         .HasColumnType("timestamp with time zone");
@@ -791,8 +1172,8 @@ namespace Chandlery.Migrations
                     b.Property<int>("DeliveryStatus")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("DepartmentId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid");
 
                     b.Property<decimal>("DiscountPct")
                         .HasPrecision(5, 2)
@@ -804,8 +1185,11 @@ namespace Chandlery.Migrations
                     b.Property<bool>("IsSpot")
                         .HasColumnType("boolean");
 
-                    b.Property<int?>("OrderPortId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("OrderPortId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("PoNumber")
                         .IsRequired()
@@ -815,28 +1199,43 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("RequisitionId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("RequisitionId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int?>("RfqId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("RfqId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("SupplierRef")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.Property<decimal?>("UsdRate")
                         .HasPrecision(18, 8)
                         .HasColumnType("numeric(18,8)");
 
-                    b.Property<int?>("VesselId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("VesselId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -849,11 +1248,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Quote", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("AdditionalChargeDescription")
                         .IsRequired()
@@ -863,8 +1260,8 @@ namespace Chandlery.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Currency")
                         .IsRequired()
@@ -877,22 +1274,40 @@ namespace Chandlery.Migrations
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
 
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Remarks")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("RfqId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("RfqId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("SubmittedDate")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("SupplierRef")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<DateTime?>("ValidityDate")
                         .HasColumnType("timestamp with time zone");
@@ -908,14 +1323,12 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Requisition", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -924,20 +1337,23 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("CreatedByUserId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int?>("DeliveryPortId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DeliveryPortId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int?>("DepartmentId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("EstDeliveryDate")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsBreakdown")
                         .HasColumnType("boolean");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Remarks")
                         .IsRequired()
@@ -953,6 +1369,21 @@ namespace Chandlery.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.Property<int>("Type")
                         .HasColumnType("integer");
 
@@ -965,8 +1396,8 @@ namespace Chandlery.Migrations
                     b.Property<DateTime?>("VesselEtd")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("VesselId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("VesselId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -984,11 +1415,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.RequisitionLine", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<decimal>("ApprovedQuantity")
                         .HasPrecision(18, 3)
@@ -1000,15 +1429,33 @@ namespace Chandlery.Migrations
                     b.Property<string>("DrawingNo")
                         .HasColumnType("text");
 
-                    b.Property<int>("ItemId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
-                    b.Property<int>("RequisitionId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("RequisitionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<string>("Uom")
                         .IsRequired()
@@ -1023,11 +1470,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Rfq", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("BuyerDesignation")
                         .IsRequired()
@@ -1041,8 +1486,8 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedDate")
                         .HasColumnType("timestamp with time zone");
@@ -1050,8 +1495,8 @@ namespace Chandlery.Migrations
                     b.Property<DateTime?>("DateRequired")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("DeliveryPortId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("DeliveryPortId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("DueDate")
                         .HasColumnType("timestamp with time zone");
@@ -1072,16 +1517,30 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.PrimitiveCollection<List<int>>("InvitedSupplierIds")
+                    b.Property<string>("EvaluationNote")
                         .IsRequired()
-                        .HasColumnType("integer[]");
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("EvaluationUpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvaluationUpdatedByName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.PrimitiveCollection<List<Guid>>("InvitedSupplierIds")
+                        .IsRequired()
+                        .HasColumnType("uuid[]");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Remarks")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("RequisitionId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("RequisitionId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("RfqNumber")
                         .IsRequired()
@@ -1089,6 +1548,21 @@ namespace Chandlery.Migrations
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<int>("Type")
                         .HasColumnType("integer");
@@ -1100,8 +1574,8 @@ namespace Chandlery.Migrations
                     b.Property<DateTime?>("VesselEta")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("VesselId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("VesselId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -1118,20 +1592,36 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.RfqArchive", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("ArchivedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("RfqId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("RfqId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -1145,11 +1635,12 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.RfqLine", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                    b.Property<bool>("AllowUomChange")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Description")
                         .HasColumnType("text");
@@ -1157,25 +1648,43 @@ namespace Chandlery.Migrations
                     b.Property<string>("DrawingNo")
                         .HasColumnType("text");
 
-                    b.Property<int>("ItemId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("numeric(18,3)");
 
-                    b.Property<int?>("RequisitionLineId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("RequisitionLineId")
+                        .HasColumnType("uuid");
 
-                    b.Property<int>("RfqId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("RfqId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<string>("Uom")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("WinningSupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("WinningSupplierId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
@@ -1186,11 +1695,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.Supplier", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ContactEmail")
                         .IsRequired()
@@ -1204,6 +1711,24 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.HasKey("Id");
 
                     b.ToTable("Suppliers");
@@ -1211,11 +1736,9 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.SupplierBankAccount", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("AccountName")
                         .IsRequired()
@@ -1233,12 +1756,30 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("SupplierId")
-                        .HasColumnType("integer");
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SupplierId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("SwiftCode")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -1249,26 +1790,42 @@ namespace Chandlery.Migrations
 
             modelBuilder.Entity("Chandlery.Models.TaxCode", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Code")
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
                     b.Property<decimal>("RatePct")
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.HasKey("Id");
 
@@ -1278,16 +1835,121 @@ namespace Chandlery.Migrations
                     b.ToTable("TaxCodes");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.Uom", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId", "Code")
+                        .IsUnique();
+
+                    b.ToTable("Uoms");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.UomConversion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Factor")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)");
+
+                    b.Property<Guid>("FromUomId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<Guid>("ToUomId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FromUomId");
+
+                    b.HasIndex("ItemId");
+
+                    b.HasIndex("ToUomId");
+
+                    b.HasIndex("CompanyId", "FromUomId", "ToUomId")
+                        .IsUnique()
+                        .HasFilter("\"ItemId\" IS NULL");
+
+                    b.HasIndex("CompanyId", "FromUomId", "ToUomId", "ItemId")
+                        .IsUnique()
+                        .HasFilter("\"ItemId\" IS NOT NULL");
+
+                    b.ToTable("UomConversions");
+                });
+
             modelBuilder.Entity("Chandlery.Models.Vessel", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
+                        .HasColumnType("uuid");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("CompanyId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("ImoNumber")
                         .HasColumnType("text");
@@ -1296,10 +1958,39 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ShortCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.HasKey("Id");
 
                     b.HasIndex("CompanyId", "Name")
                         .IsUnique();
+
+                    b.HasIndex("CompanyId", "ShortCode")
+                        .IsUnique()
+                        .HasFilter("\"ShortCode\" <> ''");
 
                     b.ToTable("Vessels");
                 });
@@ -1335,6 +2026,21 @@ namespace Chandlery.Migrations
                         .WithMany()
                         .HasForeignKey("DepartmentId")
                         .OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("Chandlery.Models.Attachment", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.Requisition", null)
+                        .WithMany()
+                        .HasForeignKey("RequisitionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Chandlery.Models.AuditEntry", b =>
@@ -1411,8 +2117,8 @@ namespace Chandlery.Migrations
 
                     b.OwnsMany("Chandlery.Models.DeliveryOrderLine", "Lines", b1 =>
                         {
-                            b1.Property<int>("DeliveryOrderId")
-                                .HasColumnType("integer");
+                            b1.Property<Guid>("DeliveryOrderId")
+                                .HasColumnType("uuid");
 
                             b1.Property<int>("Id")
                                 .ValueGeneratedOnAdd()
@@ -1420,8 +2126,8 @@ namespace Chandlery.Migrations
 
                             NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b1.Property<int>("Id"));
 
-                            b1.Property<int>("ItemId")
-                                .HasColumnType("integer");
+                            b1.Property<Guid>("ItemId")
+                                .HasColumnType("uuid");
 
                             b1.Property<decimal>("Quantity")
                                 .HasPrecision(18, 3)
@@ -1517,8 +2223,8 @@ namespace Chandlery.Migrations
 
                     b.OwnsMany("Chandlery.Models.InvoiceLine", "Lines", b1 =>
                         {
-                            b1.Property<int>("InvoiceId")
-                                .HasColumnType("integer");
+                            b1.Property<Guid>("InvoiceId")
+                                .HasColumnType("uuid");
 
                             b1.Property<int>("Id")
                                 .ValueGeneratedOnAdd()
@@ -1533,6 +2239,9 @@ namespace Chandlery.Migrations
                             b1.Property<decimal>("DiscountPct")
                                 .HasPrecision(5, 2)
                                 .HasColumnType("numeric(5,2)");
+
+                            b1.Property<Guid?>("ItemId")
+                                .HasColumnType("uuid");
 
                             b1.Property<decimal>("Quantity")
                                 .HasPrecision(18, 3)
@@ -1641,8 +2350,8 @@ namespace Chandlery.Migrations
 
                     b.OwnsMany("Chandlery.Models.PoLine", "Lines", b1 =>
                         {
-                            b1.Property<int>("PurchaseOrderId")
-                                .HasColumnType("integer");
+                            b1.Property<Guid>("PurchaseOrderId")
+                                .HasColumnType("uuid");
 
                             b1.Property<int>("Id")
                                 .ValueGeneratedOnAdd()
@@ -1654,8 +2363,8 @@ namespace Chandlery.Migrations
                                 .HasPrecision(5, 2)
                                 .HasColumnType("numeric(5,2)");
 
-                            b1.Property<int>("ItemId")
-                                .HasColumnType("integer");
+                            b1.Property<Guid>("ItemId")
+                                .HasColumnType("uuid");
 
                             b1.Property<decimal>("Quantity")
                                 .HasPrecision(18, 3)
@@ -1664,6 +2373,10 @@ namespace Chandlery.Migrations
                             b1.Property<decimal>("UnitPrice")
                                 .HasPrecision(18, 2)
                                 .HasColumnType("numeric(18,2)");
+
+                            b1.Property<string>("Uom")
+                                .IsRequired()
+                                .HasColumnType("text");
 
                             b1.HasKey("PurchaseOrderId", "Id");
 
@@ -1692,14 +2405,17 @@ namespace Chandlery.Migrations
 
                     b.OwnsMany("Chandlery.Models.QuoteLine", "Lines", b1 =>
                         {
-                            b1.Property<int>("QuoteId")
-                                .HasColumnType("integer");
+                            b1.Property<Guid>("QuoteId")
+                                .HasColumnType("uuid");
 
                             b1.Property<int>("Id")
                                 .ValueGeneratedOnAdd()
                                 .HasColumnType("integer");
 
                             NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b1.Property<int>("Id"));
+
+                            b1.Property<decimal>("ConversionFactor")
+                                .HasColumnType("numeric");
 
                             b1.Property<decimal>("DiscountPct")
                                 .HasPrecision(5, 2)
@@ -1709,8 +2425,8 @@ namespace Chandlery.Migrations
                                 .IsRequired()
                                 .HasColumnType("text");
 
-                            b1.Property<int>("RfqLineId")
-                                .HasColumnType("integer");
+                            b1.Property<Guid>("RfqLineId")
+                                .HasColumnType("uuid");
 
                             b1.Property<decimal>("UnitPrice")
                                 .HasPrecision(18, 2)
@@ -1827,6 +2543,41 @@ namespace Chandlery.Migrations
                         .WithMany()
                         .HasForeignKey("CompanyId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.Uom", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.UomConversion", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.Uom", null)
+                        .WithMany()
+                        .HasForeignKey("FromUomId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.Item", null)
+                        .WithMany()
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Chandlery.Models.Uom", null)
+                        .WithMany()
+                        .HasForeignKey("ToUomId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 

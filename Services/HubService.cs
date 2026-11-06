@@ -5,12 +5,12 @@ using Microsoft.EntityFrameworkCore;
 namespace Chandlery.Services;
 
 // Light summaries used by the hub pages, the lineage strip and the shared mini-tables.
-public record RfqBrief(int Id, string Number, string Vessel, int? VesselId, DateTime Created, DateTime? Due, RfqStatus Status, int SupplierCount);
-public record InvBrief(int Id, string Number, int PoId, string Supplier, InvoiceStatus Status, decimal Total, string Currency);
-public record DoBrief(int Id, string Number, int PoId, string PoNumber, DateTime Received, int Lines, bool Locked);
-public record PoBrief(int Id, string Number, int SupplierId, string Supplier, DateTime Created, string Currency, decimal Total, PoStatus Status, DeliveryStatus Delivery, bool IsSpot);
-public record ReqnBrief(int Id, string Number, int VesselId, string Vessel, int? DepartmentId, string Department, DateTime Date, RequisitionStatus Status, int Lines);
-public record PriceRow(DateTime Date, int PoId, string PoNumber, int SupplierId, string Supplier, decimal Quantity, decimal UnitPrice, decimal DiscountPct, string Currency);
+public record RfqBrief(Guid Id, string Number, string Vessel, Guid? VesselId, DateTime Created, DateTime? Due, RfqStatus Status, int SupplierCount);
+public record InvBrief(Guid Id, string Number, Guid PoId, string Supplier, InvoiceStatus Status, decimal Total, string Currency);
+public record DoBrief(Guid Id, string Number, Guid PoId, string PoNumber, DateTime Received, int Lines, bool Locked);
+public record PoBrief(Guid Id, string Number, Guid SupplierId, string Supplier, DateTime Created, string Currency, decimal Total, PoStatus Status, DeliveryStatus Delivery, bool IsSpot);
+public record ReqnBrief(Guid Id, string Number, Guid VesselId, string Vessel, Guid? DepartmentId, string Department, DateTime Date, RequisitionStatus Status, int Lines);
+public record PriceRow(DateTime Date, Guid PoId, string PoNumber, Guid SupplierId, string Supplier, decimal Quantity, decimal UnitPrice, decimal DiscountPct, string Currency);
 
 public record SupplierHub(Supplier Supplier, List<RfqBrief> Rfqs, List<PoBrief> Pos, int QuotesSubmitted);
 public record VesselHub(Vessel Vessel, List<ReqnBrief> Requisitions, List<RfqBrief> Rfqs, List<PoBrief> Pos);
@@ -45,7 +45,7 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
             p.Currency, p.Total, p.Status, p.DeliveryStatus, p.IsSpot)).ToList();
     }
 
-    private static async Task<List<ReqnBrief>> BriefsAsync(ChandleryDbContext db, IQueryable<Requisition> query, int companyId)
+    private static async Task<List<ReqnBrief>> BriefsAsync(ChandleryDbContext db, IQueryable<Requisition> query, Guid companyId)
     {
         var rows = await query.OrderByDescending(r => r.ReqnDate).Take(Limit)
             .Select(r => new { Req = r, Lines = r.Lines.Count }).ToListAsync();
@@ -58,7 +58,7 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- hubs ----
 
-    public async Task<SupplierHub?> GetSupplierAsync(int companyId, int supplierId)
+    public async Task<SupplierHub?> GetSupplierAsync(Guid companyId, Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -73,7 +73,7 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
         return new SupplierHub(supplier, rfqs, pos, quotes);
     }
 
-    public async Task<VesselHub?> GetVesselAsync(int companyId, int vesselId)
+    public async Task<VesselHub?> GetVesselAsync(Guid companyId, Guid vesselId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -90,7 +90,7 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
         return new VesselHub(vessel, reqns, rfqs, pos);
     }
 
-    public async Task<ItemHub?> GetItemAsync(int companyId, int itemId)
+    public async Task<ItemHub?> GetItemAsync(Guid companyId, Guid itemId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -113,7 +113,7 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
         return new ItemHub(item, path, prices, rfqs, reqns);
     }
 
-    public async Task<DepartmentHub?> GetDepartmentAsync(int companyId, int departmentId, ApprovalService approvals)
+    public async Task<DepartmentHub?> GetDepartmentAsync(Guid companyId, Guid departmentId, ApprovalService approvals)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -127,7 +127,7 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
         return new DepartmentHub(dept, reqns, pos, rules);
     }
 
-    private static async Task<List<InvBrief>> InvoiceBriefsAsync(ChandleryDbContext db, int companyId, List<int> poIds, Dictionary<int, string> poNumbers)
+    private static async Task<List<InvBrief>> InvoiceBriefsAsync(ChandleryDbContext db, Guid companyId, List<Guid> poIds, Dictionary<Guid, string> poNumbers)
     {
         var rows = await db.Invoices.Where(i => i.CompanyId == companyId && i.PurchaseOrderId != null && poIds.Contains(i.PurchaseOrderId.Value))
             .OrderBy(i => i.SubmittedAt).ToListAsync();
@@ -138,14 +138,14 @@ public class HubService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- lineage ----
 
     /// <summary>Everything connected to a requisition, RFQ or PO: the requisition, all its RFQs, and the POs raised from them.</summary>
-    public async Task<RelatedGraph> GetRelatedAsync(int companyId, DocKind kind, int id)
+    public async Task<RelatedGraph> GetRelatedAsync(Guid companyId, DocKind kind, Guid id)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
 
-        int? requisitionId = null;
-        List<int> rfqIds = new();
-        List<int> directPoIds = new();
+        Guid? requisitionId = null;
+        List<Guid> rfqIds = new();
+        List<Guid> directPoIds = new();
 
         if (kind == DocKind.Invoice)
         {

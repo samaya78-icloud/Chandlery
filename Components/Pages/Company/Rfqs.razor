@@ -12,7 +12,7 @@
     </Actions>
 </PageHeader>
 
-@if (_companyId != 0)
+@if (_companyId != Guid.Empty)
 {
     <DataGrid TItem="RfqListRow" ItemsProvider="LoadPage" ItemName="RFQs" ExportName="rfqs" PageSize="25" EmptyText="No RFQs match these filters." OnRowClick="Open">
         <GridColumn Title="RFQ #" Key="rfq" Text="r => r.Rfq.RfqNumber" Context="row">
@@ -66,13 +66,13 @@
     private static readonly string[] TypeOptions = Enum.GetNames<RfqType>();
     private static readonly string[] StatusOptions = Enum.GetNames<RfqStatus>();
 
-    private int _companyId;
+    private Guid _companyId;
     private int _count;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _count = await Procurement.GetRfqCountAsync(companyId);
         _companyId = companyId; // the grid is only rendered once this is set
     }

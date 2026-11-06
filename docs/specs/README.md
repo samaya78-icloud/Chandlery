@@ -48,16 +48,16 @@ Tank Inspection follows PMS because inspections are driven by PMS jobs. Classifi
 - **PO dispatch:** the vessel sends the PO to the supplier with the office in copy, through the system (supplier portal notification) and optionally as a generated email with the PO attached.
 - **Onboard approvals:** the Master approves within an **office-maintained limit per department/catalog combination**; above the limit the office approves.
 - **Every module is sellable on its own**, and the **sync engine is also sold separately** (see 01 section 8 and 03 section 19).
+- **GUID (UUIDv7) keys confirmed**, with a vessel-prefixed reference code on every document for quoting between parties (01 sections 2 and 3).
 - Sync is a separate product and repository; Chandlery and the other modules are clients of it.
 
 ## Open questions (owner decision needed)
-1. Identity scheme: **GUID keys with vessel-prefixed document numbers and a visible origin column** is recommended (see 01 section 2); product owner to confirm.
-2. Commercial packaging: which modules sell separately first, pricing metering (per vessel, per user, per module), and whether customers can mix modules from different vendors' data (see 01 section 8).
-3. Sync engine as a product: hosted hub for customers, or customer-hosted, or both?
-4. Minimum vessel connectivity to support with HTTPS-only sync (smallest link, daily budget)?
-5. PMS: second sign-off on completions (always / critical only / never), who may edit intervals, default grace window.
-6. Tank inspection: which vessel types must be supported first (product, chemical, gas, bulk, container)?
-7. Direct purchase: should Master limits apply per PO only, or also per month per department?
+1. Commercial packaging: which modules sell separately first, pricing metering (per vessel, per user, per module), and whether customers can mix modules from different vendors' data (see 01 section 8).
+2. Sync engine as a product: hosted hub for customers, or customer-hosted, or both?
+3. Minimum vessel connectivity to support with HTTPS-only sync (smallest link, daily budget)?
+4. PMS: second sign-off on completions (always / critical only / never), who may edit intervals, default grace window.
+5. Tank inspection: which vessel types must be supported first (product, chemical, gas, bulk, container)?
+6. Direct purchase: should Master limits apply per PO only, or also per month per department?
 
 ## Glossary
 **Shore/Office** the head-office installation. **Vessel/Node** an onboard installation. **Hub** the shore side of sync. **Document** a record plus the child records that belong to it (a sync unit). **Stage** a lifecycle state in which one side owns the record. **Policy** a group- or vessel-level permission row.

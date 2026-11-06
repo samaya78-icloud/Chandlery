@@ -3,24 +3,24 @@
 @* Choose several suppliers from a long address book: a multi-select SelectBox with server-side search (name or email) and
    "Load more". Suppliers in Excluded are shown but cannot be chosen, with the reason beside them. *@
 
-<SelectBox TValue="int" Multiple="true" Values="Selected" Provider="SearchAsync" Resolve="Procurement.SupplierSelectResolver()" OnChanged="OnChanged"
+<SelectBox TValue="Guid" Multiple="true" Values="Selected" Provider="SearchAsync" Resolve="Procurement.SupplierSelectResolver()" OnChanged="OnChanged"
            Placeholder="Search and choose suppliers…" SearchPlaceholder="Search suppliers by name or email…" EmptyText="No suppliers yet. Add one on the Suppliers page first." />
 
 @code {
-    [Parameter, EditorRequired] public int CompanyId { get; set; }
-    [Parameter, EditorRequired] public HashSet<int> Selected { get; set; } = new();
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public HashSet<Guid> Selected { get; set; } = new();
 
     /// <summary>Suppliers that cannot be chosen, with the reason shown next to them (for example "Already sent on RFQ-1007").</summary>
-    [Parameter] public IReadOnlyDictionary<int, string> Excluded { get; set; } = new Dictionary<int, string>();
+    [Parameter] public IReadOnlyDictionary<Guid, string> Excluded { get; set; } = new Dictionary<Guid, string>();
 
     [Parameter] public EventCallback OnChanged { get; set; }
 
-    private async Task<SelectResult<int>> SearchAsync(SelectQuery query)
+    private async Task<SelectResult<Guid>> SearchAsync(SelectQuery query)
     {
         var (rows, total) = await Procurement.SearchCompanySuppliersAsync(CompanyId, query.Term, query.Skip, query.Take);
         var options = rows.Select(s => Excluded.TryGetValue(s.Id, out var reason)
-            ? new SelectOption<int>(s.Id, s.Name, s.ContactEmail, Disabled: true, DisabledReason: reason)
-            : new SelectOption<int>(s.Id, s.Name, s.ContactEmail)).ToList();
-        return new SelectResult<int>(options, total);
+            ? new SelectOption<Guid>(s.Id, s.Name, s.ContactEmail, Disabled: true, DisabledReason: reason)
+            : new SelectOption<Guid>(s.Id, s.Name, s.ContactEmail)).ToList();
+        return new SelectResult<Guid>(options, total);
     }
 }

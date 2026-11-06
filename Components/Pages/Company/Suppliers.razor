@@ -56,7 +56,7 @@
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private List<Supplier> _suppliers = new();
     private bool _showForm;
     private string _name = "";
@@ -68,7 +68,7 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _suppliers = await Procurement.GetCompanySuppliersNewestFirstAsync(_companyId);
     }
 

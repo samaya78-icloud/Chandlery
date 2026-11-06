@@ -4,8 +4,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Chandlery.Services;
 
-public record SpendRow(int SupplierId, string Supplier, decimal Total);
-public record ActivityRow(DateTime At, string UserName, string Text, DocKind Kind, int Id, string Number);
+public record SpendRow(Guid SupplierId, string Supplier, decimal Total);
+public record ActivityRow(DateTime At, string UserName, string Text, DocKind Kind, Guid Id, string Number);
 
 public record CompanyDashboard(
     int OpenRequisitions,
@@ -36,7 +36,7 @@ public record SupplierDashboard(
 /// <summary>Numbers and work queues for the home page.</summary>
 public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, ApprovalService approvals, HubService hub, InvoiceService invoices)
 {
-    public async Task<CompanyDashboard> GetCompanyAsync(int companyId, int userId)
+    public async Task<CompanyDashboard> GetCompanyAsync(Guid companyId, Guid userId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -62,7 +62,7 @@ public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, App
         var recentPos = await db.PurchaseOrders.Where(p => p.CompanyId == companyId && p.Status == PoStatus.Approved && p.CreatedDate >= since).ToListAsync();
         var currency = "USD";
         var rateCache = new Dictionary<(string, DateTime), decimal?>();
-        var usdByPo = new Dictionary<int, decimal>();
+        var usdByPo = new Dictionary<Guid, decimal>();
         foreach (var p in recentPos)
         {
             decimal? rate = p.Currency == "USD" ? 1m : p.UsdRate;
@@ -101,7 +101,7 @@ public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, App
             reqnBriefs, top, activity, invoiceApprovals.Take(5).ToList(), toVerify.Rows, toFinalize);
     }
 
-    private static async Task<List<ActivityRow>> GetActivityAsync(ChandleryDbContext db, int companyId)
+    private static async Task<List<ActivityRow>> GetActivityAsync(ChandleryDbContext db, Guid companyId)
     {
         var entries = await db.AuditEntries.Where(a => a.CompanyId == companyId)
             .OrderByDescending(a => a.At).ThenByDescending(a => a.Id).Take(40).ToListAsync();
@@ -130,7 +130,7 @@ public class DashboardService(IDbContextFactory<ChandleryDbContext> factory, App
         return rows;
     }
 
-    public async Task<SupplierDashboard> GetSupplierAsync(int supplierId)
+    public async Task<SupplierDashboard> GetSupplierAsync(Guid supplierId)
     {
         await using var db = await factory.CreateDbContextAsync();
 

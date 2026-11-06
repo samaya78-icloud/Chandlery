@@ -14,7 +14,7 @@ public class SearchService(IDbContextFactory<ChandleryDbContext> factory)
     private static string Like(string term) =>
         "%" + term.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
 
-    public async Task<List<SearchHit>> SearchCompanyAsync(int companyId, string term)
+    public async Task<List<SearchHit>> SearchCompanyAsync(Guid companyId, string term)
     {
         var hits = new List<SearchHit>();
         if (string.IsNullOrWhiteSpace(term) || term.Trim().Length < 2) return hits;
@@ -63,7 +63,7 @@ public class SearchService(IDbContextFactory<ChandleryDbContext> factory)
         return hits;
     }
 
-    public async Task<List<SearchHit>> SearchSupplierAsync(int supplierId, string term)
+    public async Task<List<SearchHit>> SearchSupplierAsync(Guid supplierId, string term)
     {
         var hits = new List<SearchHit>();
         if (string.IsNullOrWhiteSpace(term) || term.Trim().Length < 2) return hits;

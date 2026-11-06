@@ -34,8 +34,8 @@
     {
         var user = (await AuthStateTask!).User;
         if ((user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser"))
-            && int.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
-            && int.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId))
+            && Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
+            && Guid.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId))
         {
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
                                 + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;

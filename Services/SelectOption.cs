@@ -13,8 +13,8 @@ public sealed record SelectResult<TValue>(IReadOnlyList<SelectOption<TValue>> Op
 public static class SelectOptions
 {
     /// <summary>Builds options from any list: <c>SelectOptions.From(vessels, v => v.Id, v => v.Name)</c>.</summary>
-    public static List<SelectOption<int>> From<T>(IEnumerable<T> source, Func<T, int> value, Func<T, string> label, Func<T, string?>? description = null) =>
-        source.Select(x => new SelectOption<int>(value(x), label(x), description?.Invoke(x))).ToList();
+    public static List<SelectOption<Guid>> From<T>(IEnumerable<T> source, Func<T, Guid> value, Func<T, string> label, Func<T, string?>? description = null) =>
+        source.Select(x => new SelectOption<Guid>(value(x), label(x), description?.Invoke(x))).ToList();
 
     /// <summary>Builds options from every value of an enum, with friendlier labels when you pass them.</summary>
     public static List<SelectOption<TEnum>> FromEnum<TEnum>(Func<TEnum, string>? label = null) where TEnum : struct, Enum =>

@@ -48,9 +48,9 @@
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private List<Department> _departments = new();
-    private Dictionary<int, int> _links = new();
+    private Dictionary<Guid, int> _links = new();
 
     private string LinkText(Department d) => _links.GetValueOrDefault(d.Id) == 0 ? "None" : $"{_links[d.Id]} linked";
     private bool _showForm;
@@ -60,7 +60,7 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _departments = (await Procurement.GetDepartmentsAsync(_companyId)).OrderByDescending(d => d.Id).ToList();
         _links = await Procurement.GetDepartmentLinkCountsAsync(_companyId);
     }

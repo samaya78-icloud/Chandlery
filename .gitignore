@@ -6,3 +6,4 @@ wwwroot/css/app.css
 .claude/settings.local.json
 appsettings.Development.json
 App_Data/
+tools/int-to-guid/convert.generated.sql

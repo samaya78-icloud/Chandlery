@@ -24,7 +24,7 @@ public record PoDocument(
 
 public class PoDocumentService(IDbContextFactory<ChandleryDbContext> factory)
 {
-    public async Task<PoDocument?> GetForCompanyAsync(int companyId, int poId)
+    public async Task<PoDocument?> GetForCompanyAsync(Guid companyId, Guid poId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -33,7 +33,7 @@ public class PoDocumentService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>A supplier may open the document only for its own POs, and only once they are approved.</summary>
-    public async Task<PoDocument?> GetForSupplierAsync(int supplierId, int poId)
+    public async Task<PoDocument?> GetForSupplierAsync(Guid supplierId, Guid poId)
     {
         await using var db = await factory.CreateDbContextAsync();
         var po = await db.PurchaseOrders.IgnoreQueryFilters()

@@ -1,4 +1,4 @@
-@page "/company/vessels/{VesselId:int}"
+@page "/company/vessels/{VesselId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject HubService Hub
@@ -39,7 +39,7 @@ else
 }
 
 @code {
-    [Parameter] public int VesselId { get; set; }
+    [Parameter] public Guid VesselId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private VesselHub? _hub;
@@ -48,7 +48,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _hub = await Hub.GetVesselAsync(companyId, VesselId);
         _loaded = true;
     }

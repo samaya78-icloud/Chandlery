@@ -11,7 +11,7 @@
 <PageHeader Eyebrow="Procurement" Title="New Spot Invoice"
             Subtitle="Record an invoice that has no purchase order, such as a port service or a one-off repair. It goes straight to approval by its total." />
 
-@if (_companyId != 0)
+@if (_companyId != Guid.Empty)
 {
 <div class="max-w-5xl space-y-6">
     <div class="card p-6">
@@ -19,7 +19,7 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
                 <label class="label">Supplier</label>
-                <SelectBox TValue="int" @bind-Value="_supplierId" @bind-Value:after="LoadBanks" Provider="Procurement.SupplierSelectProvider(_companyId)" Resolve="Procurement.SupplierSelectResolver()"
+                <SelectBox TValue="Guid" @bind-Value="_supplierId" @bind-Value:after="LoadBanks" Provider="Procurement.SupplierSelectProvider(_companyId)" Resolve="Procurement.SupplierSelectResolver()"
                            Placeholder="Choose a supplier…" SearchPlaceholder="Search suppliers by name or email…" />
             </div>
             <div><label class="label">Supplier invoice no.</label><input @bind="_req.SupplierInvoiceRef" class="input" /></div>
@@ -28,27 +28,27 @@
             <div><label class="label">Due date (optional)</label><input type="date" @bind="_req.DueDate" class="input" /></div>
             <div>
                 <label class="label">Tax code</label>
-                <SelectBox TValue="int" @bind-Value="_taxCodeId" Options="_taxOptions" Placeholder="No tax" AllowClear="true" />
+                <SelectBox TValue="Guid" @bind-Value="_taxCodeId" Options="_taxOptions" Placeholder="No tax" AllowClear="true" />
             </div>
             <div>
                 <label class="label">Department@(_departments.Count > 0 ? " *" : "")</label>
-                <SelectBox TValue="int" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "No department")" />
+                <SelectBox TValue="Guid" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "No department")" />
             </div>
             <div>
                 <label class="label">Vessel</label>
-                <SelectBox TValue="int" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="None" AllowClear="true" />
+                <SelectBox TValue="Guid" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="None" AllowClear="true" />
             </div>
             <div><label class="label">Cost centre</label><input @bind="_req.CostCentre" class="input" /></div>
             <div class="md:col-span-3">
                 <label class="label">Pay into (the supplier's saved accounts)</label>
-                <SelectBox TValue="int" @bind-Value="_bankId" Options="_bankOptions" Disabled="@(_supplierId == 0 || _banks.Count == 0)" AllowClear="true" Class="max-w-xl"
-                           Placeholder="@(_supplierId == 0 ? "Choose a supplier first" : _banks.Count == 0 ? "This supplier has not saved a bank account" : "Not specified")" />
+                <SelectBox TValue="Guid" @bind-Value="_bankId" Options="_bankOptions" Disabled="@(_supplierId == Guid.Empty || _banks.Count == 0)" AllowClear="true" Class="max-w-xl"
+                           Placeholder="@(_supplierId == Guid.Empty ? "Choose a supplier first" : _banks.Count == 0 ? "This supplier has not saved a bank account" : "Not specified")" />
             </div>
         </div>
     </div>
 
     <ItemLinePicker CompanyId="_companyId" Lines="_req.Lines" ShowPrice="true" ShowUom="false" OnChanged="StateHasChanged"
-                    DepartmentId="@(_departmentId == 0 ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)" />
+                    DepartmentId="@(_departmentId == Guid.Empty ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)" />
 
     <div class="card p-6">
         <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -94,7 +94,7 @@
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private Actor _actor = Actor.System;
     private readonly NewSpotInvoice _req = new();
     private readonly List<UploadedFile> _uploads = new();
@@ -103,8 +103,8 @@
     private List<TaxCode> _taxCodes = new();
     private List<SupplierBankAccount> _banks = new();
     private List<SelectOption<string>> _currencyOptions = new();
-    private List<SelectOption<int>> _departmentOptions = new(), _vesselOptions = new(), _taxOptions = new(), _bankOptions = new();
-    private int _supplierId, _departmentId, _vesselId, _taxCodeId, _bankId;
+    private List<SelectOption<Guid>> _departmentOptions = new(), _vesselOptions = new(), _taxOptions = new(), _bankOptions = new();
+    private Guid _supplierId, _departmentId, _vesselId, _taxCodeId, _bankId;
     private bool _busy;
     private string? _error;
 
@@ -115,7 +115,7 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
         _departments = await Procurement.GetDepartmentsAsync(companyId);
         _vessels = await Procurement.GetVesselsAsync(companyId);
@@ -129,8 +129,8 @@
 
     private async Task LoadBanks()
     {
-        _bankId = 0;
-        _banks = _supplierId == 0 ? new() : await InvoiceSvc.GetBankAccountsAsync(_supplierId);
+        _bankId = Guid.Empty;
+        _banks = _supplierId == Guid.Empty ? new() : await InvoiceSvc.GetBankAccountsAsync(_supplierId);
         _bankOptions = SelectOptions.From(_banks, b => b.Id, b => $"{b.BankName} · {b.AccountNumber}", b => $"{b.AccountName} ({b.Currency})");
     }
 
@@ -156,14 +156,14 @@
     private async Task Submit()
     {
         _error = null;
-        if (_supplierId == 0) { _error = "Choose a supplier."; return; }
-        if (_departments.Count > 0 && _departmentId == 0) { _error = "Choose a department."; return; }
+        if (_supplierId == Guid.Empty) { _error = "Choose a supplier."; return; }
+        if (_departments.Count > 0 && _departmentId == Guid.Empty) { _error = "Choose a department."; return; }
         _req.SupplierId = _supplierId;
         _req.Currency = Currency;
-        _req.DepartmentId = _departmentId == 0 ? null : _departmentId;
-        _req.VesselId = _vesselId == 0 ? null : _vesselId;
-        _req.TaxCodeId = _taxCodeId == 0 ? null : _taxCodeId;
-        _req.BankAccountId = _bankId == 0 ? null : _bankId;
+        _req.DepartmentId = _departmentId == Guid.Empty ? null : _departmentId;
+        _req.VesselId = _vesselId == Guid.Empty ? null : _vesselId;
+        _req.TaxCodeId = _taxCodeId == Guid.Empty ? null : _taxCodeId;
+        _req.BankAccountId = _bankId == Guid.Empty ? null : _bankId;
 
         _busy = true;
         try

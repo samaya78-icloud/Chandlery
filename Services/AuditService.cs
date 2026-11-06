@@ -6,11 +6,11 @@ using Microsoft.EntityFrameworkCore;
 namespace Chandlery.Services;
 
 /// <summary>Who did something, for the audit history. Pages build one from the signed-in user's claims.</summary>
-public record Actor(int? UserId, string Name)
+public record Actor(Guid? UserId, string Name)
 {
     public static Actor From(ClaimsPrincipal user)
     {
-        var id = int.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var parsed) ? parsed : (int?)null;
+        var id = Guid.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var parsed) ? parsed : (Guid?)null;
         return new Actor(id, user.Identity?.Name ?? "");
     }
 
@@ -28,7 +28,7 @@ public static class AuditEntityTypes
 public static class AuditLog
 {
     /// <summary>Adds an entry to the caller's context so it is saved in the same transaction as the change itself.</summary>
-    public static void Add(ChandleryDbContext db, int companyId, string entityType, int entityId, Actor actor, string text)
+    public static void Add(ChandleryDbContext db, Guid companyId, string entityType, Guid entityId, Actor actor, string text)
     {
         db.AuditEntries.Add(new AuditEntry
         {
@@ -54,7 +54,7 @@ public static class AuditLog
 /// <summary>Reads the audit history for the detail pages.</summary>
 public class AuditService(IDbContextFactory<ChandleryDbContext> factory)
 {
-    public async Task<List<AuditEntry>> GetAsync(int companyId, string entityType, int entityId)
+    public async Task<List<AuditEntry>> GetAsync(Guid companyId, string entityType, Guid entityId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;

@@ -77,7 +77,7 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private DataGrid<ExchangeRateRow>? _grid;
-    private int _companyId;
+    private Guid _companyId;
     private string _userName = "";
     private bool _isAdmin;
     private bool _loaded;
@@ -93,7 +93,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _userName = authState.User.Identity?.Name ?? "";
         _isAdmin = authState.User.IsInRole("CompanyAdmin");
         _currencyOptions = (await FxSvc.GetCompanyCurrencyOptionsAsync(_companyId)).Where(o => o.Value != "USD").ToList();

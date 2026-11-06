@@ -4,7 +4,7 @@
 
 @code {
     [Parameter, EditorRequired] public DocKind Kind { get; set; }
-    [Parameter, EditorRequired] public int Id { get; set; }
+    [Parameter, EditorRequired] public Guid Id { get; set; }
     [Parameter, EditorRequired] public string Text { get; set; } = "";
     [Parameter] public string? Title { get; set; }
 

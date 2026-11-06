@@ -22,7 +22,7 @@ public class QuoteSheetTerms
 
 public class QuoteSheetLine
 {
-    public int RfqLineId { get; set; }
+    public Guid RfqLineId { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal DiscountPct { get; set; }
     public string? Uom { get; set; }
@@ -56,18 +56,18 @@ public static class QuoteSheet
     private record SheetRow(int LineId, string Code, string ItemName, string Description, string DrawingNo,
         decimal Qty, string Uom, decimal Price, decimal Disc, string OfferedUom, string Offer);
 
-    private static List<SheetRow> BuildRows(Rfq rfq, IReadOnlyDictionary<int, Item> items, Quote? quote) =>
-        rfq.Lines.Select(line =>
+    private static List<SheetRow> BuildRows(Rfq rfq, IReadOnlyDictionary<Guid, Item> items, Quote? quote) =>
+        rfq.Lines.Select((line, index) =>
         {
             var item = items.GetValueOrDefault(line.ItemId);
             var ql = quote?.Lines.FirstOrDefault(l => l.RfqLineId == line.Id);
-            return new SheetRow(line.Id, item?.Code ?? "", item?.Name ?? "", line.Description ?? "", line.DrawingNo ?? "",
+            return new SheetRow(index + 1, item?.Code ?? "", item?.Name ?? "", line.Description ?? "", line.DrawingNo ?? "",
                 line.Quantity, line.Uom, ql?.UnitPrice ?? 0m, ql?.DiscountPct ?? 0m, ql?.Uom ?? line.Uom, ql?.OfferText ?? "");
         }).ToList();
 
     // ---------------------------------------------------------------- build
 
-    public static byte[] BuildXlsx(Rfq rfq, IReadOnlyDictionary<int, Item> items, Quote? quote)
+    public static byte[] BuildXlsx(Rfq rfq, IReadOnlyDictionary<Guid, Item> items, Quote? quote)
     {
         using var wb = new XLWorkbook();
         var ws = wb.Worksheets.Add(QuoteSheetName);
@@ -176,7 +176,7 @@ public static class QuoteSheet
         return ms.ToArray();
     }
 
-    public static string BuildCsv(Rfq rfq, IReadOnlyDictionary<int, Item> items, Quote? quote)
+    public static string BuildCsv(Rfq rfq, IReadOnlyDictionary<Guid, Item> items, Quote? quote)
     {
         var sb = new StringBuilder();
         sb.Append(string.Join(',', Headers.Select(Csv.Cell))).Append("\r\n");
@@ -206,7 +206,7 @@ public static class QuoteSheet
 
     // ---------------------------------------------------------------- parse
 
-    public static QuoteSheetResult ParseXlsx(Stream stream, Rfq rfq, IReadOnlyDictionary<int, Item> items)
+    public static QuoteSheetResult ParseXlsx(Stream stream, Rfq rfq, IReadOnlyDictionary<Guid, Item> items)
     {
         var result = new QuoteSheetResult();
         try
@@ -257,7 +257,7 @@ public static class QuoteSheet
         return result;
     }
 
-    public static QuoteSheetResult ParseCsv(string text, Rfq rfq, IReadOnlyDictionary<int, Item> items)
+    public static QuoteSheetResult ParseCsv(string text, Rfq rfq, IReadOnlyDictionary<Guid, Item> items)
     {
         var result = new QuoteSheetResult();
         var records = Csv.Read(text.TrimStart('﻿'));
@@ -321,7 +321,7 @@ public static class QuoteSheet
     }
 
     private static void ApplyRows(List<(int RowNumber, Dictionary<string, string> Cells)> rows, Rfq rfq,
-        IReadOnlyDictionary<int, Item> items, QuoteSheetResult result)
+        IReadOnlyDictionary<Guid, Item> items, QuoteSheetResult result)
     {
         if (rows.Count > 0 && !rows[0].Cells.ContainsKey("unit price"))
         {
@@ -329,13 +329,14 @@ public static class QuoteSheet
             return;
         }
 
-        var linesById = rfq.Lines.ToDictionary(l => l.Id);
+        // The worksheet's Ref column is the line's position on the RFQ (1, 2, 3...), which works for any key type.
+        var linesById = rfq.Lines.Select((l, i) => (Ref: i + 1, Line: l)).ToDictionary(x => x.Ref, x => x.Line);
         var linesByCode = rfq.Lines
             .GroupBy(l => items.GetValueOrDefault(l.ItemId)?.Code ?? "", StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Key.Length > 0)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
-        var seen = new HashSet<int>();
+        var seen = new HashSet<Guid>();
         var warnings = new List<string>();
 
         foreach (var (rowNumber, cells) in rows)

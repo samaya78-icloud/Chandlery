@@ -104,7 +104,7 @@ else
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _supplierId;
+    private Guid _supplierId;
     private SupplierRfqTab _tab = SupplierRfqTab.Pending;
     private string _search = "";
     private int _pageNo = 1;
@@ -118,7 +118,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
 
         var supplier = await Procurement.GetSupplierAsync(_supplierId);
         _emails = supplier?.NotificationEmails ?? "";

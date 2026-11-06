@@ -1,4 +1,4 @@
-@page "/supplier/rfqs/{RfqId:int}"
+@page "/supplier/rfqs/{RfqId:guid}"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -281,15 +281,15 @@ else
     private const string InputClass = "w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm disabled:bg-slate-100 disabled:text-slate-500";
     private List<SelectOption<string>> CurrencyOptions = new();
 
-    [Parameter] public int RfqId { get; set; }
+    [Parameter] public Guid RfqId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _supplierId;
+    private Guid _supplierId;
     private Rfq? _rfq;
     private Quote? _existing;
     private QuoteInput _input = new();
-    private readonly Dictionary<int, QuoteLine> _lines = new();
-    private Dictionary<int, Item> _itemsById = new();
+    private readonly Dictionary<Guid, QuoteLine> _lines = new();
+    private Dictionary<Guid, Item> _itemsById = new();
     private List<Port> _ports = new();
     private bool _locked;
     private string? _lockReason;
@@ -341,7 +341,7 @@ else
         return options;
     }
 
-    private void SetUom(int lineId, string? unit)
+    private void SetUom(Guid lineId, string? unit)
     {
         if (_lines.TryGetValue(lineId, out var draft)) draft.Uom = string.IsNullOrWhiteSpace(unit) ? _rfq!.Lines.First(l => l.Id == lineId).Uom : unit;
     }
@@ -349,7 +349,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
         CurrencyOptions = await FxSvc.GetAllCurrencyOptionsAsync();
         await Load();
     }

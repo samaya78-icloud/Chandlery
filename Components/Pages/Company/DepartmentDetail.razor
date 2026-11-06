@@ -1,4 +1,4 @@
-@page "/company/departments/{DepartmentId:int}"
+@page "/company/departments/{DepartmentId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject HubService Hub
@@ -79,16 +79,16 @@ else
 }
 
 @code {
-    [Parameter] public int DepartmentId { get; set; }
+    [Parameter] public Guid DepartmentId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private DepartmentHub? _hub;
-    private int _companyId;
+    private Guid _companyId;
     private bool _saving;
     private ApprovalLevelNames _levelNames = new(new string?[3]);
     private List<Category> _categories = new();
     private List<(Category Category, string Path, int Depth)> _tree = new();
-    private HashSet<int> _linked = new();
+    private HashSet<Guid> _linked = new();
     private bool _loaded;
 
     private static string UpTo(ApprovalRuleRow row) => row.Rule.UpToAmount.HasValue ? row.Rule.UpToAmount.Value.ToString("N2") : "No limit";
@@ -96,7 +96,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _companyId = companyId;
         _hub = await Hub.GetDepartmentAsync(companyId, DepartmentId, ApprovalSvc);
         _levelNames = await ApprovalSvc.GetLevelNamesAsync(companyId);
@@ -106,7 +106,7 @@ else
         _loaded = true;
     }
 
-    private void ToggleLink(int categoryId, bool on)
+    private void ToggleLink(Guid categoryId, bool on)
     {
         if (on) _linked.Add(categoryId); else _linked.Remove(categoryId);
     }

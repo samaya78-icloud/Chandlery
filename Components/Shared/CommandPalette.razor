@@ -65,8 +65,8 @@
     private string _term = "";
     private int _active;
     private List<SearchHit> _hits = new();
-    private int? _companyId;
-    private int? _supplierId;
+    private Guid? _companyId;
+    private Guid? _supplierId;
     private bool _isCompany;
     private CancellationTokenSource? _debounce;
 
@@ -74,8 +74,8 @@
     {
         var user = (await AuthStateTask!).User;
         _isCompany = user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser");
-        if (int.TryParse(user.FindFirst("CompanyId")?.Value, out var c)) _companyId = c;
-        if (int.TryParse(user.FindFirst("SupplierId")?.Value, out var s)) _supplierId = s;
+        if (Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var c)) _companyId = c;
+        if (Guid.TryParse(user.FindFirst("SupplierId")?.Value, out var s)) _supplierId = s;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

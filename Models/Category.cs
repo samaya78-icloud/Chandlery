@@ -7,20 +7,20 @@ namespace Chandlery.Models;
 /// </summary>
 public class Category
 {
-    public int Id { get; set; }
-    public int CompanyId { get; set; }
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
     public string Name { get; set; } = "";
-    public int? ParentCategoryId { get; set; }
+    public Guid? ParentCategoryId { get; set; }
     public DateTime CreatedAt { get; set; }
     public bool IsActive { get; set; } = true;
 
     /// <summary>Ids of the categories that are enabled and have no disabled category above them, i.e. the ones that may be chosen.</summary>
-    public static HashSet<int> ActiveIds(List<Category> all)
+    public static HashSet<Guid> ActiveIds(List<Category> all)
     {
         var byParent = all.ToLookup(c => c.ParentCategoryId);
-        var result = new HashSet<int>();
+        var result = new HashSet<Guid>();
 
-        void Walk(int? parentId)
+        void Walk(Guid? parentId)
         {
             foreach (var category in byParent[parentId])
             {
@@ -39,7 +39,7 @@ public class Category
         var byParent = all.ToLookup(c => c.ParentCategoryId);
         var result = new List<(Category, string, int)>();
 
-        void Walk(int? parentId, string parentPath, int depth)
+        void Walk(Guid? parentId, string parentPath, int depth)
         {
             foreach (var category in byParent[parentId].OrderBy(c => c.Name))
             {
@@ -57,11 +57,11 @@ public class Category
 public static class CategoryIds
 {
     /// <summary>The category itself plus everything beneath it, so filtering by "Provisions" includes all its sub-categories.</summary>
-    public static HashSet<int> Descendants(List<Category> all, int rootId)
+    public static HashSet<Guid> Descendants(List<Category> all, Guid rootId)
     {
         var byParent = all.ToLookup(c => c.ParentCategoryId);
-        var result = new HashSet<int> { rootId };
-        var queue = new Queue<int>();
+        var result = new HashSet<Guid> { rootId };
+        var queue = new Queue<Guid>();
         queue.Enqueue(rootId);
 
         while (queue.Count > 0)

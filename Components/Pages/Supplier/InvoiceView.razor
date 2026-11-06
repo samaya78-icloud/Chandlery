@@ -1,4 +1,4 @@
-@page "/supplier/invoices/{InvoiceId:int}"
+@page "/supplier/invoices/{InvoiceId:guid}"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject InvoiceService InvoiceSvc
@@ -32,7 +32,7 @@ else
 }
 
 @code {
-    [Parameter] public int InvoiceId { get; set; }
+    [Parameter] public Guid InvoiceId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private InvoiceInfo? _detail;
@@ -41,7 +41,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        var supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
         _detail = await InvoiceSvc.GetDetailAsync(InvoiceId, null, supplierId);
         _loaded = true;
     }

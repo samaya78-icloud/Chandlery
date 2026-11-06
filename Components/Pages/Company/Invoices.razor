@@ -11,7 +11,7 @@
     </Actions>
 </PageHeader>
 
-@if (_companyId == 0)
+@if (_companyId == Guid.Empty)
 {
     <Skeleton Rows="5" />
 }
@@ -29,13 +29,13 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private int _count;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _count = await InvoiceSvc.GetCountAsync(companyId);
         _companyId = companyId; // the grid is only rendered once this is set
     }

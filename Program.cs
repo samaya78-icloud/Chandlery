@@ -46,6 +46,18 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     {
         options.LoginPath = "/login";
         options.AccessDeniedPath = "/access-denied";
+
+        // Sessions signed in before ids became GUIDs carry numeric ids; refuse them so the person simply signs in again.
+        options.Events.OnValidatePrincipal = async context =>
+        {
+            var user = context.Principal;
+            var ids = new[] { user?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, user?.FindFirst("CompanyId")?.Value, user?.FindFirst("SupplierId")?.Value };
+            if (ids.Any(v => v is not null && !Guid.TryParse(v, out _)))
+            {
+                context.RejectPrincipal();
+                await context.HttpContext.SignOutAsync();
+            }
+        };
     });
 
 var app = builder.Build();
@@ -63,7 +75,23 @@ if (app.Environment.IsDevelopment())
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ChandleryDbContext>>();
     await using var db = await factory.CreateDbContextAsync();
     await db.Database.MigrateAsync();
+    await EnsureNodeAsync(db, app.Configuration);
     await DbSeeder.SeedAsync(db);
+}
+else
+{
+    // Migrations are applied by the deployment; here we only learn which node this installation is.
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ChandleryDbContext>>();
+        await using var db = await factory.CreateDbContextAsync();
+        await EnsureNodeAsync(db, app.Configuration);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Could not read this installation's node id yet.");
+    }
 }
 
 app.UseHttpsRedirection();
@@ -179,7 +207,7 @@ app.MapGet("/supplier/rfqs/export", async (HttpContext http, ProcurementService 
     if (supplierClaim is null) return Results.Forbid();
 
     var selected = Enum.TryParse<SupplierRfqTab>(tab, true, out var parsed) ? parsed : SupplierRfqTab.Pending;
-    var result = await procurement.GetSupplierRfqPageAsync(int.Parse(supplierClaim), selected, q, 1, int.MaxValue);
+    var result = await procurement.GetSupplierRfqPageAsync(Guid.Parse(supplierClaim), selected, q, 1, int.MaxValue);
 
     static string Cell(string? value) => Csv.Cell(value);
 
@@ -198,11 +226,11 @@ app.MapGet("/supplier/rfqs/export", async (HttpContext http, ProcurementService 
 }).RequireAuthorization(policy => policy.RequireRole("SupplierAdmin", "SupplierUser"));
 
 // The supplier's quotation worksheet for one RFQ (.xlsx by default, ?format=csv for CSV).
-app.MapGet("/supplier/rfqs/{rfqId:int}/worksheet", async (int rfqId, string? format, HttpContext http, ProcurementService procurement) =>
+app.MapGet("/supplier/rfqs/{rfqId:guid}/worksheet", async (Guid rfqId, string? format, HttpContext http, ProcurementService procurement) =>
 {
     var supplierClaim = http.User.FindFirst("SupplierId")?.Value;
     if (supplierClaim is null) return Results.Forbid();
-    var supplierId = int.Parse(supplierClaim);
+    var supplierId = Guid.Parse(supplierClaim);
 
     var rfq = await procurement.GetRfqForSupplierAsync(supplierId, rfqId);
     if (rfq is null) return Results.NotFound();
@@ -224,32 +252,32 @@ app.MapGet("/supplier/rfqs/{rfqId:int}/worksheet", async (int rfqId, string? for
 }).RequireAuthorization(policy => policy.RequireRole("SupplierAdmin", "SupplierUser"));
 
 // The formal purchase order as a PDF file: buyers get any of their POs (marked draft until approved), suppliers only their approved ones.
-app.MapGet("/company/purchase-orders/{poId:int}/pdf", async (int poId, HttpContext http, PoDocumentService documents) =>
+app.MapGet("/company/purchase-orders/{poId:guid}/pdf", async (Guid poId, HttpContext http, PoDocumentService documents) =>
 {
     var companyClaim = http.User.FindFirst("CompanyId")?.Value;
     if (companyClaim is null) return Results.Forbid();
 
-    var doc = await documents.GetForCompanyAsync(int.Parse(companyClaim), poId);
+    var doc = await documents.GetForCompanyAsync(Guid.Parse(companyClaim), poId);
     if (doc is null) return Results.NotFound();
     return Results.File(PoPdf.Build(doc), "application/pdf", PoFileName(doc));
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
-app.MapGet("/supplier/purchase-orders/{poId:int}/pdf", async (int poId, HttpContext http, PoDocumentService documents) =>
+app.MapGet("/supplier/purchase-orders/{poId:guid}/pdf", async (Guid poId, HttpContext http, PoDocumentService documents) =>
 {
     var supplierClaim = http.User.FindFirst("SupplierId")?.Value;
     if (supplierClaim is null) return Results.Forbid();
 
-    var doc = await documents.GetForSupplierAsync(int.Parse(supplierClaim), poId);
+    var doc = await documents.GetForSupplierAsync(Guid.Parse(supplierClaim), poId);
     if (doc is null) return Results.NotFound();
     return Results.File(PoPdf.Build(doc), "application/pdf", PoFileName(doc));
 }).RequireAuthorization(policy => policy.RequireRole("SupplierAdmin", "SupplierUser"));
 
 // Invoice supporting documents: only the buyer that owns the invoice, or the supplier that sent it, can download them.
 // ?inline=true shows a PDF or image in the page (thumbnails, viewer); anything else, and every plain request, downloads.
-app.MapGet("/files/invoices/{documentId:int}", async (int documentId, bool? inline, HttpContext http, InvoiceService invoices) =>
+app.MapGet("/files/invoices/{documentId:guid}", async (Guid documentId, bool? inline, HttpContext http, InvoiceService invoices) =>
 {
-    int? companyId = int.TryParse(http.User.FindFirst("CompanyId")?.Value, out var c) ? c : null;
-    int? supplierId = int.TryParse(http.User.FindFirst("SupplierId")?.Value, out var s) ? s : null;
+    Guid? companyId = Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var c) ? c : null;
+    Guid? supplierId = Guid.TryParse(http.User.FindFirst("SupplierId")?.Value, out var s) ? s : null;
 
     var found = await invoices.OpenDocumentAsync(documentId, companyId, supplierId);
     if (found is null) return Results.NotFound();
@@ -265,10 +293,10 @@ app.MapGet("/files/invoices/{documentId:int}", async (int documentId, bool? inli
 
 // Requisition files: the company that owns them, or (when shared) a supplier invited to an RFQ made from the requisition.
 // Served inline so images and PDFs open in the browser; sandboxed and nosniff so an uploaded file can never run as a page.
-app.MapGet("/files/attachments/{attachmentId:int}", async (int attachmentId, bool? download, HttpContext http, AttachmentService attachments) =>
+app.MapGet("/files/attachments/{attachmentId:guid}", async (Guid attachmentId, bool? download, HttpContext http, AttachmentService attachments) =>
 {
-    int? companyId = int.TryParse(http.User.FindFirst("CompanyId")?.Value, out var c) ? c : null;
-    int? supplierId = int.TryParse(http.User.FindFirst("SupplierId")?.Value, out var s) ? s : null;
+    Guid? companyId = Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var c) ? c : null;
+    Guid? supplierId = Guid.TryParse(http.User.FindFirst("SupplierId")?.Value, out var s) ? s : null;
 
     var found = await attachments.OpenAsync(attachmentId, companyId, supplierId);
     if (found is null) return Results.NotFound();
@@ -278,6 +306,25 @@ app.MapGet("/files/attachments/{attachmentId:int}", async (int attachmentId, boo
         ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
         : Results.File(found.Value.Content, found.Value.File.ContentType);
 }).RequireAuthorization();
+
+// This installation's permanent node id (shore by default, set Platform:Profile=Vessel onboard). Records are stamped with it.
+static async Task EnsureNodeAsync(ChandleryDbContext db, IConfiguration config)
+{
+    var node = await db.NodeInfos.FirstOrDefaultAsync();
+    if (node is null)
+    {
+        node = new NodeInfo
+        {
+            Id = Guid.CreateVersion7(),
+            Profile = config["Platform:Profile"] ?? "Shore",
+            Name = config["Platform:NodeName"] ?? "Shore office",
+            CreatedAt = DateTime.UtcNow
+        };
+        db.NodeInfos.Add(node);
+        await db.SaveChangesAsync();
+    }
+    NodeContext.Set(node);
+}
 
 static string PoFileName(PoDocument doc) =>
     doc.Po.Status == PoStatus.Approved ? $"{doc.Po.PoNumber}.pdf" : $"{doc.Po.PoNumber}-DRAFT.pdf";

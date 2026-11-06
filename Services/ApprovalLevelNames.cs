@@ -21,7 +21,7 @@ public sealed class ApprovalLevelNames(string?[] custom)
 
     public static string Default(int level) => Defaults[Math.Clamp(level, 1, 3) - 1];
 
-    public static async Task<ApprovalLevelNames> LoadAsync(ChandleryDbContext db, int companyId)
+    public static async Task<ApprovalLevelNames> LoadAsync(ChandleryDbContext db, Guid companyId)
     {
         var c = await db.Companies.Where(x => x.Id == companyId)
             .Select(x => new { x.ApprovalLevel1Name, x.ApprovalLevel2Name, x.ApprovalLevel3Name }).FirstOrDefaultAsync();

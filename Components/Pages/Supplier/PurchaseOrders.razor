@@ -84,14 +84,14 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private List<PurchaseOrder> _pos = new();
-    private Dictionary<int, Rfq> _rfqsById = new();
-    private Dictionary<int, Item> _itemsById = new();
-    private Dictionary<int, List<DeliveryOrder>> _deliveriesByPo = new();
+    private Dictionary<Guid, Rfq> _rfqsById = new();
+    private Dictionary<Guid, Item> _itemsById = new();
+    private Dictionary<Guid, List<DeliveryOrder>> _deliveriesByPo = new();
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var supplierId = int.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        var supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
         _pos = await Procurement.GetPurchaseOrdersForSupplierAsync(supplierId);
         _deliveriesByPo = await Deliveries.GetForSupplierPosAsync(supplierId, _pos.Select(p => p.Id));
 

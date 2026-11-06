@@ -1,4 +1,4 @@
-@page "/company/purchase-orders/{PoId:int}"
+@page "/company/purchase-orders/{PoId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -254,18 +254,18 @@ else
 
 @code {
     /// <summary>The unit an item is ordered in on this PO (its line unit, or the item's own on older orders).</summary>
-    private string UnitFor(int itemId) =>
+    private string UnitFor(Guid itemId) =>
         _po?.Lines.FirstOrDefault(x => x.ItemId == itemId)?.UomOr(_itemsById.GetValueOrDefault(itemId)?.UnitOfMeasure) ?? "";
 
-    [Parameter] public int PoId { get; set; }
+    [Parameter] public Guid PoId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private Actor _actor = Actor.System;
     private PurchaseOrder? _po;
     private Supplier? _supplier;
     private Rfq? _rfq;
-    private Dictionary<int, Item> _itemsById = new();
+    private Dictionary<Guid, Item> _itemsById = new();
     private List<PoApprovalRow> _approvals = new();
     private bool _canDecide;
     private bool _busy;
@@ -279,13 +279,13 @@ else
     // Deliveries
     private const int ReceivePageSize = 15;
     private List<DeliveryOrder> _deliveries = new();
-    private Dictionary<int, DeliveryProgress> _progress = new();
+    private Dictionary<Guid, DeliveryProgress> _progress = new();
     private DeliveryStatus _deliveryStatus;
     private bool _receiving;
     private int _receivePage = 1;
     private string? _deliveryError;
     private NewDelivery _newDelivery = new();
-    private readonly Dictionary<int, decimal> _receive = new();
+    private readonly Dictionary<Guid, decimal> _receive = new();
 
     private bool ShowDelivery => _po?.Status == PoStatus.Approved;
     private int FooterSpan => ShowDelivery ? 5 : 3;
@@ -294,7 +294,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
 
         _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
@@ -340,7 +340,7 @@ else
         }
     }
 
-    private void SetReceive(int itemId, object? value)
+    private void SetReceive(Guid itemId, object? value)
     {
         if (decimal.TryParse(value?.ToString(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var qty) && qty > 0)
             _receive[itemId] = qty;

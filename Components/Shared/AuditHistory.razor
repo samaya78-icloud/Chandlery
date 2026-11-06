@@ -22,9 +22,9 @@
 </div>
 
 @code {
-    [Parameter, EditorRequired] public int CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
     [Parameter, EditorRequired] public string EntityType { get; set; } = "";
-    [Parameter, EditorRequired] public int EntityId { get; set; }
+    [Parameter, EditorRequired] public Guid EntityId { get; set; }
 
     /// <summary>Change this to force a reload after the parent has changed the record.</summary>
     [Parameter] public int Version { get; set; }

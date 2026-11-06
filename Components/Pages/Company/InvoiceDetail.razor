@@ -1,4 +1,4 @@
-@page "/company/invoices/{InvoiceId:int}"
+@page "/company/invoices/{InvoiceId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject InvoiceService InvoiceSvc
@@ -72,7 +72,7 @@ else
             <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
                     <label class="label">Tax code</label>
-                    <SelectBox TValue="int" @bind-Value="_taxCodeId" Options="_taxOptions" Placeholder="No tax" AllowClear="true" />
+                    <SelectBox TValue="Guid" @bind-Value="_taxCodeId" Options="_taxOptions" Placeholder="No tax" AllowClear="true" />
                 </div>
                 <div class="md:col-span-2">
                     <label class="label">Reason for any difference from delivered value@(_detail.Match is { HasVariance: true } ? " (required)" : "")</label>
@@ -103,10 +103,10 @@ else
 }
 
 @code {
-    [Parameter] public int InvoiceId { get; set; }
+    [Parameter] public Guid InvoiceId { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
+    private Guid _companyId;
     private Actor _actor = Actor.System;
     private bool _isAdmin;
     private bool _loaded;
@@ -117,15 +117,15 @@ else
     private InvoiceInfo? _detail;
     private ApprovalLevelNames _levelNames = new(new string?[3]);
     private List<TaxCode> _taxCodes = new();
-    private List<SelectOption<int>> _taxOptions = new();
-    private int _taxCodeId;
+    private List<SelectOption<Guid>> _taxOptions = new();
+    private Guid _taxCodeId;
     private string _variance = "";
     private string _rejectReason = "";
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        _companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
         _isAdmin = authState.User.IsInRole("CompanyAdmin");
         _taxCodes = await InvoiceSvc.GetTaxCodesAsync(_companyId);
@@ -141,7 +141,7 @@ else
         if (_detail is null) return;
         var inv = _detail.Invoice;
         _variance = inv.VarianceReason;
-        _taxCodeId = inv.TaxCodeId ?? 0;
+        _taxCodeId = inv.TaxCodeId ?? Guid.Empty;
         var slots = _detail.Approvals.Select(a => (a.Approval.Level, a.Approval.Decision));
         var current = ApprovalEngine.CurrentLevel(slots);
         _canDecide = inv.Status == InvoiceStatus.PendingApproval && current is not null && _actor.UserId is { } uid
@@ -169,7 +169,7 @@ else
         }
     }
 
-    private Task Verify() => Run(() => InvoiceSvc.VerifyAsync(_companyId, InvoiceId, _actor, _taxCodeId == 0 ? null : _taxCodeId, _variance), "Invoice verified");
+    private Task Verify() => Run(() => InvoiceSvc.VerifyAsync(_companyId, InvoiceId, _actor, _taxCodeId == Guid.Empty ? null : _taxCodeId, _variance), "Invoice verified");
 
     private Task Reject() => Run(() => InvoiceSvc.RejectAsync(_companyId, InvoiceId, _actor, _rejectReason), "Invoice rejected and returned to the supplier");
 

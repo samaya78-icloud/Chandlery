@@ -16,7 +16,7 @@ public static class ApprovalEngine
     /// at the smallest amount limit that covers the total. Empty when the company has no rules, meaning no approval is needed.
     /// Shared by purchase orders and invoices.
     /// </summary>
-    public static List<ApprovalRule> ResolveChain(IReadOnlyCollection<ApprovalRule> rules, int? departmentId, decimal total)
+    public static List<ApprovalRule> ResolveChain(IReadOnlyCollection<ApprovalRule> rules, Guid? departmentId, decimal total)
     {
         var scoped = departmentId.HasValue ? rules.Where(r => r.DepartmentId == departmentId).ToList() : new List<ApprovalRule>();
         if (scoped.Count == 0) scoped = rules.Where(r => r.DepartmentId == null).ToList();
@@ -45,7 +45,7 @@ public static class ApprovalEngine
     /// rate for its date. Returns the amount, the rate used (units per USD) and a short note for the history. When no rate exists the
     /// amount is compared as entered and the note says so.
     /// </summary>
-    public static async Task<(decimal Amount, decimal? Rate, string Note)> ComparableAsync(ChandleryDbContext db, int companyId, string currency, DateTime date, decimal total)
+    public static async Task<(decimal Amount, decimal? Rate, string Note)> ComparableAsync(ChandleryDbContext db, Guid companyId, string currency, DateTime date, decimal total)
     {
         var rate = await Fx.LookupAsync(db, companyId, currency, date);
         if (rate is null)
@@ -111,7 +111,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 {
     // ---- Matrix ----
 
-    public async Task<List<ApprovalRuleRow>> GetRulesAsync(int companyId)
+    public async Task<List<ApprovalRuleRow>> GetRulesAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -130,7 +130,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
             .ToList();
     }
 
-    public async Task AddRuleAsync(int companyId, int? departmentId, decimal? upToAmount, int level, int approverUserId)
+    public async Task AddRuleAsync(Guid companyId, Guid? departmentId, decimal? upToAmount, int level, Guid approverUserId)
     {
         if (level is < 1 or > 3) throw new InvalidOperationException("Level must be 1, 2 or 3.");
         if (upToAmount is <= 0) throw new InvalidOperationException("The amount limit must be above zero (or empty for no limit).");
@@ -153,7 +153,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
-    public async Task DeleteRuleAsync(int companyId, int ruleId)
+    public async Task DeleteRuleAsync(Guid companyId, Guid ruleId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -164,7 +164,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Copies every rule of one department (null = "All departments") to another that has none yet.</summary>
-    public async Task<int> CopyRulesAsync(int companyId, int? fromDepartmentId, int? toDepartmentId)
+    public async Task<int> CopyRulesAsync(Guid companyId, Guid? fromDepartmentId, Guid? toDepartmentId)
     {
         if (fromDepartmentId == toDepartmentId) throw new InvalidOperationException("Choose two different departments.");
 
@@ -187,14 +187,14 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Step names ----
 
-    public async Task<ApprovalLevelNames> GetLevelNamesAsync(int companyId)
+    public async Task<ApprovalLevelNames> GetLevelNamesAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         return await ApprovalLevelNames.LoadAsync(db, companyId);
     }
 
     /// <summary>Saves the names of approval steps 1 to 3. A blank name goes back to the default wording.</summary>
-    public async Task SetLevelNamesAsync(int companyId, string[] names)
+    public async Task SetLevelNamesAsync(Guid companyId, string[] names)
     {
         if (names.Length != 3) throw new InvalidOperationException("Give a name for each of the three steps.");
         var cleaned = names.Select(n => (n ?? "").Trim()).ToArray();
@@ -214,7 +214,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Approvals on a PO ----
 
-    public async Task<List<PoApprovalRow>> GetApprovalsAsync(int companyId, int poId)
+    public async Task<List<PoApprovalRow>> GetApprovalsAsync(Guid companyId, Guid poId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -237,7 +237,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         return null;
     }
 
-    public async Task<List<PendingApprovalRow>> GetPendingForUserAsync(int companyId, int userId)
+    public async Task<List<PendingApprovalRow>> GetPendingForUserAsync(Guid companyId, Guid userId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -264,9 +264,9 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         return rows;
     }
 
-    public async Task<int> GetPendingCountForUserAsync(int companyId, int userId) => (await GetPendingForUserAsync(companyId, userId)).Count;
+    public async Task<int> GetPendingCountForUserAsync(Guid companyId, Guid userId) => (await GetPendingForUserAsync(companyId, userId)).Count;
 
-    public async Task DecideAsync(int companyId, int poId, Actor actor, bool approve, string comment)
+    public async Task DecideAsync(Guid companyId, Guid poId, Actor actor, bool approve, string comment)
     {
         if (actor.UserId is not { } userId) throw new InvalidOperationException("You must be signed in.");
         comment = (comment ?? "").Trim();

@@ -9,7 +9,7 @@
 
 <PageHeader Eyebrow="Procurement" Title="New Requisition" Subtitle="Enter what the vessel needs once. You choose the suppliers and send the RFQ from the requisition afterwards." />
 
-@if (_companyId != 0)
+@if (_companyId != Guid.Empty)
 {
 <div class="max-w-5xl space-y-6">
 
@@ -28,7 +28,7 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Vessel <span class="text-rose-500">*</span></label>
-                <SelectBox TValue="int" @bind-Value="_reqn.VesselId" Options="_vesselOptions" Placeholder="Select vessel…" />
+                <SelectBox TValue="Guid" @bind-Value="_reqn.VesselId" Options="_vesselOptions" Placeholder="Select vessel…" />
                 @if (_vessels.Count == 0)
                 {
                     <p class="mt-1 text-xs text-slate-400">No vessels yet &mdash; <a href="/company/vessels" class="text-indigo-600 underline">add one</a> first.</p>
@@ -36,7 +36,7 @@
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Department @if (_departments.Count > 0) { <span class="text-rose-500">*</span> }</label>
-                <SelectBox TValue="int" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "Not specified")" />
+                <SelectBox TValue="Guid" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "Not specified")" />
                 @if (_departments.Count > 0)
                 {
                     <p class="mt-1 text-xs text-slate-400">The department decides which categories and items you can add.</p>
@@ -48,7 +48,7 @@
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Delivery port <span class="text-rose-500">*</span></label>
-                <SelectBox TValue="int" @bind-Value="_portId" Options="_portOptions" Placeholder="Select port…" SearchPlaceholder="Search ports…" />
+                <SelectBox TValue="Guid" @bind-Value="_portId" Options="_portOptions" Placeholder="Select port…" SearchPlaceholder="Search ports…" />
             </div>
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Requisition date</label>
@@ -81,7 +81,7 @@
     </div>
 
     <ItemLinePicker CompanyId="_companyId" Lines="_reqn.Lines" ShowAttachments="true" ShowDrawingNo="@(_reqn.Type == RfqType.Spares)"
-                    DepartmentId="@(_departmentId == 0 ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)"
+                    DepartmentId="@(_departmentId == Guid.Empty ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)"
                     CopySourceLabel="requisition" CopySources="_copySources" OnChanged="StateHasChanged" />
 
     @if (_error is not null)
@@ -103,15 +103,15 @@
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _companyId;
-    private int _departmentId;
-    private int _portId;
+    private Guid _companyId;
+    private Guid _departmentId;
+    private Guid _portId;
     private Actor _actor = Actor.System;
     private readonly NewRequisition _reqn = new();
     private List<Vessel> _vessels = new();
     private List<Department> _departments = new();
     private List<Port> _ports = new();
-    private List<SelectOption<int>> _vesselOptions = new(), _departmentOptions = new(), _portOptions = new();
+    private List<SelectOption<Guid>> _vesselOptions = new(), _departmentOptions = new(), _portOptions = new();
     private readonly List<SelectOption<Urgency>> _urgencyOptions = SelectOptions.FromEnum<Urgency>();
     private List<LineCopySource> _copySources = new();
     private string? _error;
@@ -120,7 +120,7 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
 
         _vessels = await Procurement.GetVesselsAsync(companyId);
@@ -142,8 +142,8 @@
     private async Task Submit()
     {
         _error = null;
-        _reqn.DepartmentId = _departmentId == 0 ? null : _departmentId;
-        _reqn.DeliveryPortId = _portId == 0 ? null : _portId;
+        _reqn.DepartmentId = _departmentId == Guid.Empty ? null : _departmentId;
+        _reqn.DeliveryPortId = _portId == Guid.Empty ? null : _portId;
 
         _busy = true;
         try

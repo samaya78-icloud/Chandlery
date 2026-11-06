@@ -41,7 +41,7 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     /// <summary>One waiting item, whether it is a purchase order or an invoice.</summary>
-    private record InboxRow(DocKind Kind, int Id, string Number, int SupplierId, string Supplier, string Department, DateTime Raised, string Step, decimal Total, string Currency);
+    private record InboxRow(DocKind Kind, Guid Id, string Number, Guid SupplierId, string Supplier, string Department, DateTime Raised, string Step, decimal Total, string Currency);
 
     private List<InboxRow> _rows = new();
     private bool _loaded;
@@ -49,7 +49,7 @@ else
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
-        var companyId = int.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         var actor = Actor.From(authState.User);
         if (actor.UserId is { } userId)
         {
