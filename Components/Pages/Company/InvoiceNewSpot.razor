@@ -118,7 +118,7 @@
         var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
         _departments = await Procurement.GetDepartmentsAsync(companyId);
-        _vessels = await Procurement.GetVesselsAsync(companyId);
+        _vessels = await Procurement.GetVesselsAsync(companyId, _actor.UserId);
         _taxCodes = await InvoiceSvc.GetTaxCodesAsync(companyId);
         _departmentOptions = SelectOptions.From(_departments, d => d.Id, d => d.Name);
         _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);

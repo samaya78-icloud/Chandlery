@@ -59,7 +59,8 @@
     </div>
 
     <ItemLinePicker CompanyId="_companyId" Lines="_po.Lines" ShowPrice="@(!_po.IsDummy)" OnChanged="StateHasChanged"
-                    DepartmentId="@(_departmentId == Guid.Empty ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)" />
+                    DepartmentId="@(_departmentId == Guid.Empty ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)"
+                    VesselId="@(_vesselId == Guid.Empty ? null : _vesselId)" PolicyFor="PolicyAction.DirectPurchase" />
 
     @if (!_po.IsDummy)
     {
@@ -136,7 +137,7 @@
         var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
 
-        _vessels = await Procurement.GetVesselsAsync(companyId);
+        _vessels = await Procurement.GetVesselsAsync(companyId, _actor.UserId);
         _departments = await Procurement.GetDepartmentsAsync(companyId);
         _ports = await Procurement.GetPortsAsync();
         _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);

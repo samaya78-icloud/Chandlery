@@ -170,6 +170,11 @@
                 <a href="/company/vessels/@v.Id" class="link">Open &rarr;</a>
             </GridColumn>
         </DataGrid>
+
+        @if (_selected is not null)
+        {
+            <div class="mt-6"><AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.VesselGroup" EntityId="_selected.Id" Version="_historyVersion" /></div>
+        }
     </section>
 </div>
 
@@ -207,6 +212,7 @@
     private Guid _moveParentId;
     private string? _groupError;
     private string? _notice;
+    private int _historyVersion;
 
     private Guid? _dragGroup, _dragVessel, _dropTarget;
 
@@ -222,7 +228,8 @@
     private async Task ReloadAsync()
     {
         _groups = await Groups.GetGroupsAsync(_companyId);
-        _vessels = (await Procurement.GetVesselsAsync(_companyId)).OrderByDescending(v => v.Id).ToList();
+        _vessels = (await Procurement.GetVesselsAsync(_companyId, _actor.UserId)).OrderByDescending(v => v.Id).ToList();
+        _historyVersion++;
         _tree = VesselGroup.BuildTree(_groups);
         _pathById = _tree.ToDictionary(t => t.Group.Id, t => t.Path);
         _subtreeCounts = _groups.ToDictionary(g => g.Id, g => _vessels.Count(v => v.GroupId.HasValue && VesselGroup.Descendants(_groups, g.Id).Contains(v.GroupId.Value)));

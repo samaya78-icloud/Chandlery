@@ -94,6 +94,17 @@ public class VesselModuleSwitch
     public bool Enabled { get; set; }
 }
 
+/// <summary>
+/// Limits an office user to some vessel groups (and everything beneath them). A user with no rows here sees every vessel.
+/// </summary>
+public class UserGroupScope
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid GroupId { get; set; }
+}
+
 public static class PolicyModules
 {
     public const string Procurement = "Procurement";

@@ -290,11 +290,14 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
 
     // ---- Vessels (company-scoped) ----
 
-    public async Task<List<Vessel>> GetVesselsAsync(Guid companyId)
+    /// <summary>The company's vessels; with a user id, only those in the vessel groups that user is limited to (all when not limited).</summary>
+    public async Task<List<Vessel>> GetVesselsAsync(Guid companyId, Guid? userId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        return await db.Vessels.Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync();
+        var vessels = await db.Vessels.Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync();
+        var allowed = await VesselGroupService.ScopedVesselIdsAsync(db, companyId, userId);
+        return allowed is null ? vessels : vessels.Where(v => allowed.Contains(v.Id)).ToList();
     }
 
     /// <summary>Adds a vessel. Without a short code one is suggested from its name; the code starts every document reference for the vessel.</summary>
@@ -790,6 +793,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             request.Type = requisition.Type;
         }
 
+        await VesselGroupService.EnsureVesselInScopeAsync(db, companyId, actor.UserId, request.VesselId);
         var vesselName = request.VesselName.Trim();
         if (request.VesselId.HasValue)
         {
@@ -807,6 +811,10 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             throw new InvalidOperationException("Add at least one line item.");
         if (request.InvitedSupplierIds.Count == 0)
             throw new InvalidOperationException("Invite at least one supplier.");
+
+        // An RFQ with no requisition behind it is a direct purchase and must be allowed by the vessel's policy.
+        if (requisition is null)
+            await PolicyGuard.EnsureAsync(db, companyId, request.VesselId, null, request.Lines.Select(l => l.ItemId), PolicyAction.DirectPurchase);
 
         var linkedSupplierIds = await db.CompanySuppliers.Where(cs => cs.CompanyId == companyId)
             .Select(cs => cs.SupplierId).ToListAsync();
@@ -1629,7 +1637,9 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         var itemCount = await db.Items.CountAsync(i => i.CompanyId == companyId && itemIds.Contains(i.Id));
         if (itemCount != itemIds.Count)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
+        await VesselGroupService.EnsureVesselInScopeAsync(db, companyId, actor.UserId, vessel.Id);
         await EnsureItemsAllowedAsync(db, companyId, request.DepartmentId, itemIds);
+        await PolicyGuard.EnsureAsync(db, companyId, vessel.Id, request.DepartmentId, itemIds, PolicyAction.DirectPurchase);
         var unitCodes = await ActiveUnitCodesAsync(db, companyId);
         var itemUnits = await db.Items.Where(i => i.CompanyId == companyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.UnitOfMeasure);
 

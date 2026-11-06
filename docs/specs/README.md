@@ -40,7 +40,7 @@ Tank Inspection follows PMS because inspections are driven by PMS jobs. Classifi
 
 ## Build status
 - Foundation (GUID keys, reference codes, change tracking): done 2026-11-07.
-- Vessel groups and policy, stage 1 (group tree, policy rows, module switches, resolver, effective view): done 2026-11-07. Stage 2 (matrix editor, enforcement in pickers/RFQ/PO, office-user scope, history view) next.
+- Vessel groups and policy, stage 1 (group tree, policy rows, module switches, resolver, effective view): done 2026-11-07. Stage 2 (department matrix editor, enforcement of requisition and direct-purchase rights in pickers and on save, office-user group scope on vessel pickers, policy history): done 2026-11-07. Still open: Master limit and monthly budget are stored and shown but not yet enforced (they need the onboard approval flow and monthly spend totals); office-user scope does not yet filter the document lists.
 
 ## Decisions taken
 - PMS for all vessels, with a standard job library and an option to import a vessel's own plan.

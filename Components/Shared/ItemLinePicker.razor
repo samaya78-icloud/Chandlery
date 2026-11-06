@@ -1,5 +1,6 @@
 @inject ProcurementService Procurement
 @inject UomService UomSvc
+@inject VesselGroupService VesselPolicies
 
 @* Line-item entry shared by the RFQ and requisition forms: catalog picker, paste from Excel, copy from a
    previous document, and a paged/filterable grid of the lines. Items are searched on the server, so large
@@ -27,7 +28,11 @@
     else if (_loaded && _pickable.Count == 0 && _catalogCount > 0)
     {
         <div class="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
-            @if (DepartmentId.HasValue)
+            @if (_policyInUse)
+            {
+                <span>This vessel's policy allows no categories for this department and action, so no items can be added. <a href="/company/vessel-policy" class="link">See the vessel policy</a>.</span>
+            }
+            else if (DepartmentId.HasValue)
             {
                 <span>This department has no categories it may use yet, so no items can be added. <a href="/company/departments/@DepartmentId" class="link">Link categories to the department</a> first.</span>
             }
@@ -267,6 +272,11 @@
     /// <summary>The document's department: only items in the categories it may use can be added.</summary>
     [Parameter] public Guid? DepartmentId { get; set; }
 
+    /// <summary>With PolicyFor, limits the items to the categories this vessel's policy allows for that action.</summary>
+    [Parameter] public Guid? VesselId { get; set; }
+    [Parameter] public PolicyAction? PolicyFor { get; set; }
+    private bool _policyInUse;
+
     /// <summary>True when the company has departments, so a department must be chosen before any item can be added.</summary>
     [Parameter] public bool RequireDepartment { get; set; }
 
@@ -280,6 +290,7 @@
     private HashSet<Guid> _pickable = new();
     private bool _pickableLoaded;
     private Guid? _pickableFor;
+    private Guid? _pickableVessel;
 
     private readonly Dictionary<Guid, Item> _itemsById = new();
     private readonly Dictionary<Guid, decimal> _pickQty = new();
@@ -341,12 +352,19 @@
             _catalogCount = await Procurement.GetItemCountAsync(CompanyId);
         }
 
-        var departmentChanged = !_pickableLoaded || _pickableFor != DepartmentId;
+        var departmentChanged = !_pickableLoaded || _pickableFor != DepartmentId || _pickableVessel != VesselId;
         if (departmentChanged)
         {
             _pickable = Locked ? new HashSet<Guid>() : await Procurement.GetPickableCategoryIdsAsync(CompanyId, DepartmentId);
+            _policyInUse = false;
+            if (!Locked && VesselId.HasValue && PolicyFor.HasValue)
+            {
+                var byPolicy = await VesselPolicies.AllowedCategoryIdsAsync(CompanyId, VesselId.Value, DepartmentId, PolicyFor.Value);
+                if (byPolicy is not null) { var before = _pickable.Count; _pickable.IntersectWith(byPolicy); _policyInUse = before > 0; }
+            }
             _pickableLoaded = true;
             _pickableFor = DepartmentId;
+            _pickableVessel = VesselId;
             _tree = Category.BuildTree(_categories).Where(t => _pickable.Contains(t.Category.Id)).ToList();
             _pickCategoryId = Guid.Empty;
             _pickPage = 1;

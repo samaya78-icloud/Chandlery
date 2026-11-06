@@ -637,6 +637,7 @@ public class InvoiceService(IDbContextFactory<ChandleryDbContext> factory, IFile
             throw new InvalidOperationException("Department not found.");
         if (request.VesselId.HasValue && !await db.Vessels.AnyAsync(v => v.Id == request.VesselId.Value && v.CompanyId == companyId))
             throw new InvalidOperationException("Vessel not found.");
+        await VesselGroupService.EnsureVesselInScopeAsync(db, companyId, actor.UserId, request.VesselId);
         if (request.BankAccountId.HasValue && !await db.SupplierBankAccounts.AnyAsync(b => b.Id == request.BankAccountId.Value && b.SupplierId == supplier.Id))
             throw new InvalidOperationException("That bank account does not belong to this supplier.");
 

@@ -39,6 +39,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
 
         if (!await db.Vessels.AnyAsync(v => v.Id == request.VesselId && v.CompanyId == companyId))
             throw new InvalidOperationException("Choose a vessel.");
+        await VesselGroupService.EnsureVesselInScopeAsync(db, companyId, actor.UserId, request.VesselId);
         if (request.DepartmentId.HasValue && !await db.Departments.AnyAsync(d => d.Id == request.DepartmentId.Value && d.CompanyId == companyId))
             throw new InvalidOperationException("Department not found for this company.");
         if (!request.DeliveryPortId.HasValue)
@@ -58,6 +59,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
         if (items.Count != itemIds.Count)
             throw new InvalidOperationException("One or more items were not found in your catalog.");
         await ProcurementService.EnsureItemsAllowedAsync(db, companyId, request.DepartmentId, itemIds);
+        await PolicyGuard.EnsureAsync(db, companyId, request.VesselId, request.DepartmentId, itemIds, PolicyAction.Requisition);
         var unitCodes = await ProcurementService.ActiveUnitCodesAsync(db, companyId);
 
         var isSpares = request.Type == RfqType.Spares;

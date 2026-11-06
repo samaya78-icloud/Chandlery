@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "CompanyAdmin")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject VesselGroupService Groups
 
 <PageTitle>Team · Chandlery</PageTitle>
 
@@ -49,6 +50,7 @@
                 <th class="px-4 py-3 font-medium">Name</th>
                 <th class="px-4 py-3 font-medium">Email</th>
                 <th class="px-4 py-3 font-medium">Role</th>
+                <th class="px-4 py-3 font-medium">Vessel groups</th>
             </tr>
         </thead>
         <tbody>
@@ -61,6 +63,23 @@
                         <span class="@(u.Role == UserRole.CompanyAdmin ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500") rounded-full px-2.5 py-1 text-xs font-medium">
                             @(u.Role == UserRole.CompanyAdmin ? "Admin" : "User")
                         </span>
+                    </td>
+                    <td class="px-4 py-3 text-slate-600">
+                        @if (_scopeUserId == u.Id)
+                        {
+                            <div class="max-w-xs">
+                                <SelectBox TValue="Guid" Multiple="true" Values="_scopeValues" Options="_groupOptions" Placeholder="All vessels" SearchPlaceholder="Search groups…" />
+                                <div class="mt-2 flex gap-2">
+                                    <button @onclick="SaveScope" class="btn btn-primary btn-sm">Save</button>
+                                    <button @onclick="() => _scopeUserId = null" class="btn btn-secondary btn-sm">Cancel</button>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <span>@ScopeText(u)</span>
+                            <button @onclick="() => EditScope(u)" class="ml-2 text-xs font-medium text-indigo-600 hover:underline">Edit</button>
+                        }
                     </td>
                 </tr>
             }
@@ -84,12 +103,49 @@
         new(UserRole.CompanyAdmin, "Company Admin", "Also manages the team, approval matrix and finalizes invoices")
     };
     private string? _error;
+    private Dictionary<Guid, HashSet<Guid>> _scopes = new();
+    private List<SelectOption<Guid>> _groupOptions = new();
+    private Dictionary<Guid, string> _groupNames = new();
+    private Guid? _scopeUserId;
+    private HashSet<Guid> _scopeValues = new();
+    private Actor _actor = Actor.System;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
         _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(authState.User);
         _users = (await Procurement.GetCompanyUsersAsync(_companyId)).OrderByDescending(u => u.CreatedAt).ThenByDescending(u => u.Id).ToList();
+        var tree = VesselGroup.BuildTree(await Groups.GetGroupsAsync(_companyId));
+        _groupOptions = tree.Select(t => new SelectOption<Guid>(t.Group.Id, t.Path)).ToList();
+        _groupNames = tree.ToDictionary(t => t.Group.Id, t => t.Path);
+        _scopes = await Groups.GetAllUserScopesAsync(_companyId);
+    }
+
+    private string ScopeText(AppUser user) =>
+        _scopes.TryGetValue(user.Id, out var ids) && ids.Count > 0 ? string.Join(", ", ids.Select(id => _groupNames.GetValueOrDefault(id, "?"))) : "All vessels";
+
+    private void EditScope(AppUser user)
+    {
+        _scopeUserId = user.Id;
+        _scopeValues = _scopes.TryGetValue(user.Id, out var ids) ? new HashSet<Guid>(ids) : new HashSet<Guid>();
+    }
+
+    private async Task SaveScope()
+    {
+        if (_scopeUserId is null) return;
+        try
+        {
+            await Groups.SetUserScopeAsync(_companyId, _scopeUserId.Value, _scopeValues, _actor);
+            _error = null;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            return;
+        }
+        _scopes = await Groups.GetAllUserScopesAsync(_companyId);
+        _scopeUserId = null;
     }
 
     private async Task Add()

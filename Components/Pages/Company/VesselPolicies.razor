@@ -72,6 +72,33 @@ else
 
         @if (_targetId != Guid.Empty)
         {
+            <h3 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Department matrix</h3>
+            <p class="mb-2 text-xs text-muted">Click a right to cycle it: no opinion (shows what is inherited, greyed), allowed, denied. Rules for a single catalog category are below.</p>
+            <div class="mb-6 overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-line text-left text-xs uppercase tracking-wide text-muted">
+                            <th class="py-2 pr-3">Department</th><th class="py-2 pr-3">Raise requisitions</th><th class="py-2 pr-3">Buy directly</th>
+                            <th class="py-2 pr-3">Master limit USD</th><th class="py-2 pr-3">Monthly budget USD</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in _matrix)
+                        {
+                            var row = m;
+                            <tr class="border-b border-line/60">
+                                <td class="py-2 pr-3 font-medium text-ink">@row.Department</td>
+                                <td class="py-2 pr-3">@FlagCell(row, "requisition", row.Own?.CanRequisition, row.Inherited.CanRequisition)</td>
+                                <td class="py-2 pr-3">@FlagCell(row, "direct", row.Own?.CanPurchaseDirect, row.Inherited.CanPurchaseDirect)</td>
+                                <td class="py-2 pr-3">@AmountCell(row, "limit", row.Own?.MasterApprovalLimitUsd, row.Inherited.MasterApprovalLimitUsd)</td>
+                                <td class="py-2 pr-3">@AmountCell(row, "budget", row.Own?.MonthlyBudgetUsd, row.Inherited.MonthlyBudgetUsd)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <h3 class="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">All rules</h3>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead>
@@ -158,6 +185,8 @@ else
                 </div>
             }
 
+            <div class="mt-6"><AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.VesselPolicy" EntityId="_targetId" Version="_historyVersion" /></div>
+
             <h3 class="mt-6 mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Modules for this @(IsVessel(_targetId) ? "vessel" : "group")</h3>
             <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                 @foreach (var module in PolicyModules.All)
@@ -192,6 +221,8 @@ else
     private Actor _actor = Actor.System;
     private bool _isAdmin, _loaded;
     private List<PolicyRow> _rows = new();
+    private List<MatrixRow> _matrix = new();
+    private int _historyVersion;
     private List<VesselModuleSwitch> _switches = new();
     private List<SelectOption<Guid>> _vesselOptions = new(), _deptOptionsAny = new(), _catOptionsAny = new(), _targetOptions = new();
     private HashSet<Guid> _vesselIds = new();
@@ -238,6 +269,8 @@ else
         _rows = await Groups.GetPolicyRowsAsync(_companyId);
         _switches = await Groups.GetModuleSwitchesAsync(_companyId);
         if (_effVessel != Guid.Empty) await ComputeEffectiveAsync();
+        _matrix = _targetId == Guid.Empty ? new() : await Groups.GetMatrixAsync(_companyId, _targetId);
+        _historyVersion++;
     }
 
     private bool IsVessel(Guid id) => _vesselIds.Contains(id);
@@ -253,11 +286,40 @@ else
         _effective = await Groups.GetEffectiveAsync(_companyId, _effVessel, _effDept == Guid.Empty ? null : _effDept, _effCat == Guid.Empty ? null : _effCat);
     }
 
-    private void OnTargetChanged()
+    private async Task OnTargetChanged()
     {
         _notice = null;
         ResetForm();
+        await ReloadAsync();
     }
+
+    private async Task CycleFlag(MatrixRow row, string field, bool? current)
+    {
+        _notice = null;
+        bool? next = current is null ? true : current.Value ? false : null;
+        try { await Groups.SetMatrixCellAsync(_companyId, _targetId, row.DepartmentId, field, next, null, _actor); }
+        catch (InvalidOperationException ex) { _notice = ex.Message; }
+        await ReloadAsync();
+    }
+
+    private async Task SetAmount(MatrixRow row, string field, string? text)
+    {
+        _notice = null;
+        decimal? value = decimal.TryParse(text, out var parsed) ? parsed : null;
+        try { await Groups.SetMatrixCellAsync(_companyId, _targetId, row.DepartmentId, field, null, value, _actor); }
+        catch (InvalidOperationException ex) { _notice = ex.Message; }
+        await ReloadAsync();
+    }
+
+    private RenderFragment FlagCell(MatrixRow row, string field, bool? own, Decision<bool> inherited) => @<button @onclick="() => CycleFlag(row, field, own)"
+            class="@("rounded-md px-2.5 py-1 text-xs font-semibold transition " + (own is null ? "border border-dashed border-line text-muted" : own.Value ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"))"
+            title="@(own is null ? "Inherited: " + inherited.Source : "Set here")">
+        @(own is null ? (inherited.Value ? "allowed" : "not allowed") + (inherited.Row is null ? "" : " (inherited)") : own.Value ? "Allowed" : "Denied")
+    </button>;
+
+    private RenderFragment AmountCell(MatrixRow row, string field, decimal? own, Decision<decimal?> inherited) => @<input type="number" min="0" step="0.01"
+            value="@(own?.ToString("0.##"))" placeholder="@(inherited.Value is { } v ? v.ToString("0.##") + " (inherited)" : "-")"
+            @onchange="e => SetAmount(row, field, e.Value?.ToString())" class="input input-sm w-40" />;
 
     private void ResetForm()
     {

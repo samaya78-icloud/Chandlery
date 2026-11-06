@@ -24,6 +24,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<VesselGroup> VesselGroups => Set<VesselGroup>();
     public DbSet<VesselPolicy> VesselPolicies => Set<VesselPolicy>();
     public DbSet<VesselModuleSwitch> VesselModuleSwitches => Set<VesselModuleSwitch>();
+    public DbSet<UserGroupScope> UserGroupScopes => Set<UserGroupScope>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Port> Ports => Set<Port>();
     public DbSet<RfqArchive> RfqArchives => Set<RfqArchive>();
@@ -140,6 +141,15 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
             b.HasIndex(p => new { p.CompanyId, p.GroupId });
             b.HasIndex(p => new { p.CompanyId, p.VesselId });
             b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<UserGroupScope>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(s => s.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<AppUser>().WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<VesselGroup>().WithMany().HasForeignKey(s => s.GroupId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(s => new { s.UserId, s.GroupId }).IsUnique();
+            b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<VesselModuleSwitch>(b =>

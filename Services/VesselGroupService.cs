@@ -7,6 +7,9 @@ namespace Chandlery.Services;
 /// <summary>A policy row with the names a person needs to read it.</summary>
 public record PolicyRow(VesselPolicy Policy, string Target, string Department, string Category);
 
+/// <summary>One department line of the policy matrix: the target's own row (if any) and what it inherits when that row says nothing.</summary>
+public record MatrixRow(Guid? DepartmentId, string Department, VesselPolicy? Own, ResolvedPolicy Inherited);
+
 /// <summary>What the "why can't this vessel buy this?" view shows.</summary>
 public record EffectiveView(string Vessel, string GroupPath, ResolvedPolicy Policy, List<(string Module, bool Enabled, string Source)> Modules);
 
@@ -264,6 +267,143 @@ public class VesselGroupService(IDbContextFactory<ChandleryDbContext> factory)
 
     private static string Tri(bool? value) => value is null ? "-" : value.Value ? "allowed" : "denied";
 
+    // ---------- office user scope ----------
+
+    public async Task<Dictionary<Guid, HashSet<Guid>>> GetAllUserScopesAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var rows = await db.UserGroupScopes.Where(s => s.CompanyId == companyId).ToListAsync();
+        return rows.GroupBy(s => s.UserId).ToDictionary(g => g.Key, g => g.Select(s => s.GroupId).ToHashSet());
+    }
+
+    public async Task<HashSet<Guid>> GetUserScopeAsync(Guid companyId, Guid userId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return (await db.UserGroupScopes.Where(s => s.CompanyId == companyId && s.UserId == userId).Select(s => s.GroupId).ToListAsync()).ToHashSet();
+    }
+
+    /// <summary>Replaces the groups an office user is limited to. An empty set removes the limit.</summary>
+    public async Task SetUserScopeAsync(Guid companyId, Guid userId, IEnumerable<Guid> groupIds, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId && u.CompanyId == companyId) ?? throw new InvalidOperationException("User not found.");
+        var wanted = groupIds.Distinct().ToList();
+        var groups = await db.VesselGroups.Where(g => g.CompanyId == companyId).ToListAsync();
+        if (wanted.Any(id => groups.All(g => g.Id != id))) throw new InvalidOperationException("Group not found.");
+
+        var existing = await db.UserGroupScopes.Where(s => s.CompanyId == companyId && s.UserId == userId).ToListAsync();
+        db.UserGroupScopes.RemoveRange(existing.Where(s => !wanted.Contains(s.GroupId)));
+        foreach (var id in wanted.Where(id => existing.All(s => s.GroupId != id)))
+            db.UserGroupScopes.Add(new UserGroupScope { CompanyId = companyId, UserId = userId, GroupId = id });
+
+        var names = string.Join(", ", groups.Where(g => wanted.Contains(g.Id)).Select(g => g.Name));
+        AuditLog.Add(db, companyId, AuditEntityTypes.VesselPolicy, userId, actor, $"SCOPE of {user.DisplayName} set to {(wanted.Count == 0 ? "all vessels" : names)}");
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The vessels a user may see, or null when the user is not limited to any group.</summary>
+    internal static async Task<HashSet<Guid>?> ScopedVesselIdsAsync(ChandleryDbContext db, Guid companyId, Guid? userId)
+    {
+        if (userId is null) return null;
+        var scope = await db.UserGroupScopes.Where(s => s.CompanyId == companyId && s.UserId == userId).Select(s => s.GroupId).ToListAsync();
+        if (scope.Count == 0) return null;
+
+        var groups = await db.VesselGroups.Where(g => g.CompanyId == companyId).ToListAsync();
+        var groupIds = new HashSet<Guid>();
+        foreach (var id in scope) groupIds.UnionWith(VesselGroup.Descendants(groups, id));
+        return (await db.Vessels.Where(v => v.CompanyId == companyId && v.GroupId != null && groupIds.Contains(v.GroupId.Value)).Select(v => v.Id).ToListAsync()).ToHashSet();
+    }
+
+    /// <summary>Refuses work on a vessel outside the user's groups.</summary>
+    internal static async Task EnsureVesselInScopeAsync(ChandleryDbContext db, Guid companyId, Guid? userId, Guid? vesselId)
+    {
+        if (vesselId is null) return;
+        var allowed = await ScopedVesselIdsAsync(db, companyId, userId);
+        if (allowed is not null && !allowed.Contains(vesselId.Value))
+            throw new InvalidOperationException("That vessel is outside the vessel groups you are responsible for.");
+    }
+
+    // ---------- matrix ----------
+
+    /// <summary>Department-level rows for a group or vessel, each with the values inherited from the groups above.</summary>
+    public async Task<List<MatrixRow>> GetMatrixAsync(Guid companyId, Guid targetId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var groups = await db.VesselGroups.Where(g => g.CompanyId == companyId).ToListAsync();
+        var vessel = await db.Vessels.FirstOrDefaultAsync(v => v.Id == targetId && v.CompanyId == companyId);
+        var isGroup = vessel is null && groups.Any(g => g.Id == targetId);
+        if (vessel is null && !isGroup) throw new InvalidOperationException("Group or vessel not found.");
+
+        var chain = vessel is not null
+            ? PolicyResolver.GroupChain(groups, vessel.GroupId)
+            : PolicyResolver.GroupChain(groups, groups.First(g => g.Id == targetId).ParentId);
+        var vesselKey = vessel?.Id ?? Guid.Empty;
+        var all = await db.VesselPolicies.Where(p => p.CompanyId == companyId).ToListAsync();
+        var own = all.Where(p => vessel is not null ? p.VesselId == targetId : p.GroupId == targetId).ToList();
+        var inheritedRows = all.Except(own).ToList();
+        var cats = await db.Categories.Where(c => c.CompanyId == companyId).ToListAsync();
+        var names = groups.ToDictionary(g => g.Id, g => g.Name);
+        var depts = await db.Departments.Where(d => d.CompanyId == companyId).OrderBy(d => d.Name).ToListAsync();
+
+        var result = new List<MatrixRow> { Row(null, "All departments") };
+        result.AddRange(depts.Select(d => Row(d.Id, d.Name)));
+        return result;
+
+        MatrixRow Row(Guid? deptId, string name) => new(
+            deptId, name,
+            own.FirstOrDefault(p => p.DepartmentId == deptId && p.CategoryId == null),
+            PolicyResolver.Resolve(vesselKey, chain,
+                // A department line also falls back on this target's own "all departments" row.
+                deptId is null ? inheritedRows : inheritedRows.Concat(own.Where(p => p.DepartmentId == null && p.CategoryId == null)).ToList(),
+                cats, names, deptId, null, DateTime.UtcNow));
+    }
+
+    /// <summary>Sets one matrix cell. Field is "requisition", "direct", "limit" or "budget"; a null value clears it, and a row left empty is removed.</summary>
+    public async Task SetMatrixCellAsync(Guid companyId, Guid targetId, Guid? departmentId, string field, bool? flag, decimal? amount, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var isVessel = await db.Vessels.AnyAsync(v => v.Id == targetId && v.CompanyId == companyId);
+        if (!isVessel && !await db.VesselGroups.AnyAsync(g => g.Id == targetId && g.CompanyId == companyId))
+            throw new InvalidOperationException("Group or vessel not found.");
+        if (departmentId.HasValue && !await db.Departments.AnyAsync(d => d.Id == departmentId && d.CompanyId == companyId))
+            throw new InvalidOperationException("Department not found.");
+        if (amount < 0) throw new InvalidOperationException("Amounts cannot be negative.");
+
+        var row = await db.VesselPolicies.FirstOrDefaultAsync(p => p.CompanyId == companyId && p.DepartmentId == departmentId && p.CategoryId == null
+            && (isVessel ? p.VesselId == targetId : p.GroupId == targetId));
+        if (row is null)
+        {
+            if (flag is null && amount is null) return;
+            row = new VesselPolicy { CompanyId = companyId, GroupId = isVessel ? null : targetId, VesselId = isVessel ? targetId : null, DepartmentId = departmentId };
+            db.VesselPolicies.Add(row);
+        }
+
+        switch (field)
+        {
+            case "requisition": row.CanRequisition = flag; break;
+            case "direct": row.CanPurchaseDirect = flag; break;
+            case "limit": row.MasterApprovalLimitUsd = amount; break;
+            case "budget": row.MonthlyBudgetUsd = amount; break;
+            default: throw new InvalidOperationException("Unknown field.");
+        }
+
+        var dept = departmentId.HasValue ? (await db.Departments.FirstAsync(d => d.Id == departmentId)).Name : "all departments";
+        var shown = field is "requisition" or "direct" ? Tri(flag) : amount?.ToString("N2") ?? "-";
+        AuditLog.Add(db, companyId, AuditEntityTypes.VesselPolicy, targetId, actor, $"SET {field} for {dept} to {shown}");
+
+        if (row.CanRequisition is null && row.CanPurchaseDirect is null && row.MasterApprovalLimitUsd is null && row.MonthlyBudgetUsd is null)
+        {
+            if (db.Entry(row).State != EntityState.Added) db.VesselPolicies.Remove(row);
+            else db.Entry(row).State = EntityState.Detached;
+        }
+        await db.SaveChangesAsync();
+    }
+
     // ---------- modules ----------
 
     public async Task<List<VesselModuleSwitch>> GetModuleSwitchesAsync(Guid companyId)
@@ -294,6 +434,14 @@ public class VesselGroupService(IDbContextFactory<ChandleryDbContext> factory)
         AuditLog.Add(db, companyId, AuditEntityTypes.VesselPolicy, (groupId ?? vesselId)!.Value, actor,
             $"MODULE {module} set to {(enabled is null ? "inherited" : enabled.Value ? "on" : "off")}");
         await db.SaveChangesAsync();
+    }
+
+    /// <summary>The categories the vessel may use for an action, or null when the company has no policy rules yet.</summary>
+    public async Task<HashSet<Guid>?> AllowedCategoryIdsAsync(Guid companyId, Guid vesselId, Guid? departmentId, PolicyAction action)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await PolicyGuard.AllowedCategoriesAsync(db, companyId, vesselId, departmentId, action);
     }
 
     // ---------- effective policy ----------

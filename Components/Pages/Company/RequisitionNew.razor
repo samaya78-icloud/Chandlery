@@ -82,6 +82,7 @@
 
     <ItemLinePicker CompanyId="_companyId" Lines="_reqn.Lines" ShowAttachments="true" ShowDrawingNo="@(_reqn.Type == RfqType.Spares)"
                     DepartmentId="@(_departmentId == Guid.Empty ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)"
+                    VesselId="@(_reqn.VesselId == Guid.Empty ? null : _reqn.VesselId)" PolicyFor="PolicyAction.Requisition"
                     CopySourceLabel="requisition" CopySources="_copySources" OnChanged="StateHasChanged" />
 
     @if (_error is not null)
@@ -123,7 +124,7 @@
         var companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
 
-        _vessels = await Procurement.GetVesselsAsync(companyId);
+        _vessels = await Procurement.GetVesselsAsync(companyId, _actor.UserId);
         _departments = await Procurement.GetDepartmentsAsync(companyId);
         _ports = await Procurement.GetPortsAsync();
         _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);
