@@ -19,6 +19,10 @@ else
         <Badges>
             <StatusChip Value="_rfq.Status" />
             <StatusChip Value="_rfq.Type" />
+            @if (_rfq.OwnerStage == SyncStages.Vessel)
+            {
+                <span class="chip" data-tone="warning" title="Raised onboard; the vessel compares quotes and awards. Take it over to work on it here.">raised onboard</span>
+            }
         </Badges>
         <Facts>
             @if (_rfq.VesselId is { } vesselId)
@@ -40,6 +44,14 @@ else
             <button onclick="window.print()" class="btn btn-secondary btn-sm">Print</button>
         </Actions>
     </PageHeader>
+
+    @if (_rfq.OwnerStage == SyncStages.Vessel)
+    {
+        <div class="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 text-sm dark:bg-amber-500/10">
+            <span>This RFQ was raised onboard and the vessel compares the quotes and awards. Supplier quotes still arrive here and are passed to the vessel.</span>
+            <button @onclick="TakeOver" class="btn btn-secondary btn-sm ml-auto">Take over this RFQ</button>
+        </div>
+    }
 
     <RelatedDocuments CompanyId="_companyId" Kind="DocKind.Rfq" Id="_rfq.Id" Version="_auditVersion" />
 
@@ -435,6 +447,16 @@ else
         _companyId = Guid.Parse(authState.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(authState.User);
         await Load();
+    }
+
+    private async Task TakeOver()
+    {
+        try
+        {
+            await Procurement.TakeOverRfqAsync(_companyId, RfqId, _actor);
+            await Load();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
     }
 
     private async Task Load()

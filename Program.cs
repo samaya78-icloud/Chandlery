@@ -36,6 +36,7 @@ builder.Services.AddScoped<DeliveryService>();
 builder.Services.AddScoped<PoDocumentService>();
 builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddScoped<OrdersService>();
+builder.Services.AddScoped<OnboardRfqService>();
 builder.Services.AddSingleton(sp => CrewCrypto.From(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHostEnvironment>()));
 builder.Services.AddScoped<CrewService>();
 builder.Services.AddSingleton<IFileStore, DiskFileStore>();

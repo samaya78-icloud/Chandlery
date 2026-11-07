@@ -8,6 +8,9 @@ public class Quote
     public Guid SupplierId { get; set; }
     public DateTime SubmittedDate { get; set; }
 
+    /// <summary>The side the quote was entered on: the office for a supplier's portal quote, the vessel for one typed in from an email or a call.</summary>
+    public string OwnerStage { get; set; } = SyncStages.Office;
+
     public string SupplierRef { get; set; } = "";
     public int? DeliveryDays { get; set; }
     public DateTime? ValidityDate { get; set; }

@@ -184,7 +184,7 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             .Select(p => MasterData.TryRead(p, payload, out var v) && v is not null ? v : throw new InvalidOperationException($"{master.DocType} document has no {p.Name}."))
             .ToArray();
 
-        if (!document.Deleted) await RequireParentsAsync(db, type, master.DocType, payload, ct);
+        if (!document.Deleted) await RequireParentsAsync(type, master.DocType, payload, ct);
         var existing = await db.FindAsync(master.Clr, key, ct);
 
         if (document.Deleted)
@@ -229,8 +229,10 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         }
     }
 
-    private async Task RequireParentsAsync(ChandleryDbContext db, Microsoft.EntityFrameworkCore.Metadata.IEntityType type, string label, JsonObject payload, CancellationToken ct)
+    private async Task RequireParentsAsync(Microsoft.EntityFrameworkCore.Metadata.IEntityType type, string label, JsonObject payload, CancellationToken ct)
     {
+        // Looked up through a context of its own, so what is found here cannot disturb the record being applied.
+        await using var db = await factory.CreateDbContextAsync(ct);
         var missing = new List<string>();
         foreach (var fk in type.GetForeignKeys())
         {
@@ -247,7 +249,6 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             if (_present.ContainsKey(name)) continue;
             var found = await db.FindAsync(principal, values, ct);
             if (found is null) { missing.Add(name); continue; }
-            db.Entry(found).State = EntityState.Detached;
             _present[name] = true;
         }
 
@@ -313,15 +314,17 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         // A vessel may only send for the vessel it runs.
         if (atHub)
         {
-            var vesselId = aggregate.Clr == typeof(PurchaseOrder)
-                ? MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId))
-                : await db.PurchaseOrders.Where(p => p.Id == MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId))).Select(p => p.VesselId).FirstOrDefaultAsync(ct);
-            var vesselNode = vesselId is { } v ? await db.Vessels.Where(x => x.Id == v).Select(x => x.NodeId).FirstOrDefaultAsync(ct) : null;
             if (aggregate.Clr == typeof(DeliveryOrder) && !await db.PurchaseOrders.AnyAsync(p => p.Id == MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId)), ct))
                 throw new DeferredException("The delivery refers to a purchase order that has not arrived yet.");
+            if (aggregate.Clr == typeof(Quote) && !await db.Rfqs.AnyAsync(r => r.Id == MasterData.ReadGuid(payload, nameof(Quote.RfqId)), ct))
+                throw new DeferredException("The quote refers to an RFQ that has not arrived yet.");
+            var vesselId = await SyncPublisher.VesselOfAsync(db, aggregate, payload, ct);
+            var vesselNode = vesselId is { } v ? await db.Vessels.Where(x => x.Id == v).Select(x => x.NodeId).FirstOrDefaultAsync(ct) : null;
             if (vesselNode?.ToString("N") != stream.NodeId)
                 throw new InvalidOperationException($"Node {stream.NodeId} may not send {aggregate.DocType} documents for that vessel.");
         }
+        else if (aggregate.Clr == typeof(Quote) && !await db.Rfqs.AnyAsync(r => r.Id == MasterData.ReadGuid(payload, nameof(Quote.RfqId)), ct))
+            throw new DeferredException("The quote refers to an RFQ that has not arrived yet.");
 
         if (document.Deleted)
         {
@@ -333,8 +336,8 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             return;
         }
 
-        await RequireParentsAsync(db, type, aggregate.DocType, payload, ct);
-        if (aggregate.Clr == typeof(PurchaseOrder)) await RequireOrderMasterDataAsync(db, payload, ct);
+        await RequireParentsAsync(type, aggregate.DocType, payload, ct);
+        if (aggregate.Clr == typeof(PurchaseOrder) || aggregate.Clr == typeof(Rfq)) await RequireOrderMasterDataAsync(db, payload, ct);
 
         var isNew = existing is null;
         var entry = isNew ? db.Add(Activator.CreateInstance(aggregate.Clr)!) : db.Entry(existing!);
@@ -348,6 +351,19 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         catch (DbUpdateException ex)
         {
             throw new InvalidOperationException($"{aggregate.DocType} could not be stored: {ex.GetBaseException().Message}", ex);
+        }
+
+        // A quote reached the vessel for an RFQ it raised: the vessel notes that quotes are in, as a normal change that goes up too.
+        if (!atHub && entry.Entity is Quote arrived && arrived.OwnerStage == SyncStages.Office)
+        {
+            await using var normal = await factory.CreateDbContextAsync(ct);
+            normal.Node.SyncEnabled = node.SyncEnabled;
+            var rfq = await normal.Rfqs.FirstOrDefaultAsync(r => r.Id == arrived.RfqId, ct);
+            if (rfq is { Status: RfqStatus.Sent, OwnerStage: SyncStages.Vessel })
+            {
+                rfq.Status = RfqStatus.QuotesReceived;
+                await normal.SaveChangesAsync(ct);
+            }
         }
 
         if (entry.Entity is DeliveryOrder delivery)

@@ -112,6 +112,7 @@ public static class VesselRules
     [
         typeof(Requisition), typeof(RequisitionLine), typeof(Attachment), typeof(AuditEntry), typeof(SyncDirty),
         typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember), typeof(DeliveryOrder), typeof(DeliveryOrderLine),
+        typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine),
     ];
 
     public static bool MayWrite(Type entity) => Writable.Contains(entity);

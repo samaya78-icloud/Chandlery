@@ -26,6 +26,8 @@ public static class Aggregates
     [
         new(nameof(PurchaseOrder), typeof(PurchaseOrder)),
         new(nameof(DeliveryOrder), typeof(DeliveryOrder)),
+        new(nameof(Rfq), typeof(Rfq)),
+        new(nameof(Quote), typeof(Quote)),
     ];
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
@@ -49,6 +51,8 @@ public static class Aggregates
     {
         PurchaseOrder p => p.OwnerStage,
         DeliveryOrder d => d.OwnerStage,
+        Rfq r => r.OwnerStage,
+        Quote q => q.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -56,6 +60,8 @@ public static class Aggregates
     {
         if (root is PurchaseOrder p) p.OwnerStage = stage;
         else if (root is DeliveryOrder d) d.OwnerStage = stage;
+        else if (root is Rfq r) r.OwnerStage = stage;
+        else if (root is Quote q) q.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>
@@ -95,7 +101,7 @@ public static class Aggregates
     }
 
     private static IEnumerable<IProperty> ChildProperties(INavigation nav)
-        => nav.TargetEntityType.GetProperties().Where(p => !p.IsPrimaryKey() && !p.IsForeignKey() && p.PropertyInfo is not null);
+        => nav.TargetEntityType.GetProperties().Where(p => !p.IsForeignKey() && p.PropertyInfo is not null);   // a child with a real id of its own keeps it
 
     // ---- writing ----
 
@@ -110,17 +116,39 @@ public static class Aggregates
         foreach (var nav in entry.Metadata.GetNavigations().Where(n => n.IsCollection && n.PropertyInfo is not null))
         {
             var list = (System.Collections.IList)nav.PropertyInfo!.GetValue(entry.Entity)!;
-            list.Clear();
-            if (payload[nav.Name] is not JsonArray items) continue;
-            foreach (var item in items.OfType<JsonObject>())
+            var items = (payload[nav.Name] as JsonArray)?.OfType<JsonObject>().ToList() ?? [];
+            var keyProperty = nav.TargetEntityType.FindPrimaryKey() is { Properties.Count: 1 } key && key.Properties[0].PropertyInfo is not null ? key.Properties[0] : null;
+
+            if (keyProperty is null)
             {
-                var child = Activator.CreateInstance(nav.TargetEntityType.ClrType)!;
-                foreach (var p in ChildProperties(nav))
-                    if (MasterData.TryRead(p, item, out var value))
-                        p.PropertyInfo!.SetValue(child, value);
-                list.Add(child);
+                // Children without an id of their own (order lines, delivery lines) are simply replaced.
+                list.Clear();
+                foreach (var item in items) list.Add(Build(nav, item, Activator.CreateInstance(nav.TargetEntityType.ClrType)!));
+                continue;
             }
+
+            // Children with an id (RFQ lines are referred to by quotes) are matched by it and updated in place.
+            var held = list.Cast<object>().ToDictionary(c => keyProperty.PropertyInfo!.GetValue(c)!);
+            var keep = new HashSet<object>();
+            foreach (var item in items)
+            {
+                MasterData.TryRead(keyProperty, item, out var id);
+                if (id is null) continue;
+                keep.Add(id);
+                if (held.TryGetValue(id, out var current)) Build(nav, item, current);
+                else list.Add(Build(nav, item, Activator.CreateInstance(nav.TargetEntityType.ClrType)!));
+            }
+            for (var i = list.Count - 1; i >= 0; i--)
+                if (!keep.Contains(keyProperty.PropertyInfo!.GetValue(list[i])!)) list.RemoveAt(i);
         }
+    }
+
+    private static object Build(INavigation nav, JsonObject item, object child)
+    {
+        foreach (var p in ChildProperties(nav))
+            if (MasterData.TryRead(p, item, out var value))
+                p.PropertyInfo!.SetValue(child, value);
+        return child;
     }
 
     /// <summary>Loads a root with all its children (owned or not).</summary>

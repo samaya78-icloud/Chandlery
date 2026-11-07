@@ -43,6 +43,12 @@ public class Rfq
 
     public DateTime CreatedDate { get; set; }
     public RfqStatus Status { get; set; } = RfqStatus.Draft;
+
+    /// <summary>
+    /// Which side may change this RFQ: the side that raised it, until the office takes it over. A vessel-raised RFQ stays with the
+    /// vessel (it compares the quotes and awards onboard) while suppliers quote through the office. See <see cref="SyncStages"/>.
+    /// </summary>
+    public string OwnerStage { get; set; } = SyncStages.Office;
     public List<RfqLine> Lines { get; set; } = new();
     public List<Guid> InvitedSupplierIds { get; set; } = new();
 

@@ -1,4 +1,22 @@
 @inject OrdersService OrdersSvc
+@inject OnboardRfqService RfqSvc
+
+@if (_rfqs.Count > 0)
+{
+    <div class="mb-6 card p-5">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">RFQs for this requisition</h2>
+        <ul class="divide-y divide-line/60 text-sm">
+            @foreach (var r in _rfqs)
+            {
+                <li class="flex flex-wrap items-center gap-3 py-2">
+                    <a href="/vessel/rfqs/@r.Id" class="link font-mono font-semibold">@r.RfqNumber</a>
+                    <StatusChip Value="@r.Status" />
+                    <span class="text-muted">@(r.OwnerStage == Chandlery.Models.SyncStages.Vessel ? $"{r.Quotes} of {r.Invited} quotes" : "handled by the office")</span>
+                </li>
+            }
+        </ul>
+    </div>
+}
 
 @if (_rows.Count > 0)
 {
@@ -24,6 +42,11 @@
     [Parameter] public Guid RequisitionId { get; set; }
 
     private List<OrderRow> _rows = new();
+    private List<OnboardRfqRow> _rfqs = new();
 
-    protected override async Task OnParametersSetAsync() => _rows = await OrdersSvc.ForRequisitionAsync(CompanyId, RequisitionId);
+    protected override async Task OnParametersSetAsync()
+    {
+        _rows = await OrdersSvc.ForRequisitionAsync(CompanyId, RequisitionId);
+        _rfqs = await RfqSvc.ForRequisitionAsync(CompanyId, RequisitionId);
+    }
 }

@@ -835,9 +835,10 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (request.InvitedSupplierIds.Count == 0)
             throw new InvalidOperationException("Invite at least one supplier.");
 
-        // An RFQ with no requisition behind it is a direct purchase and must be allowed by the vessel's policy.
-        if (requisition is null)
-            await PolicyGuard.EnsureAsync(db, companyId, request.VesselId, null, request.Lines.Select(l => l.ItemId), PolicyAction.DirectPurchase);
+        // An RFQ with no requisition behind it is a direct purchase and must be allowed by the vessel's policy. So is every RFQ
+        // raised onboard: a vessel may only buy directly what its policy lets it.
+        if (requisition is null || db.Node.IsVessel)
+            await PolicyGuard.EnsureAsync(db, companyId, request.VesselId, requisition?.DepartmentId, request.Lines.Select(l => l.ItemId), PolicyAction.DirectPurchase);
 
         var linkedSupplierIds = await db.CompanySuppliers.Where(cs => cs.CompanyId == companyId)
             .Select(cs => cs.SupplierId).ToListAsync();
@@ -915,12 +916,32 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             $"POSTED RFQ to {supplierNames.Count} supplier(s): {string.Join(", ", supplierNames)}");
         if (requisition is not null)
         {
-            if (requisition.Status == RequisitionStatus.Open) requisition.Status = RequisitionStatus.RfqPosted;
+            // Onboard the requisition may already be with the office, which owns it; the RFQ itself records the link.
+            if (!db.Node.IsVessel && requisition.Status == RequisitionStatus.Open) requisition.Status = RequisitionStatus.RfqPosted;
             AuditLog.Add(db, companyId, AuditEntityTypes.Requisition, requisition.Id, actor,
                 $"POSTED {rfq.RfqNumber} ({rfq.Lines.Count} lines) to {string.Join(", ", supplierNames)}");
         }
         await db.SaveChangesAsync();
         return rfq;
+    }
+
+    /// <summary>
+    /// The office takes over an RFQ the vessel raised (for example to finish it ashore). From then on the office owns it, the vessel
+    /// receives it as a read-only copy, and nothing the vessel had not yet sent is kept.
+    /// </summary>
+    public async Task TakeOverRfqAsync(Guid companyId, Guid rfqId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) throw new InvalidOperationException("Only the office can take over an RFQ.");
+        var rfq = await db.Rfqs.Include(r => r.Lines).FirstOrDefaultAsync(r => r.Id == rfqId && r.CompanyId == companyId)
+            ?? throw new InvalidOperationException("RFQ not found for this company.");
+        if (rfq.OwnerStage != SyncStages.Vessel) throw new InvalidOperationException($"{rfq.RfqNumber} is already handled by the office.");
+
+        db.AllowTakeOver = true;
+        rfq.OwnerStage = SyncStages.Office;
+        AuditLog.Add(db, companyId, AuditEntityTypes.Rfq, rfq.Id, actor, $"TOOK OVER {rfq.RfqNumber} from the vessel");
+        await db.SaveChangesAsync();
     }
 
     // ---- Quotes ----
@@ -1031,7 +1052,9 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         if (existing is null)
         {
             db.Quotes.Add(quote);
-            if (rfq.Status == RfqStatus.Sent)
+            // The RFQ's own side notes that quotes are in; a quote arriving at the other side leaves the RFQ alone (its owner updates it).
+            var mine = db.Node.IsVessel ? SyncStages.Vessel : SyncStages.Office;
+            if (rfq.Status == RfqStatus.Sent && (!db.Node.SyncEnabled || rfq.OwnerStage == mine))
                 rfq.Status = RfqStatus.QuotesReceived;
         }
 
@@ -1497,7 +1520,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Clears the winner on every line that has no purchase order yet.</summary>
-    public async Task<int> ClearAwardsAsync(Guid companyId, Guid rfqId, Actor actor)
+    public async Task<int> ClearAwardsAsync(Guid companyId, Guid rfqId, Actor actor, Guid? onlyLine = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -1509,7 +1532,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             .SelectMany(po => po.Lines).Select(l => l.ItemId).ToListAsync()).ToHashSet();
 
         var cleared = 0;
-        foreach (var line in rfq.Lines.Where(l => l.WinningSupplierId.HasValue && !poItemIds.Contains(l.ItemId)))
+        foreach (var line in rfq.Lines.Where(l => l.WinningSupplierId.HasValue && !poItemIds.Contains(l.ItemId) && (onlyLine == null || l.Id == onlyLine)))
         {
             line.WinningSupplierId = null;
             cleared++;

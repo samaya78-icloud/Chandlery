@@ -129,9 +129,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         }
 
         if (stage != SyncStages.Office) return 0;
-        var vesselId = aggregate.Clr == typeof(PurchaseOrder)
-            ? MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId))
-            : await db.PurchaseOrders.Where(p => p.Id == MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId))).Select(p => p.VesselId).FirstOrDefaultAsync(ct);
+        var vesselId = await VesselOfAsync(db, aggregate, payload, ct);
         if (vesselId is null) return 0;
         var vesselNode = await db.Vessels.Where(v => v.Id == vesselId).Select(v => v.NodeId).FirstOrDefaultAsync(ct);
         if (vesselNode is null) return 0;
@@ -142,6 +140,24 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             await PushSupplierAsync(db, hub, nodeId, supplierId, ct);
         await hub.PublishToNodeAsync(nodeId, document, Lane.Transaction);
         return 1;
+    }
+
+    /// <summary>
+    /// The vessel a document belongs to. A quote belongs to the vessel only when the RFQ it answers was raised onboard: quotes on
+    /// the office's own RFQs are never sent to a vessel.
+    /// </summary>
+    internal static async Task<Guid?> VesselOfAsync(ChandleryDbContext db, AggregateType aggregate, JsonObject payload, CancellationToken ct)
+    {
+        if (aggregate.Clr == typeof(PurchaseOrder)) return MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId));
+        if (aggregate.Clr == typeof(Rfq)) return MasterData.ReadGuid(payload, nameof(Rfq.VesselId));
+        if (aggregate.Clr == typeof(DeliveryOrder))
+        {
+            var orderId = MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId));
+            return await db.PurchaseOrders.Where(p => p.Id == orderId).Select(p => p.VesselId).FirstOrDefaultAsync(ct);
+        }
+        var rfqId = MasterData.ReadGuid(payload, nameof(Quote.RfqId));
+        var rfq = await db.Rfqs.Where(r => r.Id == rfqId).Select(r => new { r.VesselId, r.OwnerStage }).FirstOrDefaultAsync(ct);
+        return rfq is { OwnerStage: SyncStages.Vessel } ? rfq.VesselId : null;
     }
 
     private async Task PushSupplierAsync(ChandleryDbContext db, HubEndpoint hub, string nodeId, Guid supplierId, CancellationToken ct)

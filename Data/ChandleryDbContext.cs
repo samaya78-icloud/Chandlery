@@ -17,6 +17,12 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public bool ApplyingSync { get; set; }
 
     /// <summary>
+    /// Set by the one action that lets the office take over a document a vessel created (for example an RFQ it raised onboard).
+    /// Without it, changing a document owned by the other side is refused.
+    /// </summary>
+    public bool AllowTakeOver { get; set; }
+
+    /// <summary>
     /// Set explicitly by the caller right after the context is created (via IDbContextFactory —
     /// contexts are short-lived, one per operation, per Blazor Server + EF Core guidance).
     /// Null bypasses the company filter entirely — used for Supplier-side cross-company queries,
@@ -223,6 +229,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Requisition>().WithMany().HasForeignKey(r => r.RequisitionId).OnDelete(DeleteBehavior.Restrict);
             b.Property(r => r.InvitedSupplierIds).HasColumnType("uuid[]");
             b.HasMany(r => r.Lines).WithOne().HasForeignKey("RfqId").OnDelete(DeleteBehavior.Cascade);
+            b.Property(r => r.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
             b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
         });
 
@@ -243,6 +250,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         {
             b.HasOne<Company>().WithMany().HasForeignKey(q => q.CompanyId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Supplier>().WithMany().HasForeignKey(q => q.SupplierId).OnDelete(DeleteBehavior.Restrict);
+            b.Property(q => q.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
             b.Property(q => q.DiscountPct).HasPrecision(5, 2);
             b.Property(q => q.AdditionalCharges).HasPrecision(18, 2);
             b.OwnsMany(q => q.Lines, lb =>
@@ -533,15 +541,21 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
                 {
                     if (root.State == EntityState.Added) Aggregates.SetStage(root.Entity, mine);
                     else if (ReferenceEquals(entry.Entity, root.Entity) && Aggregates.OnlyLocalChanged(entry)) continue;
-                    else if (Aggregates.StageOf(root.Entity) != mine)
-                        throw new InvalidOperationException($"{owned.DocType} {DocLabel(root.Entity)} belongs to the {(mine == SyncStages.Vessel ? "office" : "vessel")}; it cannot be changed from here.");
+                    else
+                    {
+                        // The owner may change it (or hand it over); the other side may not, except through an explicit take-over.
+                        var was = (root.Property("OwnerStage").OriginalValue as string) ?? Aggregates.StageOf(root.Entity);
+                        var takenOver = AllowTakeOver && was != mine && Aggregates.StageOf(root.Entity) == mine;
+                        if (was != mine && !takenOver)
+                            throw new InvalidOperationException($"{owned.DocType} {DocLabel(root.Entity)} belongs to the {(mine == SyncStages.Vessel ? "office" : "vessel")}; it cannot be changed from here.");
+                    }
                 }
                 if (!stamped.Add(root.Entity)) continue;
 
@@ -582,6 +596,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     {
         PurchaseOrder p => p.PoNumber,
         DeliveryOrder d => d.DoNumber,
+        Rfq r => r.RfqNumber,
+        Quote q => q.SupplierRef,
         _ => "",
     };
 
@@ -601,6 +617,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<Requisition>().FirstOrDefault(e => e.Entity.Id == requisitionId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A requisition line was changed without loading its requisition; load the requisition with its lines.");
+        return parent;
+    }
+
+    /// <summary>An RFQ line is its own table but part of the RFQ document, like a requisition line: changing one moves the RFQ's version.</summary>
+    private EntityEntry? RfqOf(EntityEntry line)
+    {
+        var property = line.Property("RfqId");
+        var rfqId = (Guid)(line.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Rfq>().FirstOrDefault(e => e.Entity.Id == rfqId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("An RFQ line was changed without loading its RFQ; load the RFQ with its lines.");
         return parent;
     }
 

@@ -1,0 +1,257 @@
+@page "/vessel/rfqs/{RfqId:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject OnboardRfqService RfqSvc
+@inject ProcurementService Procurement
+@inject ToastService Toasts
+
+<PageTitle>@(_view?.Rfq.RfqNumber ?? "RFQ") · Chandlery</PageTitle>
+
+@if (_view is null)
+{
+    <p class="py-16 text-center text-muted">@(_loaded ? "This RFQ was not found." : "Loading…")</p>
+}
+else
+{
+    var rfq = _view.Rfq;
+    var quotes = _view.Quotes.OrderBy(q => _view.Suppliers.GetValueOrDefault(q.SupplierId) ?? "").ToList();
+    <PageHeader Eyebrow="RFQ" Title="@rfq.RfqNumber" Subtitle="@($"{rfq.Vessel} · raised {rfq.CreatedDate:dd MMM yyyy}" + (rfq.DueDate is { } due ? $" · quotes due {due:dd MMM yyyy}" : ""))">
+        <Actions>
+            <a href="/vessel/rfqs" class="btn btn-secondary">All RFQs</a>
+        </Actions>
+    </PageHeader>
+
+    <div class="mb-6 card p-5">
+        <div class="flex flex-wrap items-center gap-3">
+            <StatusChip Value="@rfq.Status" />
+            @if (_view.Editable) { <span class="chip">raised onboard</span> }
+            else { <span class="chip" data-tone="warning">handled by the office</span> }
+        </div>
+        <dl class="mt-4 grid gap-4 text-sm md:grid-cols-3">
+            <div><dt class="text-xs uppercase tracking-wide text-muted">Requisition</dt><dd class="font-medium">@if (_view.RequisitionId is { } rid) { <a href="/company/requisitions/@rid" class="link">@_view.RequisitionNumber</a> } else { <span class="text-muted">–</span> }</dd></div>
+            <div><dt class="text-xs uppercase tracking-wide text-muted">Delivery port</dt><dd class="font-medium">@(_view.PortName ?? "–")</dd></div>
+            <div><dt class="text-xs uppercase tracking-wide text-muted">Invited suppliers</dt><dd class="font-medium">@string.Join(", ", _view.Suppliers.Values.Order())</dd></div>
+        </dl>
+        @if (!_view.Editable)
+        {
+            <p class="mt-4 text-sm text-muted">The office runs this RFQ, so quotes stay with the office. Where it stands is shown above.</p>
+        }
+    </div>
+
+    @if (_view.Editable)
+    {
+        <div class="mb-6 card overflow-x-auto">
+            <div class="flex flex-wrap items-center gap-2 px-4 pt-4">
+                <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Compare and award</h2>
+                <span class="ml-auto"></span>
+                <button @onclick="AwardLowest" disabled="@(_busy || quotes.Count == 0)" class="btn btn-secondary btn-sm">Award each line to the lowest price</button>
+                <button @onclick="Clear" disabled="@(_busy || !rfq.Lines.Any(l => l.WinningSupplierId.HasValue))" class="btn btn-secondary btn-sm">Clear awards</button>
+            </div>
+            @if (quotes.Count == 0)
+            {
+                <p class="px-4 py-6 text-sm text-muted">No quotes yet. Suppliers quote through the office portal and appear here once the vessel connects; you can also enter one you received by email or phone below.</p>
+            }
+            else
+            {
+                <table class="mt-3 w-full text-left text-sm">
+                    <thead>
+                        <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                            <th class="px-4 py-3 font-medium">Item</th>
+                            <th class="px-4 py-3 text-right font-medium">Qty</th>
+                            @foreach (var q in quotes)
+                            {
+                                <th class="px-4 py-3 text-right font-medium">@_view.Suppliers.GetValueOrDefault(q.SupplierId)<span class="block text-[10px] normal-case text-muted">@(q.OwnerStage == SyncStages.Vessel ? "entered onboard" : "via portal") · @q.Currency</span></th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in rfq.Lines)
+                        {
+                            var prices = quotes.Select(q => (Quote: q, Net: NetFor(q, line))).ToList();
+                            var lowest = prices.Where(p => p.Net is > 0).Select(p => p.Net!.Value).DefaultIfEmpty().Min();
+                            <tr class="border-b border-line/60">
+                                <td class="px-4 py-3"><span class="font-mono text-xs text-muted">@_view.Items.GetValueOrDefault(line.ItemId).Code</span> @_view.Items.GetValueOrDefault(line.ItemId).Name</td>
+                                <td class="px-4 py-3 text-right">@Money.Qty(line.Quantity) @line.Uom</td>
+                                @foreach (var (q, net) in prices)
+                                {
+                                    <td class="px-4 py-3 text-right">
+                                        @if (net is null) { <span class="text-muted">–</span> }
+                                        else
+                                        {
+                                            <button @onclick="() => Award(line, q.SupplierId)" disabled="@_busy" title="Award this line to @_view.Suppliers.GetValueOrDefault(q.SupplierId)"
+                                                    class="rounded-lg px-2 py-1 @(line.WinningSupplierId == q.SupplierId ? "bg-emerald-500/15 font-semibold text-emerald-600 ring-1 ring-emerald-500/40" : net == lowest && prices.Count > 1 ? "font-semibold text-accent-600" : "")">
+                                                @Money.Format(net.Value, q.Currency)
+                                                @if (line.WinningSupplierId == q.SupplierId) { <span class="ml-1 text-xs">✓ awarded</span> }
+                                            </button>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr class="font-semibold">
+                            <td class="px-4 py-3 text-right" colspan="2">Quote total (after discount and charges)</td>
+                            @foreach (var q in quotes)
+                            {
+                                <td class="px-4 py-3 text-right">@Money.Format(q.GrandTotal(rfq.Lines), q.Currency)</td>
+                            }
+                        </tr>
+                    </tfoot>
+                </table>
+                <p class="px-4 pb-4 text-xs text-muted">Click a price to award that line to the supplier. The office is told when the vessel next connects. Raising the purchase order from the award comes next.</p>
+            }
+        </div>
+
+        @if (_quotable.Count > 0)
+        {
+            <div class="mb-6 card p-5">
+                <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Enter a quote received by email or phone</h2>
+                <p class="mb-4 text-xs text-muted">For a supplier that has not quoted through the portal.</p>
+                <div class="grid gap-4 md:grid-cols-4">
+                    <div>
+                        <label class="label">Supplier</label>
+                        <SelectBox TValue="Guid" @bind-Value="_quoteSupplier" Options="_quotable" Placeholder="Choose supplier…" />
+                    </div>
+                    <div><label class="label">Their reference</label><input @bind="_ref" class="input" /></div>
+                    <div><label class="label">Currency</label><input @bind="_currency" maxlength="3" class="input uppercase" /></div>
+                    <div><label class="label">Delivery (days)</label><input type="number" min="0" @bind="_days" class="input" /></div>
+                    <div><label class="label">Valid until</label><input type="date" @bind="_valid" class="input" /></div>
+                    <div><label class="label">Discount %</label><input type="number" step="any" min="0" max="100" @bind="_discount" class="input" /></div>
+                    <div><label class="label">Additional charges</label><input type="number" step="any" min="0" @bind="_charges" class="input" /></div>
+                    <div><label class="label">Remarks</label><input @bind="_remarks" class="input" /></div>
+                </div>
+                <table class="mt-4 w-full text-left text-sm">
+                    <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted"><th class="px-2 py-2 font-medium">Item</th><th class="px-2 py-2 text-right font-medium">Qty</th><th class="px-2 py-2 text-right font-medium">Unit price</th></tr></thead>
+                    <tbody>
+                        @foreach (var line in rfq.Lines)
+                        {
+                            <tr class="border-b border-line/60">
+                                <td class="px-2 py-2">@_view.Items.GetValueOrDefault(line.ItemId).Name</td>
+                                <td class="px-2 py-2 text-right">@Money.Qty(line.Quantity) @line.Uom</td>
+                                <td class="px-2 py-2 text-right"><input type="number" step="any" min="0" class="input input-sm w-28 text-right" value="@PriceText(line.Id)" @onchange="e => SetPrice(line.Id, e.Value?.ToString())" /></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (_error is not null) { <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+                <button @onclick="SaveQuote" disabled="@_busy" class="btn btn-primary mt-4">Save quote</button>
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid RfqId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private OnboardRfqView? _view;
+    private bool _loaded, _busy;
+    private List<SelectOption<Guid>> _quotable = new();
+    private Guid _quoteSupplier;
+    private string _ref = "", _currency = "USD", _remarks = "";
+    private int? _days;
+    private DateTime? _valid;
+    private decimal _discount, _charges;
+    private string? _error;
+    private readonly Dictionary<Guid, decimal> _prices = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _view = await RfqSvc.GetAsync(_companyId, RfqId);
+        _loaded = true;
+        if (_view is null) return;
+        var quoted = _view.Quotes.Select(q => q.SupplierId).ToHashSet();
+        _quotable = _view.Suppliers.Where(s => !quoted.Contains(s.Key)).OrderBy(s => s.Value).Select(s => new SelectOption<Guid>(s.Key, s.Value)).ToList();
+    }
+
+    /// <summary>What a supplier's quote comes to for one line, in the quote's currency (null when it did not quote the line).</summary>
+    private static decimal? NetFor(Quote quote, RfqLine line)
+    {
+        var ql = quote.Lines.FirstOrDefault(x => x.RfqLineId == line.Id);
+        return ql is null ? null : Money.LineNet(ql.QuotedQuantity(line.Quantity), ql.UnitPrice, ql.DiscountPct);
+    }
+
+    private async Task Award(RfqLine line, Guid supplierId)
+    {
+        _busy = true;
+        try
+        {
+            if (line.WinningSupplierId == supplierId) await Procurement.ClearAwardsAsync(_companyId, RfqId, _actor, line.Id);
+            else await Procurement.AwardLineAsync(_companyId, RfqId, line.Id, supplierId, _actor);
+            await Load();
+        }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+        finally { _busy = false; }
+    }
+
+    private async Task AwardLowest()
+    {
+        _busy = true;
+        try
+        {
+            var pick = new Dictionary<Guid, Guid>();
+            foreach (var line in _view!.Rfq.Lines)
+            {
+                var best = _view.Quotes.Select(q => (q.SupplierId, Net: NetFor(q, line), q.Currency)).Where(x => x.Net is > 0).OrderBy(x => x.Net).FirstOrDefault();
+                if (best.Net is not null) pick[line.Id] = best.SupplierId;
+            }
+            var count = await Procurement.AwardLinesAsync(_companyId, RfqId, pick, _actor, "lowest price per line");
+            await Toasts.Success($"{count} line(s) awarded.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+        finally { _busy = false; }
+    }
+
+    private async Task Clear()
+    {
+        _busy = true;
+        try { await Procurement.ClearAwardsAsync(_companyId, RfqId, _actor); await Load(); }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+        finally { _busy = false; }
+    }
+
+    private string PriceText(Guid lineId) => _prices.TryGetValue(lineId, out var p) && p > 0 ? p.ToString("0.##") : "";
+
+    private void SetPrice(Guid lineId, string? text)
+    {
+        if (decimal.TryParse(text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var p) && p > 0) _prices[lineId] = p;
+        else _prices.Remove(lineId);
+    }
+
+    private async Task SaveQuote()
+    {
+        _error = null;
+        if (_quoteSupplier == Guid.Empty) { _error = "Choose the supplier the quote came from."; return; }
+        _busy = true;
+        try
+        {
+            var input = new QuoteInput
+            {
+                SupplierRef = _ref, DeliveryDays = _days, ValidityDate = _valid, Currency = _currency.ToUpperInvariant(), DiscountPct = _discount,
+                AdditionalCharges = _charges, Remarks = _remarks,
+                Lines = _prices.Select(kv => new QuoteLine { RfqLineId = kv.Key, UnitPrice = kv.Value }).ToList(),
+            };
+            await Procurement.SubmitQuoteAsync(RfqId, _quoteSupplier, input);
+            _prices.Clear();
+            _quoteSupplier = Guid.Empty;
+            _ref = _remarks = "";
+            await Toasts.Success("Quote saved. The office will see it when the vessel next connects.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

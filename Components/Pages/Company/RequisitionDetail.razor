@@ -180,8 +180,8 @@ else if (_reqn is not null)
         <RequisitionOrders CompanyId="_companyId" RequisitionId="RequisitionId" />
     }
 
-    @* Create RFQ (the office's job) *@
-    @if (CanChange && !NodeContext.Current.IsVessel)
+    @* Create RFQ: the office's job, or the vessel's when its policy allows it to buy directly (the service checks) *@
+    @if (CanChange)
     {
         <div class="mb-6 card p-6 print:hidden">
             <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Create RFQ</h2>
@@ -202,7 +202,7 @@ else if (_reqn is not null)
                 <input type="checkbox" class="mt-0.5" checked="@_allowUomChange" @onchange="e => _allowUomChange = (bool)e.Value!" />
                 <span>
                     <span class="font-medium">Let suppliers quote in a different unit of measure</span>
-                    <span class="block text-xs text-muted">Off: suppliers price in the unit you asked for. On: they may pick another unit that your <a href="/company/uoms" class="link">conversion table</a> can convert to (for example litres for drums), and the quantity is converted for them.</span>
+                    <span class="block text-xs text-muted">Off: suppliers price in the unit you asked for. On: they may pick another unit that the company's conversion table can convert to (for example litres for drums), and the quantity is converted for them.</span>
                 </span>
             </label>
 
