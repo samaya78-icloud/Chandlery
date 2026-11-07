@@ -4,17 +4,27 @@
 <nav class="flex flex-col pt-1">
     <AuthorizeView Roles="CompanyAdmin,CompanyUser">
         <Authorized>
-            @Group("Work", _workItems)
-            @Group("Procurement", _procurementItems)
-            @Group("Master data", _masterItems)
+            @if (NodeContext.Current.IsVessel)
+            {
+                @Group("Onboard", _vesselItems)
+            }
+            else
+            {
+                @Group("Work", _workItems)
+                @Group("Procurement", _procurementItems)
+                @Group("Master data", _masterItems)
+            }
         </Authorized>
     </AuthorizeView>
 
-    <AuthorizeView Roles="CompanyAdmin">
-        <Authorized>
-            @Group("Admin", _adminItems)
-        </Authorized>
-    </AuthorizeView>
+    @if (!NodeContext.Current.IsVessel)
+    {
+        <AuthorizeView Roles="CompanyAdmin">
+            <Authorized>
+                @Group("Admin", _adminItems)
+            </Authorized>
+        </AuthorizeView>
+    }
 
     <AuthorizeView Policy="CrewAdmin">
         <Authorized>
@@ -124,6 +134,13 @@
         new("/company/exchange-rates", "Exchange Rates", RatesIcon),
         new("/company/profile", "Company Profile", ProfileIcon),
         new("/company/team", "Team", TeamIcon),
+    };
+
+    private readonly List<NavItem> _vesselItems = new()
+    {
+        new("/", "Dashboard", HomeIcon),
+        new("/company/requisitions", "Requisitions", ReqnIcon),
+        new("/company/items", "Catalogue", ItemIcon),
     };
 
     private readonly List<NavItem> _crewAdminItems = new()

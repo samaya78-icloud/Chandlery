@@ -1,5 +1,6 @@
 @page "/company/items"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject UomService UomSvc
@@ -10,7 +11,10 @@
 
 <PageHeader Eyebrow="Master data" Title="Catalog" Subtitle="@($"{_count:N0} items in {_categories.Count:N0} categories. Pick a category to see its items, then add, edit, disable or delete them.")">
     <Actions>
-        <a href="/company/items/import" class="btn btn-secondary">Import CSV</a>
+        @if (!_vessel)
+        {
+            <a href="/company/items/import" class="btn btn-secondary">Import CSV</a>
+        }
     </Actions>
 </PageHeader>
 
@@ -26,7 +30,10 @@ else
         <aside class="card flex max-h-[45vh] flex-col overflow-hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-7rem)]">
             <div class="flex items-center gap-2 border-b border-line p-3">
                 <input @bind="_treeSearch" @bind:event="oninput" placeholder="Find a category…" class="input input-sm" />
-                <button @onclick="() => OpenCategoryForm(false)" class="btn btn-primary btn-sm shrink-0" title="Add a top-level category">+ Add</button>
+                @if (!_vessel)
+                {
+                    <button @onclick="() => OpenCategoryForm(false)" class="btn btn-primary btn-sm shrink-0" title="Add a top-level category">+ Add</button>
+                }
             </div>
             <ul class="min-h-0 flex-1 overflow-y-auto py-1">
                 <li>
@@ -89,6 +96,8 @@ else
                         </p>
                     }
                 </div>
+                @if (!_vessel)
+                {
                 <div class="flex flex-wrap items-center gap-2">
                     <button @onclick="OpenItemForm" class="btn btn-primary btn-sm">+ Add item</button>
                     @if (_selected is not null)
@@ -102,6 +111,7 @@ else
                         }
                     }
                 </div>
+                }
             </div>
 
             @if (_categoryForm != CategoryFormMode.None)
@@ -167,12 +177,14 @@ else
                     <span class="chip" data-tone="@(item.IsActive ? "success" : "neutral")">@StatusText(item)</span>
                 </GridColumn>
                 <GridColumn Title="" Filter="GridFilter.None" CellClass="whitespace-nowrap text-right" Context="item">
+                  @if (!_vessel) {
                     <button @onclick="() => OpenItemEdit(item)" class="text-xs font-medium text-accent-600 hover:text-accent-700">Edit</button>
                     <button @onclick="() => ToggleItem(item)" class="ml-3 text-xs font-medium text-amber-600 hover:text-amber-700">@(item.IsActive ? "Disable" : "Enable")</button>
                     @if (!_used.Contains(item.Id))
                     {
                         <button @onclick="() => DeleteItem(item)" class="ml-3 text-xs font-medium text-rose-600 hover:text-rose-700">Delete</button>
                     }
+                  }
                 </GridColumn>
             </DataGrid>
             <p class="mt-3 text-xs text-muted">
@@ -188,6 +200,8 @@ else
 
     /// <summary>The category open on the right; kept in the address as ?c=ID so the view can be shared or revisited.</summary>
     [SupplyParameterFromQuery(Name = "c")] public Guid? CategoryQuery { get; set; }
+
+    private readonly bool _vessel = NodeContext.Current.IsVessel;   // the catalogue is the office's: a vessel only reads it
 
     private enum CategoryFormMode { None, Add, Edit }
 

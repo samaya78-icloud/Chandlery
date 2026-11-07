@@ -502,6 +502,10 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             var stamped = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach (var entry in entries)
             {
+                // A vessel keeps requisitions, crew logins and its own bookkeeping; RFQs, orders, invoices and the like are the office's.
+                if (Node.SyncEnabled && Node.IsVessel && MasterData.Find(entry.Metadata.ClrType) is null && !VesselRules.MayWrite(entry.Metadata.ClrType))
+                    throw new InvalidOperationException($"{entry.Metadata.ClrType.Name} records are handled by the office; this is not available onboard.");
+
                 // Master data belongs to the office: a vessel installation holds a copy and may not change it.
                 if (Node.SyncEnabled && MasterData.Find(entry.Metadata.ClrType) is { } master)
                 {

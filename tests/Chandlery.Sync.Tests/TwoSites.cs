@@ -345,7 +345,7 @@ public sealed class TwoSites : IAsyncLifetime
     {
         await using var conn = new NpgsqlConnection($"{Server};Database=postgres;Pooling=false");
         await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand(sql, conn);
+        await using var cmd = new NpgsqlCommand(sql, conn) { CommandTimeout = 180 };
         await cmd.ExecuteNonQueryAsync();
     }
 

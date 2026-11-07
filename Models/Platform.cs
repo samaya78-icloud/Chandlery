@@ -97,3 +97,22 @@ public class SyncDirty
     /// </summary>
     public string? Snapshot { get; set; }
 }
+
+/// <summary>
+/// Marks a page that works on a vessel installation. A vessel shows only the pages with this mark (and the sign-in pages); everything
+/// else is office business and is not available onboard.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class)]
+public sealed class VesselAllowedAttribute : Attribute;
+
+/// <summary>What a vessel installation may write. Anything else is refused at save time, whatever page or code asks for it.</summary>
+public static class VesselRules
+{
+    private static readonly HashSet<Type> Writable =
+    [
+        typeof(Requisition), typeof(RequisitionLine), typeof(Attachment), typeof(AuditEntry), typeof(SyncDirty),
+        typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember),
+    ];
+
+    public static bool MayWrite(Type entity) => Writable.Contains(entity);
+}

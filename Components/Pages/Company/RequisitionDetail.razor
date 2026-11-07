@@ -1,5 +1,6 @@
 @page "/company/requisitions/{RequisitionId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject RequisitionService Requisitions
@@ -174,8 +175,8 @@ else if (_reqn is not null)
         </div>
     </div>
 
-    @* Create RFQ *@
-    @if (CanChange)
+    @* Create RFQ (the office's job) *@
+    @if (CanChange && !NodeContext.Current.IsVessel)
     {
         <div class="mb-6 card p-6 print:hidden">
             <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Create RFQ</h2>

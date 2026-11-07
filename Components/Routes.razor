@@ -1,5 +1,17 @@
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
+        @if (!AllowedHere(routeData.PageType))
+        {
+            <LayoutView Layout="typeof(MainLayout)">
+                <div class="flex flex-col items-center justify-center py-24 text-center">
+                    <p class="text-2xl font-bold text-ink">Not available onboard</p>
+                    <p class="mt-2 text-muted">This is handled by the office. Requisitions, the catalogue and crew logins are available here.</p>
+                    <a href="/" class="btn btn-secondary mt-6">Back to dashboard</a>
+                </div>
+            </LayoutView>
+        }
+        else
+        {
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)">
             <NotAuthorized>
                 @if (context.User.Identity?.IsAuthenticated == true)
@@ -17,6 +29,7 @@
                 }
             </NotAuthorized>
         </AuthorizeRouteView>
+        }
         <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
     <NotFound>
@@ -28,3 +41,11 @@
         </LayoutView>
     </NotFound>
 </Router>
+
+@code {
+    /// <summary>On a vessel installation only pages marked as vessel pages (and the sign-in pages) open.</summary>
+    private static bool AllowedHere(Type page)
+        => !NodeContext.Current.IsVessel
+           || page.IsDefined(typeof(VesselAllowedAttribute), inherit: false)
+           || page.IsDefined(typeof(Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute), inherit: false);
+}

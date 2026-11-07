@@ -1,5 +1,6 @@
 @page "/crew"
 @attribute [Authorize(Policy = "CrewAdmin")]
+@attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject CrewService Crew
 @inject ToastService Toasts

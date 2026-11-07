@@ -1,5 +1,6 @@
 @page "/company/requisitions/new"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject RequisitionService Requisitions
