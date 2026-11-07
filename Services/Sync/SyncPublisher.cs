@@ -43,6 +43,9 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             }
         }
 
+        var aggregateNotes = notes.Where(n => Aggregates.Find(n.DocType) is not null).ToList();
+        if (aggregateNotes.Count > 0) sent += await PublishAggregatesAsync(db, aggregateNotes, ct);
+
         foreach (var docId in notes.Where(n => n.DocType == SyncDocTypes.Requisition).Select(n => n.DocId).Distinct())
         {
             var requisition = await db.Requisitions.IgnoreQueryFilters().Include(r => r.Lines).FirstOrDefaultAsync(r => r.Id == docId, ct);
@@ -82,6 +85,76 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         return true;
     }
 
+    // ---- purchase orders and deliveries ----
+
+    private async Task<int> PublishAggregatesAsync(ChandleryDbContext db, List<SyncDirty> notes, CancellationToken ct)
+    {
+        var sent = 0;
+        foreach (var group in notes.GroupBy(n => (n.DocType, n.DocId)).OrderBy(g => g.Min(n => n.At)))
+        {
+            var aggregate = Aggregates.Find(group.Key.DocType)!;
+            var latest = group.OrderBy(n => n.At).Last();
+
+            if (latest.Deleted)
+            {
+                var snapshot = JsonNode.Parse(latest.Snapshot!)!.AsObject();
+                var stage = snapshot[nameof(PurchaseOrder.OwnerStage)]?.GetValue<string>() ?? SyncStages.Office;
+                var tombstone = Aggregates.Document(aggregate, group.Key.DocId, latest.Version, snapshot, stage, clock.Now(), null, deleted: true);
+                sent += await SendAggregateAsync(db, aggregate, snapshot, stage, tombstone, withSupplier: false, ct);
+                continue;
+            }
+
+            var root = await Aggregates.LoadAsync(db, aggregate, group.Key.DocId, ct);
+            if (root is null) continue;   // removed since; its own note carries the removal
+            var entry = db.Entry(root);
+            var payload = Aggregates.ToJson(db, root);
+            var document = Aggregates.Document(aggregate, group.Key.DocId, (int)entry.Property(ChandleryDbContext.SyncVersion).CurrentValue!, payload,
+                Aggregates.StageOf(root), clock.Now(), (Guid?)entry.Property(ChandleryDbContext.OriginNodeId).CurrentValue);
+            sent += await SendAggregateAsync(db, aggregate, payload, document.OwnerStage, document, withSupplier: aggregate.Clr == typeof(PurchaseOrder), ct);
+        }
+        return sent;
+    }
+
+    /// <summary>
+    /// Onboard, only what the vessel owns goes up. Ashore, only what the office owns goes down, to the node that runs the vessel the
+    /// order is for. An order is sent with its supplier, so the vessel can always show who it is from.
+    /// </summary>
+    private async Task<int> SendAggregateAsync(ChandleryDbContext db, AggregateType aggregate, JsonObject payload, string stage, SyncDocument document, bool withSupplier, CancellationToken ct)
+    {
+        if (node.IsVessel)
+        {
+            if (stage != SyncStages.Vessel) return 0;
+            await services.GetRequiredService<INodePublisher>().PublishAsync(document, Lane.Transaction);
+            return 1;
+        }
+
+        if (stage != SyncStages.Office) return 0;
+        var vesselId = aggregate.Clr == typeof(PurchaseOrder)
+            ? MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId))
+            : await db.PurchaseOrders.Where(p => p.Id == MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId))).Select(p => p.VesselId).FirstOrDefaultAsync(ct);
+        if (vesselId is null) return 0;
+        var vesselNode = await db.Vessels.Where(v => v.Id == vesselId).Select(v => v.NodeId).FirstOrDefaultAsync(ct);
+        if (vesselNode is null) return 0;
+
+        var hub = services.GetRequiredService<HubEndpoint>();
+        var nodeId = vesselNode.Value.ToString("N");
+        if (withSupplier && MasterData.ReadGuid(payload, nameof(PurchaseOrder.SupplierId)) is { } supplierId)
+            await PushSupplierAsync(db, hub, nodeId, supplierId, ct);
+        await hub.PublishToNodeAsync(nodeId, document, Lane.Transaction);
+        return 1;
+    }
+
+    private async Task PushSupplierAsync(ChandleryDbContext db, HubEndpoint hub, string nodeId, Guid supplierId, CancellationToken ct)
+    {
+        var supplier = await db.Suppliers.FirstOrDefaultAsync(s => s.Id == supplierId, ct);
+        if (supplier is null) return;
+        var entry = db.Entry(supplier);
+        var master = MasterData.Find(typeof(Supplier))!;
+        var document = MasterData.Document(master, supplier.Id, (int)entry.Property(ChandleryDbContext.SyncVersion).CurrentValue!, MasterData.ToJson(entry), clock.Now(),
+            (Guid?)entry.Property(ChandleryDbContext.OriginNodeId).CurrentValue);
+        await hub.PublishToNodeAsync(nodeId, document, Lane.Master);
+    }
+
     // ---- master data ----
 
     private async Task<int> PublishMasterAsync(ChandleryDbContext db, List<SyncDirty> notes, CancellationToken ct)
@@ -114,6 +187,11 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             var document = MasterData.Document(master, group.Key.DocId, version, payload, clock.Now(), origin);
 
             sent += await SendAsync(hub, scopes.Where(s => MasterData.Includes(s, master.DocType, payload)), document);
+
+            // A supplier newly linked to the company: its vessels need the supplier itself, which did not change.
+            if (master.Clr == typeof(CompanySupplier) && MasterData.ReadGuid(payload, nameof(CompanySupplier.SupplierId)) is { } linked)
+                foreach (var scope in scopes.Where(s => MasterData.Includes(s, master.DocType, payload)).Select(s => s.NodeId).Distinct())
+                    await PushSupplierAsync(db, hub, scope, linked, ct);
 
             // A vessel that held the record before the change but not after it must drop it.
             var dropped = scopes.Where(s => !MasterData.Includes(s, master.DocType, payload) && before.Any(b => MasterData.Includes(s, master.DocType, b)));
@@ -227,7 +305,39 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             }
             db.ChangeTracker.Clear();
         }
-        log.LogInformation("Queued {Count} master data documents for node {Node}.", queued, nodeId);
+
+        // Documents the office already holds for this vessel, so a vessel started (or rebuilt) from nothing has its orders too.
+        foreach (var scope in scopes)
+        {
+            foreach (var requisition in await db.Requisitions.IgnoreQueryFilters().Include(r => r.Lines)
+                         .Where(r => r.VesselId == scope.VesselId && r.OwnerStage == SyncStages.Office).ToListAsync(ct))
+                if (await PublishRequisitionAsync(db, requisition)) queued++;
+            db.ChangeTracker.Clear();
+
+            var orders = await db.PurchaseOrders.IgnoreQueryFilters().Where(p => p.VesselId == scope.VesselId && p.OwnerStage == SyncStages.Office).ToListAsync(ct);
+            foreach (var order in orders)
+            {
+                var po = Aggregates.Find(typeof(PurchaseOrder))!;
+                var entry = db.Entry(order);
+                var payload = Aggregates.ToJson(db, order);
+                await PushSupplierAsync(db, hub, nodeId, order.SupplierId, ct);
+                await hub.PublishToNodeAsync(nodeId, Aggregates.Document(po, order.Id, (int)entry.Property(ChandleryDbContext.SyncVersion).CurrentValue!, payload,
+                    SyncStages.Office, clock.Now(), (Guid?)entry.Property(ChandleryDbContext.OriginNodeId).CurrentValue), Lane.Transaction);
+                queued++;
+            }
+
+            var orderIds = orders.Select(o => o.Id).ToList();
+            foreach (var delivery in await db.DeliveryOrders.IgnoreQueryFilters().Where(d => orderIds.Contains(d.PurchaseOrderId) && d.OwnerStage == SyncStages.Office).ToListAsync(ct))
+            {
+                var dto = Aggregates.Find(typeof(DeliveryOrder))!;
+                var entry = db.Entry(delivery);
+                await hub.PublishToNodeAsync(nodeId, Aggregates.Document(dto, delivery.Id, (int)entry.Property(ChandleryDbContext.SyncVersion).CurrentValue!,
+                    Aggregates.ToJson(db, delivery), SyncStages.Office, clock.Now(), (Guid?)entry.Property(ChandleryDbContext.OriginNodeId).CurrentValue), Lane.Transaction);
+                queued++;
+            }
+            db.ChangeTracker.Clear();
+        }
+        log.LogInformation("Queued {Count} documents for node {Node}.", queued, nodeId);
         return queued;
     }
 

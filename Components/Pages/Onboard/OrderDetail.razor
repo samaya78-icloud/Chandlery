@@ -1,0 +1,245 @@
+@page "/vessel/orders/{OrderId:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject OrdersService OrdersSvc
+@inject DeliveryService DeliverySvc
+@inject ToastService Toasts
+
+<PageTitle>@(_view?.Order.PoNumber ?? "Order") · Chandlery</PageTitle>
+
+@if (_view is null)
+{
+    <p class="py-16 text-center text-muted">@(_loaded ? "This order was not found." : "Loading…")</p>
+}
+else
+{
+    var po = _view.Order;
+    <PageHeader Eyebrow="Order" Title="@po.PoNumber" Subtitle="@($"{_view.SupplierName} · {po.CreatedDate:dd MMM yyyy}")">
+        <Actions>
+            <a href="/vessel/orders" class="btn btn-secondary">All orders</a>
+        </Actions>
+    </PageHeader>
+
+    <div class="mb-6 card p-5">
+        <div class="flex flex-wrap items-center gap-3">
+            <StatusChip Value="@po.Status" Label="@Orders.StatusLabel(po.Status)" />
+            @if (po.Status == PoStatus.Approved) { <StatusChip Value="@po.DeliveryStatus" /> }
+            @if (po.IsSpot) { <span class="chip">direct order</span> }
+        </div>
+
+        @* Where it stands, in plain words *@
+        <ol class="mt-5 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
+            @foreach (var (label, done) in Timeline(_view))
+            {
+                <li class="flex items-center gap-2">
+                    <span class="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold @(done ? "bg-emerald-500 text-white" : "bg-surface-2 text-muted")">@(done ? "✓" : "·")</span>
+                    <span class="@(done ? "font-medium text-ink" : "text-muted")">@label</span>
+                    <span class="text-muted">›</span>
+                </li>
+            }
+        </ol>
+
+        <dl class="mt-5 grid gap-4 text-sm md:grid-cols-4">
+            <div><dt class="text-xs uppercase tracking-wide text-muted">Supplier</dt><dd class="font-medium">@_view.SupplierName</dd><dd class="text-muted">@_view.SupplierContact</dd></div>
+            <div><dt class="text-xs uppercase tracking-wide text-muted">Requisition</dt><dd class="font-medium">@if (_view.RequisitionId is { } rid) { <a href="/company/requisitions/@rid" class="link">@_view.RequisitionNumber</a> } else { <span class="text-muted">–</span> }</dd></div>
+            <div><dt class="text-xs uppercase tracking-wide text-muted">Delivery port</dt><dd class="font-medium">@(_view.PortName ?? "–")</dd></div>
+            <div><dt class="text-xs uppercase tracking-wide text-muted">Supplier reference</dt><dd class="font-medium">@(po.SupplierRef == "" ? "–" : po.SupplierRef)</dd></div>
+        </dl>
+        @if (po.Remarks != "") { <p class="mt-4 text-sm text-muted">@po.Remarks</p> }
+    </div>
+
+    <div class="mb-6 card overflow-x-auto">
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                    <th class="px-4 py-3 font-medium">Item</th>
+                    <th class="px-4 py-3 text-right font-medium">Ordered</th>
+                    <th class="px-4 py-3 text-right font-medium">Received</th>
+                    <th class="px-4 py-3 text-right font-medium">To come</th>
+                    <th class="px-4 py-3 text-right font-medium">Unit price</th>
+                    <th class="px-4 py-3 text-right font-medium">Line total</th>
+                    @if (_canReceive) { <th class="px-4 py-3 text-right font-medium">Receive now</th> }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var l in _view.Lines)
+                {
+                    <tr class="border-b border-line/60">
+                        <td class="px-4 py-3"><span class="font-mono text-xs text-muted">@l.Code</span> @l.Name</td>
+                        <td class="px-4 py-3 text-right">@Money.Qty(l.Ordered) @l.Uom</td>
+                        <td class="px-4 py-3 text-right">@Money.Qty(l.Received)</td>
+                        <td class="px-4 py-3 text-right @(l.Remaining > 0 ? "font-medium" : "text-muted")">@Money.Qty(l.Remaining)</td>
+                        <td class="px-4 py-3 text-right">@Money.Format(l.UnitPrice, po.Currency)</td>
+                        <td class="px-4 py-3 text-right">@Money.Format(l.Net, po.Currency)</td>
+                        @if (_canReceive)
+                        {
+                            <td class="px-4 py-3 text-right">
+                                @if (l.Remaining > 0)
+                                {
+                                    <input type="number" step="any" min="0" max="@l.Remaining" value="@Receiving(l.ItemId)" @onchange="e => SetReceiving(l.ItemId, e.Value?.ToString())" class="input input-sm w-24 text-right" />
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+            <tfoot>
+                @if (po.DiscountPct != 0 || po.AdditionalCharges != 0)
+                {
+                    <tr class="text-sm text-muted">
+                        <td class="px-4 pt-3 text-right" colspan="@(_canReceive ? 6 : 5)">Subtotal</td>
+                        <td class="px-4 pt-3 text-right">@Money.Format(po.Subtotal, po.Currency)</td>
+                        @if (_canReceive) { <td></td> }
+                    </tr>
+                }
+                <tr class="font-semibold">
+                    <td class="px-4 py-3 text-right" colspan="@(_canReceive ? 6 : 5)">Total</td>
+                    <td class="px-4 py-3 text-right">@Money.Format(po.Total, po.Currency)</td>
+                    @if (_canReceive) { <td></td> }
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+
+    @if (_canReceive)
+    {
+        <div class="mb-6 card p-5">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Record a delivery</h2>
+            <p class="mb-4 text-xs text-muted">Type what arrived in the column above, or take everything still to come. The office sees it when the vessel next connects.</p>
+            <div class="grid gap-4 md:grid-cols-3">
+                <div><label class="label">Received on</label><input type="date" @bind="_date" class="input" /></div>
+                <div><label class="label">Place</label><input @bind="_place" class="input" placeholder="Port or berth" /></div>
+                <div><label class="label">Remarks</label><input @bind="_remarks" class="input" placeholder="Damage, shortage, delivery note no…" /></div>
+            </div>
+            @if (_error is not null) { <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+            <div class="mt-4 flex gap-2">
+                <button @onclick="Save" disabled="@_busy" class="btn btn-primary">Save delivery</button>
+                <button @onclick="ReceiveAll" class="btn btn-secondary">Take everything still to come</button>
+            </div>
+        </div>
+    }
+
+    <div class="card overflow-x-auto">
+        <h2 class="px-4 pt-4 text-sm font-semibold uppercase tracking-wide text-muted">Deliveries</h2>
+        <table class="w-full text-left text-sm">
+            <thead>
+                <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                    <th class="px-4 py-3 font-medium">Number</th>
+                    <th class="px-4 py-3 font-medium">Received</th>
+                    <th class="px-4 py-3 font-medium">Place</th>
+                    <th class="px-4 py-3 font-medium">Recorded by</th>
+                    <th class="px-4 py-3 text-right font-medium">Lines</th>
+                    <th class="px-4 py-3"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var d in _view.Deliveries)
+                {
+                    <tr class="border-b border-line/60">
+                        <td class="px-4 py-3 font-mono font-semibold">@d.DoNumber</td>
+                        <td class="px-4 py-3">@d.ReceivedDate.ToString("dd MMM yyyy")</td>
+                        <td class="px-4 py-3">@(d.Place == "" ? "–" : d.Place)</td>
+                        <td class="px-4 py-3">@d.RecordedByName <span class="text-xs text-muted">@(d.OwnerStage == SyncStages.Vessel ? "onboard" : "office")</span></td>
+                        <td class="px-4 py-3 text-right">@d.Lines.Count</td>
+                        <td class="px-4 py-3 text-right">
+                            @if (d.OwnerStage == SyncStages.Vessel)
+                            {
+                                <button @onclick="() => Remove(d)" class="link text-rose-600">Delete</button>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (_view.Deliveries.Count == 0)
+                {
+                    <tr><td colspan="6" class="px-4 py-6 text-center text-muted">Nothing received yet.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid OrderId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private OrderView? _view;
+    private bool _loaded, _busy;
+    private DateTime? _date = DateTime.UtcNow.Date;
+    private string _place = "", _remarks = "";
+    private string? _error;
+    private readonly Dictionary<Guid, decimal> _receiving = new();
+
+    private bool _canReceive => _view is { } v && v.Order.Status == PoStatus.Approved && v.Lines.Any(l => l.Remaining > 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        _view = await OrdersSvc.GetAsync(_companyId, OrderId);
+        _loaded = true;
+    }
+
+    private static IEnumerable<(string Label, bool Done)> Timeline(OrderView v)
+    {
+        var po = v.Order;
+        if (v.RequisitionNumber is not null) yield return ($"Requisition {v.RequisitionNumber}", true);
+        yield return ("Order raised", true);
+        yield return (po.Status == PoStatus.Rejected ? "Rejected" : po.Status == PoStatus.PendingApproval ? "Awaiting approval" : "Approved", po.Status != PoStatus.PendingApproval);
+        yield return ("Partly delivered", po.DeliveryStatus is DeliveryStatus.Partial or DeliveryStatus.Delivered);
+        yield return ("Delivered", po.DeliveryStatus == DeliveryStatus.Delivered);
+    }
+
+    private string Receiving(Guid itemId) => _receiving.TryGetValue(itemId, out var q) && q > 0 ? Money.Qty(q) : "";
+
+    private void SetReceiving(Guid itemId, string? text)
+    {
+        if (decimal.TryParse(text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var q) && q > 0) _receiving[itemId] = q;
+        else _receiving.Remove(itemId);
+    }
+
+    private void ReceiveAll()
+    {
+        foreach (var l in _view!.Lines.Where(l => l.Remaining > 0)) _receiving[l.ItemId] = l.Remaining;
+    }
+
+    private async Task Save()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var request = new NewDelivery
+            {
+                ReceivedDate = _date, Place = _place, Remarks = _remarks,
+                Lines = _receiving.Where(kv => kv.Value > 0).Select(kv => new DeliveryOrderLine { ItemId = kv.Key, Quantity = kv.Value }).ToList(),
+            };
+            var made = await DeliverySvc.RecordAsync(_companyId, OrderId, request, _actor);
+            _receiving.Clear();
+            _place = _remarks = "";
+            await Toasts.Success($"{made.DoNumber} saved. The office will see it when the vessel next connects.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task Remove(DeliveryOrder d)
+    {
+        try
+        {
+            await DeliverySvc.DeleteAsync(_companyId, d.Id, _actor);
+            await Toasts.Success($"{d.DoNumber} deleted.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+    }
+}

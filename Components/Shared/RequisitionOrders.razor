@@ -1,0 +1,29 @@
+@inject OrdersService OrdersSvc
+
+@if (_rows.Count > 0)
+{
+    <div class="mb-6 card p-5">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Orders for this requisition</h2>
+        <ul class="divide-y divide-line/60 text-sm">
+            @foreach (var r in _rows)
+            {
+                <li class="flex flex-wrap items-center gap-3 py-2">
+                    <a href="/vessel/orders/@r.Id" class="link font-mono font-semibold">@r.PoNumber</a>
+                    <span>@r.SupplierName</span>
+                    <StatusChip Value="@r.Status" Label="@Chandlery.Components.Pages.Onboard.Orders.StatusLabel(r.Status)" />
+                    @if (r.Status == PoStatus.Approved) { <StatusChip Value="@r.Delivery" /> }
+                    <span class="ml-auto text-muted">@Money.Format(r.Total, r.Currency)</span>
+                </li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid CompanyId { get; set; }
+    [Parameter] public Guid RequisitionId { get; set; }
+
+    private List<OrderRow> _rows = new();
+
+    protected override async Task OnParametersSetAsync() => _rows = await OrdersSvc.ForRequisitionAsync(CompanyId, RequisitionId);
+}

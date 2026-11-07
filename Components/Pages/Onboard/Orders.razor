@@ -1,0 +1,72 @@
+@page "/vessel/orders"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject OrdersService OrdersSvc
+
+<PageTitle>Orders · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Vessel" Title="Orders" Subtitle="@($"{_rows.Count:N0} purchase orders for this vessel. Open one to see what is expected and to record a delivery.")" />
+
+<div class="mb-4">
+    <input @bind="_search" @bind:event="oninput" @bind:after="Load" placeholder="Search order number or supplier…" class="input max-w-xs" />
+</div>
+
+<div class="card overflow-x-auto">
+    <table class="w-full text-left text-sm">
+        <thead>
+            <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                <th class="px-4 py-3 font-medium">Order</th>
+                <th class="px-4 py-3 font-medium">Supplier</th>
+                <th class="px-4 py-3 font-medium">Date</th>
+                <th class="px-4 py-3 font-medium">Status</th>
+                <th class="px-4 py-3 font-medium">Delivery</th>
+                <th class="px-4 py-3 text-right font-medium">Lines</th>
+                <th class="px-4 py-3 text-right font-medium">Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in _rows)
+            {
+                <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                    <td class="px-4 py-3 font-mono font-semibold"><a href="/vessel/orders/@r.Id" class="link">@r.PoNumber</a></td>
+                    <td class="px-4 py-3">@r.SupplierName</td>
+                    <td class="px-4 py-3">@r.CreatedDate.ToString("dd MMM yyyy")</td>
+                    <td class="px-4 py-3"><StatusChip Value="@r.Status" Label="@StatusLabel(r.Status)" /></td>
+                    <td class="px-4 py-3">@if (r.Status == PoStatus.Approved) { <StatusChip Value="@r.Delivery" /> }</td>
+                    <td class="px-4 py-3 text-right">@r.Lines</td>
+                    <td class="px-4 py-3 text-right font-medium">@Money.Format(r.Total, r.Currency)</td>
+                </tr>
+            }
+            @if (_rows.Count == 0)
+            {
+                <tr><td colspan="7" class="px-4 py-8 text-center text-muted">No orders for this vessel yet.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private string _search = "";
+    private List<OrderRow> _rows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        await Load();
+    }
+
+    private async Task Load() => _rows = await OrdersSvc.ListAsync(_companyId, _search);
+
+    public static string StatusLabel(PoStatus status) => status switch
+    {
+        PoStatus.PendingApproval => "Awaiting office approval",
+        PoStatus.Approved => "Ordered",
+        PoStatus.Rejected => "Rejected",
+        _ => status.ToString(),
+    };
+}

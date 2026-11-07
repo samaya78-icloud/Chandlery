@@ -111,7 +111,7 @@ public static class VesselRules
     private static readonly HashSet<Type> Writable =
     [
         typeof(Requisition), typeof(RequisitionLine), typeof(Attachment), typeof(AuditEntry), typeof(SyncDirty),
-        typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember),
+        typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember), typeof(DeliveryOrder), typeof(DeliveryOrderLine),
     ];
 
     public static bool MayWrite(Type entity) => Writable.Contains(entity);

@@ -35,6 +35,9 @@ public class PurchaseOrder
     public string Remarks { get; set; } = "";
 
     /// <summary>Kept up to date whenever a delivery order is recorded or deleted, so it can be filtered.</summary>
+    /// <summary>Which side may change this order: the side that created it, until it is handed over. See <see cref="SyncStages"/>.</summary>
+    public string OwnerStage { get; set; } = SyncStages.Office;
+
     public DeliveryStatus DeliveryStatus { get; set; } = DeliveryStatus.Pending;
 
     /// <summary>Suppliers only see approved POs.</summary>

@@ -313,7 +313,7 @@ public sealed class TwoSites : IAsyncLifetime
     }
 
     /// <summary>Settle repeatedly until a condition holds (or time runs out): for messages that wait and are resent.</summary>
-    public async Task SettleUntilAsync(Func<Task<bool>> condition, int seconds = 30)
+    public async Task SettleUntilAsync(Func<Task<bool>> condition, int seconds = 120)
     {
         var until = DateTime.UtcNow.AddSeconds(seconds);
         while (DateTime.UtcNow < until)

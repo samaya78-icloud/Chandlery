@@ -28,7 +28,7 @@ public static class MasterData
 
     public static readonly IReadOnlyList<MasterType> Types =
     [
-        Of<Company>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(), Of<CrewMember>(),
+        Of<Company>(), Of<Supplier>(), Of<CompanySupplier>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(), Of<CrewMember>(),
         Of<Department>(), Of<Category>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
         Of<VesselPolicy>(), Of<VesselModuleSwitch>(),
     ];
@@ -93,6 +93,8 @@ public static class MasterData
         if (value is DateTime date && date.Kind == DateTimeKind.Unspecified) value = DateTime.SpecifyKind(date, DateTimeKind.Utc);
         return true;
     }
+
+    public static System.Text.Json.Nodes.JsonNode? ToNode(object? value, Type type) => JsonSerializer.SerializeToNode(value, type, Json);
 
     public static Guid? ReadGuid(JsonObject payload, string name)
         => payload.TryGetPropertyValue(name, out var node) && node is not null && Guid.TryParse(node.GetValue<string>(), out var id) ? id : null;
@@ -164,14 +166,17 @@ public static class MasterData
     // ---- who gets what ----
 
     /// <summary>What one vessel installation is entitled to hold: its company, itself, and the chain of vessel groups above it.</summary>
-    public sealed record VesselScope(string NodeId, Guid CompanyId, Guid VesselId, Guid? GroupId, IReadOnlySet<Guid> Groups);
+    public sealed record VesselScope(string NodeId, Guid CompanyId, Guid VesselId, Guid? GroupId, IReadOnlySet<Guid> Groups, IReadOnlySet<Guid> Suppliers);
 
     public static async Task<List<VesselScope>> LoadScopesAsync(ChandleryDbContext db, CancellationToken ct = default)
     {
         var vessels = await db.Vessels.Where(v => v.NodeId != null).Select(v => new { v.Id, v.CompanyId, v.GroupId, v.NodeId }).ToListAsync(ct);
         if (vessels.Count == 0) return [];
         var parents = await db.VesselGroups.Select(g => new { g.Id, g.ParentId }).ToDictionaryAsync(g => g.Id, g => g.ParentId, ct);
-        return vessels.Select(v => new VesselScope(v.NodeId!.Value.ToString("N"), v.CompanyId, v.Id, v.GroupId, ChainOf(parents, v.GroupId))).ToList();
+        var links = (await db.CompanySuppliers.Select(l => new { l.CompanyId, l.SupplierId }).ToListAsync(ct))
+            .ToLookup(l => l.CompanyId, l => l.SupplierId);
+        return vessels.Select(v => new VesselScope(v.NodeId!.Value.ToString("N"), v.CompanyId, v.Id, v.GroupId, ChainOf(parents, v.GroupId),
+            links[v.CompanyId].ToHashSet())).ToList();
     }
 
     /// <summary>The group and every group above it.</summary>
@@ -193,6 +198,7 @@ public static class MasterData
         {
             case nameof(Port) or nameof(Currency): return true;
             case nameof(Company): return ReadGuid(d, "Id") == scope.CompanyId;
+            case nameof(Supplier): return ReadGuid(d, "Id") is { } supplier && scope.Suppliers.Contains(supplier);
             case nameof(ExchangeRate): return company is null || company == scope.CompanyId;
             case nameof(VesselGroup): return ReadGuid(d, "Id") is { } g && scope.Groups.Contains(g);
             case nameof(Vessel): return ReadGuid(d, "Id") == scope.VesselId;

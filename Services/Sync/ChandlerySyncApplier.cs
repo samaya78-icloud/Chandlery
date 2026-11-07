@@ -22,6 +22,11 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
 
     public async Task ApplyAsync(StreamKey stream, SyncDocument document, CancellationToken ct = default)
     {
+        if (Aggregates.Find(document.DocType) is { } aggregate)
+        {
+            await ApplyAggregateAsync(stream, document, aggregate, ct);
+            return;
+        }
         if (document.DocType == SyncDocTypes.CrewCredential)
         {
             await ApplyCrewCredentialAsync(stream, document, ct);
@@ -179,7 +184,7 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             .Select(p => MasterData.TryRead(p, payload, out var v) && v is not null ? v : throw new InvalidOperationException($"{master.DocType} document has no {p.Name}."))
             .ToArray();
 
-        if (!document.Deleted) await RequireParentsAsync(db, type, master, payload, ct);
+        if (!document.Deleted) await RequireParentsAsync(db, type, master.DocType, payload, ct);
         var existing = await db.FindAsync(master.Clr, key, ct);
 
         if (document.Deleted)
@@ -224,7 +229,7 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         }
     }
 
-    private async Task RequireParentsAsync(ChandleryDbContext db, Microsoft.EntityFrameworkCore.Metadata.IEntityType type, MasterType master, JsonObject payload, CancellationToken ct)
+    private async Task RequireParentsAsync(ChandleryDbContext db, Microsoft.EntityFrameworkCore.Metadata.IEntityType type, string label, JsonObject payload, CancellationToken ct)
     {
         var missing = new List<string>();
         foreach (var fk in type.GetForeignKeys())
@@ -247,7 +252,7 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         }
 
         if (missing.Count > 0)
-            throw new DeferredException($"{master.DocType} refers to {string.Join(", ", missing)}, which has not arrived yet.");
+            throw new DeferredException($"{label} refers to {string.Join(", ", missing)}, which has not arrived yet.");
     }
 
     /// <summary>
@@ -278,6 +283,102 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         crew.LoginEnabled = incoming.LoginEnabled;
         crew.CredentialsChangedAt = DateTime.SpecifyKind(incoming.ChangedAt, DateTimeKind.Utc);
         crew.CredentialsChangedBy = incoming.ChangedBy;
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// A purchase order or delivery from the other side. The same ownership rules as requisitions: the owner's version wins, and a
+    /// document arriving from the side that does not own it is ignored. A delivery arriving before its order waits for it.
+    /// </summary>
+    private async Task ApplyAggregateAsync(StreamKey stream, SyncDocument document, AggregateType aggregate, CancellationToken ct)
+    {
+        var atHub = stream.Direction == Direction.Up;
+        if (atHub == node.IsVessel)
+            throw new InvalidOperationException(atHub ? "A vessel installation cannot receive vessel documents." : "The office cannot receive office documents.");
+        if (document.SchemaVersion > Aggregates.SchemaVersion)
+            throw new NotSupportedException($"{aggregate.DocType} schema {document.SchemaVersion} is newer than this installation understands ({Aggregates.SchemaVersion}).");
+
+        var payload = JsonNode.Parse(document.Payload)?.AsObject() ?? throw new JsonException($"Empty {aggregate.DocType} document.");
+        await using var db = await factory.CreateDbContextAsync(ct);
+        db.Node.SyncEnabled = node.SyncEnabled;
+        db.ApplyingSync = true;
+
+        var type = db.Model.FindEntityType(aggregate.Clr)!;
+        var id = MasterData.ReadGuid(payload, "Id") ?? throw new InvalidOperationException($"{aggregate.DocType} document has no Id.");
+        var existing = await Aggregates.LoadAsync(db, aggregate, id, ct);
+        var localVersion = existing is null ? (int?)null : (int?)db.Entry(existing).Property(ChandleryDbContext.SyncVersion).CurrentValue;
+        if (!RequisitionOwnership.ShouldApply(atHub, existing is null ? null : Aggregates.StageOf(existing), localVersion, document.OwnerStage, (int)document.Version))
+            return;
+
+        // A vessel may only send for the vessel it runs.
+        if (atHub)
+        {
+            var vesselId = aggregate.Clr == typeof(PurchaseOrder)
+                ? MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId))
+                : await db.PurchaseOrders.Where(p => p.Id == MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId))).Select(p => p.VesselId).FirstOrDefaultAsync(ct);
+            var vesselNode = vesselId is { } v ? await db.Vessels.Where(x => x.Id == v).Select(x => x.NodeId).FirstOrDefaultAsync(ct) : null;
+            if (aggregate.Clr == typeof(DeliveryOrder) && !await db.PurchaseOrders.AnyAsync(p => p.Id == MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId)), ct))
+                throw new DeferredException("The delivery refers to a purchase order that has not arrived yet.");
+            if (vesselNode?.ToString("N") != stream.NodeId)
+                throw new InvalidOperationException($"Node {stream.NodeId} may not send {aggregate.DocType} documents for that vessel.");
+        }
+
+        if (document.Deleted)
+        {
+            if (existing is null) return;
+            var purchaseOrderId = existing is DeliveryOrder gone ? gone.PurchaseOrderId : (Guid?)null;
+            db.Remove(existing);
+            await db.SaveChangesAsync(ct);
+            if (purchaseOrderId is { } po) await RefreshDeliveryStatusAsync(db, po, ct);
+            return;
+        }
+
+        await RequireParentsAsync(db, type, aggregate.DocType, payload, ct);
+        if (aggregate.Clr == typeof(PurchaseOrder)) await RequireOrderMasterDataAsync(db, payload, ct);
+
+        var isNew = existing is null;
+        var entry = isNew ? db.Add(Activator.CreateInstance(aggregate.Clr)!) : db.Entry(existing!);
+        Aggregates.Apply(entry, payload);
+        entry.Property(ChandleryDbContext.SyncVersion).CurrentValue = (int)document.Version;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex)
+        {
+            throw new InvalidOperationException($"{aggregate.DocType} could not be stored: {ex.GetBaseException().Message}", ex);
+        }
+
+        if (entry.Entity is DeliveryOrder delivery)
+        {
+            await RefreshDeliveryStatusAsync(db, delivery.PurchaseOrderId, ct);
+            if (isNew && atHub)
+                AuditLog.Add(db, delivery.CompanyId, AuditEntityTypes.PurchaseOrder, delivery.PurchaseOrderId, new Actor(delivery.RecordedByUserId, delivery.RecordedByName),
+                    $"RECEIVED {delivery.DoNumber} from the vessel: {delivery.Lines.Count} line(s)" + (delivery.Place == "" ? "" : $" at {delivery.Place}"));
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    /// <summary>An order's vessel and items must be here before the order is; otherwise it waits for them.</summary>
+    private static async Task RequireOrderMasterDataAsync(ChandleryDbContext db, JsonObject payload, CancellationToken ct)
+    {
+        var missing = new List<string>();
+        if (MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId)) is { } vessel && !await db.Vessels.AnyAsync(v => v.Id == vessel, ct)) missing.Add($"vessel {vessel}");
+        var itemIds = (payload[nameof(PurchaseOrder.Lines)] as JsonArray ?? [])
+            .OfType<JsonObject>().Select(l => MasterData.ReadGuid(l, nameof(PoLine.ItemId))).Where(i => i is not null).Select(i => i!.Value).Distinct().ToList();
+        var known = await db.Items.Where(i => itemIds.Contains(i.Id)).Select(i => i.Id).ToListAsync(ct);
+        missing.AddRange(itemIds.Except(known).Select(i => $"item {i}"));
+        if (missing.Count > 0) throw new DeferredException($"The purchase order refers to {string.Join(", ", missing)}, which has not arrived yet.");
+    }
+
+    /// <summary>The delivery status is worked out on each side from the deliveries it holds, so it never travels.</summary>
+    private static async Task RefreshDeliveryStatusAsync(ChandleryDbContext db, Guid purchaseOrderId, CancellationToken ct)
+    {
+        var po = await db.PurchaseOrders.FirstOrDefaultAsync(p => p.Id == purchaseOrderId, ct);
+        if (po is null) return;
+        var deliveries = await db.DeliveryOrders.Where(d => d.PurchaseOrderId == purchaseOrderId).ToListAsync(ct);
+        po.DeliveryStatus = DeliveryService.StatusFor(DeliveryService.Progress(po, deliveries));
         await db.SaveChangesAsync(ct);
     }
 }

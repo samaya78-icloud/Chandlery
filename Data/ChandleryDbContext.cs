@@ -260,6 +260,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Supplier>().WithMany().HasForeignKey(p => p.SupplierId).OnDelete(DeleteBehavior.Restrict);
             b.Ignore(p => p.Total);
             b.Ignore(p => p.Subtotal);
+            b.Property(p => p.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
             b.Property(p => p.DiscountPct).HasPrecision(5, 2);
             b.Property(p => p.AdditionalCharges).HasPrecision(18, 2);
             b.Property(p => p.UsdRate).HasPrecision(18, 8);
@@ -316,6 +317,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Supplier>().WithMany().HasForeignKey(d => d.SupplierId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Invoice>().WithMany().HasForeignKey(d => d.InvoiceId).OnDelete(DeleteBehavior.SetNull);
             b.HasIndex(d => new { d.CompanyId, d.DoNumber }).IsUnique();
+            b.Property(d => d.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
             b.OwnsMany(d => d.Lines, lb =>
             {
                 lb.WithOwner().HasForeignKey("DeliveryOrderId");
@@ -503,7 +505,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             foreach (var entry in entries)
             {
                 // A vessel keeps requisitions, crew logins and its own bookkeeping; RFQs, orders, invoices and the like are the office's.
-                if (Node.SyncEnabled && Node.IsVessel && MasterData.Find(entry.Metadata.ClrType) is null && !VesselRules.MayWrite(entry.Metadata.ClrType))
+                var localOnlyOrder = entry.Entity is PurchaseOrder && Aggregates.OnlyLocalChanged(entry);   // e.g. the delivery status, worked out onboard
+                if (Node.SyncEnabled && Node.IsVessel && MasterData.Find(entry.Metadata.ClrType) is null && !VesselRules.MayWrite(entry.Metadata.ClrType) && !localOnlyOrder)
                     throw new InvalidOperationException($"{entry.Metadata.ClrType.Name} records are handled by the office; this is not available onboard.");
 
                 // Master data belongs to the office: a vessel installation holds a copy and may not change it.
@@ -520,8 +523,26 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     }
                 }
 
+                // Purchase orders and deliveries have one owner at a time: the side that created them, until they are handed over.
+                var mine = Node.IsVessel ? SyncStages.Vessel : SyncStages.Office;
+                if (Node.SyncEnabled && entry.State == EntityState.Deleted && Aggregates.Find(entry.Metadata.ClrType) is { } removed)
+                {
+                    if (Aggregates.StageOf(entry.Entity) != mine)
+                        throw new InvalidOperationException($"{removed.DocType} {DocLabel(entry.Entity)} belongs to the {(mine == SyncStages.Vessel ? "office" : "vessel")}; it cannot be removed from here.");
+                    SyncDirties.Add(Aggregates.NoteFor(entry, removed, now));
+                    continue;
+                }
+
                 var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
+
+                if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
+                {
+                    if (root.State == EntityState.Added) Aggregates.SetStage(root.Entity, mine);
+                    else if (ReferenceEquals(entry.Entity, root.Entity) && Aggregates.OnlyLocalChanged(entry)) continue;
+                    else if (Aggregates.StageOf(root.Entity) != mine)
+                        throw new InvalidOperationException($"{owned.DocType} {DocLabel(root.Entity)} belongs to the {(mine == SyncStages.Vessel ? "office" : "vessel")}; it cannot be changed from here.");
+                }
                 if (!stamped.Add(root.Entity)) continue;
 
                 if (root.State == EntityState.Added)
@@ -540,6 +561,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                 // A synced document changed: leave a note, in this same transaction, for the sync publisher.
                 if (Node.SyncEnabled && root.Entity is Requisition requisition)
                     SyncDirties.Add(new SyncDirty { DocType = SyncDocTypes.Requisition, DocId = requisition.Id, At = now });
+                else if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } aggregate)
+                    SyncDirties.Add(Aggregates.NoteFor(root, aggregate, now));
                 else if (Node.SyncEnabled && MasterData.Find(root.Entity.GetType()) is { } changed)
                 {
                     var note = MasterData.NoteFor(root, changed, now);
@@ -554,6 +577,13 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             ChangeTracker.AutoDetectChangesEnabled = autoDetect;
         }
     }
+
+    private static string DocLabel(object root) => root switch
+    {
+        PurchaseOrder p => p.PoNumber,
+        DeliveryOrder d => d.DoNumber,
+        _ => "",
+    };
 
     private static bool OnlyCredentialsChanged(EntityEntry crew)
         => crew.Properties.Where(p => p.IsModified).All(p => CrewMember.CredentialColumns.Contains(p.Metadata.Name)

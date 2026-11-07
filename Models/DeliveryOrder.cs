@@ -16,6 +16,9 @@ public class DeliveryOrder
     public DateTime CreatedAt { get; set; }
 
     /// <summary>Set once an invoice covers this delivery; the delivery is then locked.</summary>
+    /// <summary>Which side may change this delivery: the side that recorded it.</summary>
+    public string OwnerStage { get; set; } = SyncStages.Office;
+
     public Guid? InvoiceId { get; set; }
 
     public List<DeliveryOrderLine> Lines { get; set; } = new();

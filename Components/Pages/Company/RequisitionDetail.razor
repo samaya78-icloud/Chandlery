@@ -175,6 +175,11 @@ else if (_reqn is not null)
         </div>
     </div>
 
+    @if (NodeContext.Current.IsVessel)
+    {
+        <RequisitionOrders CompanyId="_companyId" RequisitionId="RequisitionId" />
+    }
+
     @* Create RFQ (the office's job) *@
     @if (CanChange && !NodeContext.Current.IsVessel)
     {

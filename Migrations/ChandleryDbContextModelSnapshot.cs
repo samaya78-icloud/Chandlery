@@ -643,6 +643,13 @@ namespace Chandlery.Migrations
                     b.Property<Guid?>("OriginNodeId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("OwnerStage")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("office");
+
                     b.Property<string>("Place")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1376,6 +1383,13 @@ namespace Chandlery.Migrations
 
                     b.Property<Guid?>("OriginNodeId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("OwnerStage")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("office");
 
                     b.Property<string>("PoNumber")
                         .IsRequired()
