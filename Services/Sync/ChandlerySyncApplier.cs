@@ -366,6 +366,16 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             await db.SaveChangesAsync(ct);
         }
 
+        // An order the vessel approved reached the office: the supplier can see it in the portal from now on, and the vessel is told.
+        if (atHub && entry.Entity is PurchaseOrder released && released.Status == PoStatus.Approved && released.OwnerStage == SyncStages.Vessel)
+        {
+            await using var normal = await factory.CreateDbContextAsync(ct);
+            normal.Node.SyncEnabled = node.SyncEnabled;
+            var order = await normal.PurchaseOrders.FirstAsync(p => p.Id == released.Id, ct);
+            await DispatchService.TouchViaSystemAsync(normal, order, onlyIfMissing: true);
+            await normal.SaveChangesAsync(ct);
+        }
+
         // A quote reached the vessel for an RFQ it raised: the vessel notes that quotes are in, as a normal change that goes up too.
         if (!atHub && entry.Entity is Quote arrived && arrived.OwnerStage == SyncStages.Office)
         {

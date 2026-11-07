@@ -54,6 +54,10 @@ public class PurchaseOrder
     public DateTime? ReviewedAt { get; set; }
     public string ReviewedByName { get; set; } = "";
 
+    /// <summary>The vessel prepared an email with the order for the supplier (an .eml file for its own mail program), and for whom.</summary>
+    public DateTime? EmailedAt { get; set; }
+    public string EmailedTo { get; set; } = "";
+
     public DeliveryStatus DeliveryStatus { get; set; } = DeliveryStatus.Pending;
 
     /// <summary>Suppliers only see approved POs.</summary>

@@ -47,6 +47,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<RfqArchive> RfqArchives => Set<RfqArchive>();
     public DbSet<Rfq> Rfqs => Set<Rfq>();
     public DbSet<Quote> Quotes => Set<Quote>();
+    public DbSet<PoDispatch> PoDispatches => Set<PoDispatch>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -318,6 +319,15 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
         });
 
+        modelBuilder.Entity<PoDispatch>(b =>
+        {
+            b.Property(d => d.AcknowledgedByName).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<PurchaseOrder>().WithMany().HasForeignKey(d => d.PurchaseOrderId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(d => d.PurchaseOrderId).IsUnique();
+            b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<DeliveryOrder>(b =>
         {
             b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Restrict);
@@ -551,7 +561,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     else
                     {
                         // The owner may change it (or hand it over); the other side may not, except through an explicit take-over.
-                        var was = (root.Property("OwnerStage").OriginalValue as string) ?? Aggregates.StageOf(root.Entity);
+                        var was = (root.Metadata.FindProperty("OwnerStage") is null ? null : root.Property("OwnerStage").OriginalValue as string) ?? Aggregates.StageOf(root.Entity);
                         var takenOver = AllowTakeOver && was != mine && Aggregates.StageOf(root.Entity) == mine;
                         if (was != mine && !takenOver)
                             throw new InvalidOperationException($"{owned.DocType} {DocLabel(root.Entity)} belongs to the {(mine == SyncStages.Vessel ? "office" : "vessel")}; it cannot be changed from here.");

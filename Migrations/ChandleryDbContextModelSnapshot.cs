@@ -1301,6 +1301,57 @@ namespace Chandlery.Migrations
                     b.ToTable("PoApprovals");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.PoDispatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AcknowledgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AcknowledgedByName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PurchaseOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<DateTime?>("ViaSystemAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId");
+
+                    b.HasIndex("PurchaseOrderId")
+                        .IsUnique();
+
+                    b.ToTable("PoDispatches");
+                });
+
             modelBuilder.Entity("Chandlery.Models.Port", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1381,6 +1432,13 @@ namespace Chandlery.Migrations
                     b.Property<decimal>("DiscountPct")
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
+
+                    b.Property<DateTime?>("EmailedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EmailedTo")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<string>("EmergencyJustification")
                         .IsRequired()
@@ -2869,6 +2927,21 @@ namespace Chandlery.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.PurchaseOrder", null)
+                        .WithMany()
+                        .HasForeignKey("PurchaseOrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.PoDispatch", b =>
+                {
                     b.HasOne("Chandlery.Models.Company", null)
                         .WithMany()
                         .HasForeignKey("CompanyId")

@@ -13,7 +13,7 @@ public record OrderLineView(Guid ItemId, string Code, string Name, string Uom, d
 }
 
 public record OrderView(PurchaseOrder Order, string SupplierName, string SupplierContact, string? RequisitionNumber, Guid? RequisitionId,
-    List<OrderLineView> Lines, List<DeliveryOrder> Deliveries, string? PortName, bool CanDecide = false);
+    List<OrderLineView> Lines, List<DeliveryOrder> Deliveries, string? PortName, bool CanDecide = false, DispatchView? Dispatch = null);
 
 /// <summary>What a vessel sees of its purchase orders and where each one stands.</summary>
 public class OrdersService(IDbContextFactory<ChandleryDbContext> factory)
@@ -53,7 +53,7 @@ public class OrdersService(IDbContextFactory<ChandleryDbContext> factory)
         // Is it this person's turn to approve (the Master, for an order within his authority)?
         var canDecide = userId is { } uid && po.Status == PoStatus.PendingApproval
             && await db.PoApprovals.AnyAsync(a => a.PurchaseOrderId == id && a.ApproverUserId == uid && a.Decision == ApprovalDecision.Pending);
-        return new OrderView(po, supplier?.Name ?? "", supplier?.ContactEmail ?? "", number, number is null ? null : po.RequisitionId, lines, deliveries, port, canDecide);
+        return new OrderView(po, supplier?.Name ?? "", supplier?.ContactEmail ?? "", number, number is null ? null : po.RequisitionId, lines, deliveries, port, canDecide, await DispatchService.ViewAsync(db, id));
     }
 
     /// <summary>The orders raised from one requisition, for showing where it stands.</summary>

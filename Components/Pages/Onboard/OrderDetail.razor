@@ -5,6 +5,8 @@
 @inject OrdersService OrdersSvc
 @inject DeliveryService DeliverySvc
 @inject ApprovalService ApprovalSvc
+@inject DispatchService DispatchSvc
+@inject NavigationManager Navigation
 @inject ToastService Toasts
 
 <PageTitle>@(_view?.Order.PoNumber ?? "Order") · Chandlery</PageTitle>
@@ -131,6 +133,25 @@ else
         </table>
     </div>
 
+    @if (po.Status == PoStatus.Approved && _view.Dispatch is { } dispatch)
+    {
+        <div class="mb-6 card p-5">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Sending to the supplier</h2>
+            <p class="font-medium">@dispatch.Summary</p>
+            <ul class="mt-2 space-y-1 text-sm text-muted">
+                @if (dispatch.ViaSystemAt is { } via) { <li>Available to the supplier in their portal since @via.ToString("dd MMM yyyy HH:mm") UTC.</li> }
+                else { <li>It reaches the supplier's portal when the vessel next connects to the office.</li> }
+                @if (dispatch.EmailedAt is { } mailed) { <li>Email prepared for @dispatch.EmailedTo on @mailed.ToString("dd MMM yyyy HH:mm") UTC.</li> }
+                @if (dispatch.AcknowledgedAt is { } ack) { <li>Acknowledged by @dispatch.AcknowledgedBy on @ack.ToString("dd MMM yyyy HH:mm") UTC.</li> }
+            </ul>
+            @if (po.OwnerStage == SyncStages.Vessel)
+            {
+                <button @onclick="PrepareEmail" disabled="@_busy" class="btn btn-secondary btn-sm mt-3">Prepare an email to the supplier</button>
+                <p class="mt-2 text-xs text-muted">Downloads a message for your own mail program, to the supplier with the office in copy and the order attached. Chandlery does not send it.</p>
+            }
+        </div>
+    }
+
     @if (_canReceive)
     {
         <div class="mb-6 card p-5">
@@ -212,6 +233,18 @@ else
     }
 
     private string _decisionNote = "";
+
+    private async Task PrepareEmail()
+    {
+        _busy = true;
+        try
+        {
+            await DispatchSvc.RecordEmailedAsync(_companyId, OrderId, _actor);
+            Navigation.NavigateTo($"/company/purchase-orders/{OrderId}/email", forceLoad: true);
+        }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+        finally { _busy = false; }
+    }
 
     private async Task Decide(bool approve)
     {

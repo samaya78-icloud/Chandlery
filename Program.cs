@@ -36,6 +36,7 @@ builder.Services.AddScoped<DeliveryService>();
 builder.Services.AddScoped<PoDocumentService>();
 builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddScoped<OrdersService>();
+builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();
 builder.Services.AddSingleton(sp => CrewCrypto.From(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHostEnvironment>()));
 builder.Services.AddScoped<CrewService>();
@@ -314,6 +315,15 @@ app.MapGet("/company/purchase-orders/{poId:guid}/pdf", async (Guid poId, HttpCon
     var doc = await documents.GetForCompanyAsync(Guid.Parse(companyClaim), poId);
     if (doc is null) return Results.NotFound();
     return Results.File(PoPdf.Build(doc), "application/pdf", PoFileName(doc));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// The order as a ready-to-open email message for the sender's own mail program: to the supplier, the office in copy, PDF attached.
+app.MapGet("/company/purchase-orders/{poId:guid}/email", async (Guid poId, HttpContext http, DispatchService dispatch) =>
+{
+    var companyClaim = http.User.FindFirst("CompanyId")?.Value;
+    if (companyClaim is null) return Results.Forbid();
+    var eml = await dispatch.BuildEmlAsync(Guid.Parse(companyClaim), poId);
+    return eml is null ? Results.NotFound() : Results.File(eml.Value.Bytes, "message/rfc822", eml.Value.FileName);
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 app.MapGet("/supplier/purchase-orders/{poId:guid}/pdf", async (Guid poId, HttpContext http, PoDocumentService documents) =>

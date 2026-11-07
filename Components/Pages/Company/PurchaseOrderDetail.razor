@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject ApprovalService Approvals
+@inject DispatchService DispatchSvc
 @inject DeliveryService Deliveries
 @inject ToastService Toasts
 
@@ -37,6 +38,20 @@ else
             <a href="/company/purchase-orders/@_po.Id/document" class="btn btn-primary btn-sm">PO document</a>
         </Actions>
     </PageHeader>
+
+    @if (_po.Status == PoStatus.Approved)
+    {
+        <div class="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface-2/60 px-4 py-3 text-sm">
+            <span class="font-medium">Supplier: @_dispatch.Summary</span>
+            @if (_dispatch.ViaSystemAt is { } via) { <span class="text-muted">in their portal since @via.ToString("dd MMM HH:mm") UTC</span> }
+            @if (_dispatch.EmailedAt is { } mailed) { <span class="text-muted">· vessel emailed @_dispatch.EmailedTo @mailed.ToString("dd MMM HH:mm")</span> }
+            @if (_dispatch.AcknowledgedAt is { } ack) { <span class="text-emerald-600">· acknowledged by @_dispatch.AcknowledgedBy @ack.ToString("dd MMM HH:mm")</span> }
+            <span class="ml-auto flex gap-2">
+                <button @onclick="Resend" class="btn btn-secondary btn-sm">Send to supplier again</button>
+                <a href="/company/purchase-orders/@_po.Id/email" class="btn btn-secondary btn-sm">Email (.eml)</a>
+            </span>
+        </div>
+    }
 
     @if (_po.OwnerStage == SyncStages.Vessel || _po.ForReview || _po.HandoverRequested)
     {
@@ -318,6 +333,7 @@ else
         _actor = Actor.From(authState.User);
 
         _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
+        if (_po is not null) _dispatch = await DispatchSvc.GetAsync(_companyId, PoId);
         if (_po is not null)
         {
             _supplier = await Procurement.GetSupplierAsync(_po.SupplierId);
@@ -334,6 +350,19 @@ else
             await LoadApprovals();
             await LoadDeliveries();
         }
+    }
+
+    private DispatchView _dispatch = DispatchView.None;
+
+    private async Task Resend()
+    {
+        try
+        {
+            await DispatchSvc.ResendAsync(_companyId, PoId, _actor);
+            _dispatch = await DispatchSvc.GetAsync(_companyId, PoId);
+            _auditVersion++;
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
     }
 
     private async Task MarkReviewed()

@@ -152,6 +152,11 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
     {
         if (aggregate.Clr == typeof(PurchaseOrder)) return MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId));
         if (aggregate.Clr == typeof(Rfq)) return MasterData.ReadGuid(payload, nameof(Rfq.VesselId));
+        if (aggregate.Clr == typeof(PoDispatch))
+        {
+            var dispatchOrderId = MasterData.ReadGuid(payload, nameof(PoDispatch.PurchaseOrderId));
+            return await db.PurchaseOrders.Where(p => p.Id == dispatchOrderId).Select(p => p.VesselId).FirstOrDefaultAsync(ct);
+        }
         if (aggregate.Clr == typeof(DeliveryOrder))
         {
             var orderId = MasterData.ReadGuid(payload, nameof(DeliveryOrder.PurchaseOrderId));

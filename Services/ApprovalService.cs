@@ -300,6 +300,8 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         else if (CurrentLevel(approvals) is null)
         {
             po.Status = PoStatus.Approved;
+            // An order handed over from a vessel is released to the supplier now; the vessel is told.
+            if (po.HandoverRequested && !db.Node.IsVessel) await DispatchService.TouchViaSystemAsync(db, po, onlyIfMissing: true);
             if (db.Node.IsVessel)
             {
                 // Approved by the Master onboard: the office is told who, and sees it for review.

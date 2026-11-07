@@ -28,6 +28,7 @@ public static class Aggregates
         new(nameof(DeliveryOrder), typeof(DeliveryOrder)),
         new(nameof(Rfq), typeof(Rfq)),
         new(nameof(Quote), typeof(Quote)),
+        new(nameof(PoDispatch), typeof(PoDispatch)),
     ];
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);

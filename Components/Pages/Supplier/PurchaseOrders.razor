@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject DeliveryService Deliveries
+@inject DispatchService DispatchSvc
 
 <PageTitle>Purchase Orders · Chandlery</PageTitle>
 
@@ -32,6 +33,14 @@ else
                     <div class="text-right">
                         <p class="mb-1 flex items-center justify-end gap-2">
                             <StatusChip Value="po.DeliveryStatus" />
+                            @if (_dispatch.GetValueOrDefault(po.Id)?.AcknowledgedAt is { } acknowledged)
+                            {
+                                <span class="chip" data-tone="success" title="@acknowledged.ToString("dd MMM yyyy HH:mm")">acknowledged</span>
+                            }
+                            else
+                            {
+                                <button @onclick="() => Acknowledge(po.Id)" class="btn btn-secondary btn-sm">Acknowledge order</button>
+                            }
                             <a href="/supplier/purchase-orders/@po.Id/document" class="btn btn-secondary btn-sm">PO document</a>
                         </p>
                         <p class="text-lg font-bold text-slate-900">@Money.Format(po.Total, po.Currency)</p>
@@ -87,12 +96,24 @@ else
     private Dictionary<Guid, Rfq> _rfqsById = new();
     private Dictionary<Guid, Item> _itemsById = new();
     private Dictionary<Guid, List<DeliveryOrder>> _deliveriesByPo = new();
+    private Dictionary<Guid, DispatchView> _dispatch = new();
+    private Guid _supplierId;
+    private string _userName = "";
+
+    private async Task Acknowledge(Guid poId)
+    {
+        await DispatchSvc.AcknowledgeAsync(_supplierId, poId, _userName);
+        _dispatch = await DispatchSvc.ForSupplierAsync(_supplierId, _pos.Select(p => p.Id));
+    }
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
         var supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _supplierId = supplierId;
+        _userName = authState.User.Identity?.Name ?? "";
         _pos = await Procurement.GetPurchaseOrdersForSupplierAsync(supplierId);
+        _dispatch = await DispatchSvc.ForSupplierAsync(supplierId, _pos.Select(p => p.Id));
         _deliveriesByPo = await Deliveries.GetForSupplierPosAsync(supplierId, _pos.Select(p => p.Id));
 
         var rfqs = await Procurement.GetRfqsByIdsAsync(_pos.Where(p => p.RfqId.HasValue).Select(p => p.RfqId!.Value));
