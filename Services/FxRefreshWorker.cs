@@ -1,3 +1,4 @@
+using Chandlery.Models;
 namespace Chandlery.Services;
 
 /// <summary>
@@ -20,6 +21,8 @@ public class FxRefreshWorker(IServiceScopeFactory scopes, IConfiguration configu
         {
             try
             {
+                // Exchange rates are master data: a vessel receives the office's rates, it does not fetch its own.
+                if (NodeContext.Current is { IsVessel: true, SyncEnabled: true }) return;
                 using var scope = scopes.CreateScope();
                 var fx = scope.ServiceProvider.GetRequiredService<FxService>();
                 var (latest, _) = await fx.GetMarketStatusAsync();

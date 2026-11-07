@@ -1,7 +1,11 @@
 using Chandlery.Data;
 using Chandlery.Models;
+using System.Collections.Concurrent;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Marine.Sync;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace Chandlery.Services.Sync;
 
@@ -13,8 +17,16 @@ namespace Chandlery.Services.Sync;
 /// </summary>
 public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> factory, NodeIdentity node) : IDocumentApplier
 {
+    // Parents already confirmed present here, so a long run of items does not look up its category every time.
+    private readonly ConcurrentDictionary<string, bool> _present = new();
+
     public async Task ApplyAsync(StreamKey stream, SyncDocument document, CancellationToken ct = default)
     {
+        if (MasterData.Find(document.DocType) is { } master)
+        {
+            await ApplyMasterAsync(stream, document, master, ct);
+            return;
+        }
         if (document.DocType != SyncDocTypes.Requisition)
             throw new NotSupportedException($"Document type '{document.DocType}' is not supported by this installation.");
         if (document.SchemaVersion > RequisitionDocument.SchemaVersion)
@@ -92,8 +104,10 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         var known = await db.Items.IgnoreQueryFilters().Where(i => itemIds.Contains(i.Id)).Select(i => i.Id).ToListAsync(ct);
         missing.AddRange(itemIds.Except(known).Select(id => $"item {id}"));
 
+        // Not an error yet: master data travels on its own schedule and may simply be on its way. The engine retries, and parks
+        // the message for an operator only if it never turns up.
         if (missing.Count > 0)
-            throw new InvalidOperationException(
+            throw new DeferredException(
                 $"Requisition {d.ReqnNumber} refers to master data that is missing here ({string.Join(", ", missing)}).");
     }
 
@@ -136,5 +150,88 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             target.Description = line.Description;
             target.DrawingNo = line.DrawingNo;
         }
+    }
+
+    /// <summary>
+    /// Master data from the office, stored on a vessel. A record whose parent (its category, its group...) has not arrived is held
+    /// back until it does; a removal that other records still depend on waits for those removals. Nothing here is announced again.
+    /// </summary>
+    private async Task ApplyMasterAsync(StreamKey stream, SyncDocument document, MasterType master, CancellationToken ct)
+    {
+        if (stream.Direction != Direction.Down || !node.IsVessel)
+            throw new InvalidOperationException("Master data is sent by the office to vessels only.");
+        if (document.SchemaVersion > MasterData.SchemaVersion)
+            throw new NotSupportedException($"{master.DocType} schema {document.SchemaVersion} is newer than this installation understands ({MasterData.SchemaVersion}).");
+
+        var payload = JsonNode.Parse(document.Payload)?.AsObject() ?? throw new JsonException($"Empty {master.DocType} document.");
+
+        await using var db = await factory.CreateDbContextAsync(ct);
+        db.Node.SyncEnabled = node.SyncEnabled;
+        db.ApplyingSync = true;
+
+        var type = db.Model.FindEntityType(master.Clr)!;
+        var key = type.FindPrimaryKey()!.Properties
+            .Select(p => MasterData.TryRead(p, payload, out var v) && v is not null ? v : throw new InvalidOperationException($"{master.DocType} document has no {p.Name}."))
+            .ToArray();
+
+        if (!document.Deleted) await RequireParentsAsync(db, type, master, payload, ct);
+        var existing = await db.FindAsync(master.Clr, key, ct);
+
+        if (document.Deleted)
+        {
+            _present.Clear();
+            if (existing is null) return;
+            db.Remove(existing);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex)
+            {
+                throw new DeferredException($"{master.DocType} cannot be removed yet, other records here still use it: {ex.GetBaseException().Message}");
+            }
+            return;
+        }
+
+        EntityEntry entry = existing is null ? db.Add(Activator.CreateInstance(master.Clr)!) : db.Entry(existing);
+        foreach (var property in type.GetProperties())
+            if (MasterData.TryRead(property, payload, out var value))
+                entry.Property(property.Name).CurrentValue = value;
+        entry.Property(ChandleryDbContext.SyncVersion).CurrentValue = (int)document.Version;
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex)
+        {
+            throw new InvalidOperationException($"{master.DocType} could not be stored: {ex.GetBaseException().Message}", ex);
+        }
+    }
+
+    private async Task RequireParentsAsync(ChandleryDbContext db, Microsoft.EntityFrameworkCore.Metadata.IEntityType type, MasterType master, JsonObject payload, CancellationToken ct)
+    {
+        var missing = new List<string>();
+        foreach (var fk in type.GetForeignKeys())
+        {
+            var values = new object?[fk.Properties.Count];
+            var complete = true;
+            for (var i = 0; i < values.Length; i++)
+            {
+                if (!MasterData.TryRead(fk.Properties[i], payload, out values[i]) || values[i] is null) { complete = false; break; }
+            }
+            if (!complete) continue;   // an optional reference left empty
+
+            var principal = fk.PrincipalEntityType.ClrType;
+            var name = $"{principal.Name} {string.Join("/", values)}";
+            if (_present.ContainsKey(name)) continue;
+            var found = await db.FindAsync(principal, values, ct);
+            if (found is null) { missing.Add(name); continue; }
+            db.Entry(found).State = EntityState.Detached;
+            _present[name] = true;
+        }
+
+        if (missing.Count > 0)
+            throw new DeferredException($"{master.DocType} refers to {string.Join(", ", missing)}, which has not arrived yet.");
     }
 }

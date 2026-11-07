@@ -37,6 +37,7 @@ public static class ChandlerySyncSetup
                 {
                     ["SyncHub:ConnectionString"] = config["SyncHub:ConnectionString"] ?? connection,
                 }).Build();
+            services.AddSingleton<IBaselineProvider>(sp => new ChandleryBaselineProvider(sp.GetRequiredService<SyncPublisher>()));
             services.AddSyncHub(overlay, sp => sp.GetRequiredService<ChandlerySyncApplier>());
             return services;
         }

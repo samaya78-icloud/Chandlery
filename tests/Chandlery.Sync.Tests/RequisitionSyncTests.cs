@@ -127,9 +127,14 @@ public class RequisitionSyncTests : IAsyncLifetime
         // A requisition for the other ship, raised on this vessel's installation (which a vessel user cannot normally do).
         await using (var db = await _s.VesselFactory.CreateDbContextAsync())
         {
+            // Locally it believes it runs both ships: a copy of the other ship's record, which a vessel never normally holds.
+            Vessel other;
+            await using (var shore = await _s.ShoreFactory.CreateDbContextAsync())
+                other = await shore.Vessels.IgnoreQueryFilters().AsNoTracking().FirstAsync(v => v.Id == _s.OtherVesselId);
             db.ApplyingSync = true;
-            var other = await db.Vessels.IgnoreQueryFilters().FirstAsync(v => v.Id == _s.OtherVesselId);
-            other.NodeId = _s.VesselNode.Id;                        // locally it believes it runs both ships
+            other.NodeId = _s.VesselNode.Id;
+            other.GroupId = null;
+            db.Vessels.Add(other);
             await db.SaveChangesAsync();
         }
         var made = await _s.VesselRequisitions.CreateAsync(_s.CompanyId, _s.NewRequisition("not my ship", _s.OtherVesselId), _s.User);
@@ -166,7 +171,7 @@ public class RequisitionSyncTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task MissingMasterData_ParksTheMessage_ForReplayAfterTheCauseIsFixed()
+    public async Task ARequisitionThatOvertakesItsMasterData_Waits_AndLandsOnceTheItemArrives()
     {
         var made = await _s.VesselRequisitions.CreateAsync(_s.CompanyId, _s.NewRequisition("needs a catalog item"), _s.User);
         var itemId = made.Lines.First().ItemId;
@@ -182,21 +187,18 @@ public class RequisitionSyncTests : IAsyncLifetime
         await _s.SettleAsync();
 
         Assert.Null(await _s.FindAsync(_s.ShoreFactory, made.Id));
-        var parked = Assert.Single(await _s.ShoreSyncStore.GetQuarantineAsync());
-        Assert.Contains("master data", parked.Error);
+        Assert.Empty(await _s.ShoreSyncStore.GetQuarantineAsync());          // waiting for the item, not failed
+        Assert.NotEmpty(await _s.ShoreSyncStore.GetDeferredAsync(new StreamKey(_s.VesselNode.SyncNodeId!, Direction.Up)));
 
-        // The item arrives (a later master-data sync, here done by hand); the operator replays the parked message.
+        // The item arrives (here put back by hand); the requisition is tried again by itself.
         await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
         {
             db.ApplyingSync = true;
             db.Items.Add(copy);
             await db.SaveChangesAsync();
         }
-        var error = await _s.Hub.ReplayQuarantinedAsync(parked.Stream, parked.Envelope.Seq, "item restored");
-        Assert.Null(error);
-        await _s.SettleAsync();
+        await _s.SettleUntilAsync(async () => await _s.FindAsync(_s.ShoreFactory, made.Id) is not null);
 
-        Assert.NotNull(await _s.FindAsync(_s.ShoreFactory, made.Id));
         Assert.Equal(SyncStages.Office, (await _s.FindAsync(_s.VesselFactory, made.Id))!.OwnerStage);
         Assert.Empty(await _s.ShoreSyncStore.GetQuarantineAsync());
     }

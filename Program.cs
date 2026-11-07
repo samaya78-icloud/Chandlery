@@ -81,7 +81,8 @@ if (app.Environment.IsDevelopment())
     await using var db = await factory.CreateDbContextAsync();
     await db.Database.MigrateAsync();
     await EnsureNodeAsync(db, app.Configuration);
-    await DbSeeder.SeedAsync(db);
+    // A vessel never seeds demo data of its own: it receives the company's master data from the office.
+    if (!NodeContext.Current.IsVessel) await DbSeeder.SeedAsync(db);
 }
 else
 {
@@ -321,10 +322,13 @@ static async Task EnsureNodeAsync(ChandleryDbContext db, IConfiguration config)
     var node = await db.NodeInfos.FirstOrDefaultAsync();
     if (node is null)
     {
+        var profile = config["Platform:Profile"] ?? "Shore";
+        // A vessel's id is the one the office registered for it, so a brand-new, empty database can start as that vessel.
+        var registered = profile == "Vessel" && Guid.TryParseExact(config["SyncNode:NodeId"], "N", out var id) ? id : (Guid?)null;
         node = new NodeInfo
         {
-            Id = Guid.CreateVersion7(),
-            Profile = config["Platform:Profile"] ?? "Shore",
+            Id = registered ?? Guid.CreateVersion7(),
+            Profile = profile,
             Name = config["Platform:NodeName"] ?? "Shore office",
             CreatedAt = DateTime.UtcNow
         };

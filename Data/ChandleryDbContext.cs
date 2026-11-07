@@ -72,6 +72,12 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     {
         modelBuilder.Entity<Company>(b => b.Property(c => c.OfficeCode).HasMaxLength(10).HasDefaultValue("HO"));
 
+        modelBuilder.Entity<SyncDirty>(b =>
+        {
+            b.Property(d => d.DocType).HasMaxLength(60);
+            b.HasIndex(d => d.At);
+        });
+
         modelBuilder.Entity<NodeInfo>(b =>
         {
             b.Property(n => n.Profile).HasMaxLength(20);
@@ -435,7 +441,9 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         {
             if (entityType.IsOwned()) continue;
             var key = entityType.FindPrimaryKey();
-            if (key is null || key.Properties.Count != 1 || key.Properties[0].Name != "Id" || key.Properties[0].ClrType != typeof(Guid)) continue;
+            if (key is null) continue;
+            var singleGuidId = key.Properties.Count == 1 && key.Properties[0].Name == "Id" && key.Properties[0].ClrType == typeof(Guid);
+            if (!singleGuidId && MasterData.Find(entityType.ClrType) is null) continue;   // master records keyed by code or by two ids sync too
             var entity = modelBuilder.Entity(entityType.ClrType);
             entity.Property<DateTime>(SyncCreatedAt).HasDefaultValueSql("now()");
             entity.Property<DateTime>(SyncUpdatedAt).HasDefaultValueSql("now()");
@@ -473,6 +481,18 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             var stamped = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach (var entry in entries)
             {
+                // Master data belongs to the office: a vessel installation holds a copy and may not change it.
+                if (Node.SyncEnabled && MasterData.Find(entry.Metadata.ClrType) is { } master)
+                {
+                    if (Node.IsVessel)
+                        throw new InvalidOperationException($"{master.DocType} is master data kept by the office; a vessel receives it through sync and cannot change it.");
+                    if (entry.State == EntityState.Deleted)
+                    {
+                        SyncDirties.Add(MasterData.NoteFor(entry, master, now));
+                        continue;
+                    }
+                }
+
                 var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
                 if (!stamped.Add(root.Entity)) continue;
@@ -493,6 +513,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                 // A synced document changed: leave a note, in this same transaction, for the sync publisher.
                 if (Node.SyncEnabled && root.Entity is Requisition requisition)
                     SyncDirties.Add(new SyncDirty { DocType = SyncDocTypes.Requisition, DocId = requisition.Id, At = now });
+                else if (Node.SyncEnabled && MasterData.Find(root.Entity.GetType()) is { } changed)
+                    SyncDirties.Add(MasterData.NoteFor(root, changed, now));
             }
         }
         finally

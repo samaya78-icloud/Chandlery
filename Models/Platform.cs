@@ -86,4 +86,14 @@ public class SyncDirty
     public string DocType { get; set; } = "";
     public Guid DocId { get; set; }
     public DateTime At { get; set; }
+
+    /// <summary>The record was removed. <see cref="Version"/> is the version the removal travels under.</summary>
+    public bool Deleted { get; set; }
+    public int Version { get; set; }
+
+    /// <summary>
+    /// The record as it was before the save, as JSON. Kept for removals and for changes that move a record between groups or vessels
+    /// (to tell which vessels must drop it), and for records keyed by several columns (to find them again).
+    /// </summary>
+    public string? Snapshot { get; set; }
 }

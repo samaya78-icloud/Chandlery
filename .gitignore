@@ -7,3 +7,4 @@ wwwroot/css/app.css
 appsettings.Development.json
 App_Data/
 tools/int-to-guid/convert.generated.sql
+TestResults/
