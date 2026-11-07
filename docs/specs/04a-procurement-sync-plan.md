@@ -1,6 +1,6 @@
 # 04a. Procurement sync: plan (implements spec 04 in stages)
 
-Status: **approved 2026-11-07. P1 to P5 built 2026-11-07** (orders down, deliveries up; RFQs and quotes onboard; direct POs with Master approval; dispatch; vessel home with sync status); P6 (final walkthrough) to do. Not built: the vessel confirming delivery port and ETA for the office to use (needs its own ownership design). Decisions taken: full spec 04 scope; the vessel sees prices on its own POs only; attachments and photos wait for file sync in the engine.
+Status: **approved 2026-11-07. All stages P1 to P6 built 2026-11-07** (orders down, deliveries up; RFQs and quotes onboard; direct POs with Master approval; dispatch; vessel home with sync status; end-to-end walkthrough test `ProcurementEndToEndTests`). Not built: the vessel confirming delivery port and ETA for the office to use (needs its own ownership design). Decisions taken: full spec 04 scope; the vessel sees prices on its own POs only; attachments and photos wait for file sync in the engine.
 
 ## 1. Where we are
 Requisitions, master data (including crew) sync, and a vessel is locked down to requisitions, a read-only catalogue and crew logins. RFQs, quotes, POs and deliveries exist only at the office.
