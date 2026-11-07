@@ -1,11 +1,21 @@
+using Chandlery.Services.Sync;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace Chandlery.Data;
 
-public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : DbContext(options)
+public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, NodeIdentity? node = null) : DbContext(options)
 {
+    /// <summary>Which installation this context works for. Supplied by dependency injection; falls back to the application-wide identity.</summary>
+    public NodeIdentity Node { get; } = node ?? NodeContext.Current;
+
+    /// <summary>
+    /// Set while sync is applying a document from the other side: the change keeps the version and origin it arrived with and
+    /// is not announced again, so documents never bounce between hub and vessel.
+    /// </summary>
+    public bool ApplyingSync { get; set; }
+
     /// <summary>
     /// Set explicitly by the caller right after the context is created (via IDbContextFactory —
     /// contexts are short-lived, one per operation, per Blazor Server + EF Core guidance).
@@ -50,6 +60,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     public DbSet<ExchangeRate> ExchangeRates => Set<ExchangeRate>();
     public DbSet<NodeInfo> NodeInfos => Set<NodeInfo>();
     public DbSet<NumberSequence> NumberSequences => Set<NumberSequence>();
+    public DbSet<SyncDirty> SyncDirties => Set<SyncDirty>();
 
     // Change tracking for sync, kept as shadow properties so the entity classes stay clean.
     internal const string SyncCreatedAt = "SyncCreatedAt";
@@ -451,6 +462,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
     /// </summary>
     private void StampChanges()
     {
+        if (ApplyingSync) return;
         ChangeTracker.DetectChanges();
         var autoDetect = ChangeTracker.AutoDetectChangesEnabled;
         ChangeTracker.AutoDetectChangesEnabled = false;
@@ -470,13 +482,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options) : 
                     root.Property(SyncCreatedAt).CurrentValue = now;
                     root.Property(SyncUpdatedAt).CurrentValue = now;
                     root.Property(SyncVersion).CurrentValue = 1;
-                    root.Property(OriginNodeId).CurrentValue = NodeContext.NodeId;
+                    root.Property(OriginNodeId).CurrentValue = Node.Id;
                 }
                 else
                 {
                     root.Property(SyncUpdatedAt).CurrentValue = now;
                     root.Property(SyncVersion).CurrentValue = (int)(root.Property(SyncVersion).CurrentValue ?? 0) + 1;
                 }
+
+                // A synced document changed: leave a note, in this same transaction, for the sync publisher.
+                if (Node.SyncEnabled && root.Entity is Requisition requisition)
+                    SyncDirties.Add(new SyncDirty { DocType = SyncDocTypes.Requisition, DocId = requisition.Id, At = now });
             }
         }
         finally

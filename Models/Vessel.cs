@@ -13,4 +13,10 @@ public class Vessel
 
     /// <summary>The node of the vessel group tree this vessel belongs to (every vessel has one; the tree's level 1 is mandatory).</summary>
     public Guid? GroupId { get; set; }
+
+    /// <summary>
+    /// The installation (<see cref="NodeInfo.Id"/>) that runs this vessel onboard. Sync routes this vessel's documents to and from it.
+    /// Empty while the vessel has no onboard installation.
+    /// </summary>
+    public Guid? NodeId { get; set; }
 }

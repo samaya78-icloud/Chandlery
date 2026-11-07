@@ -31,7 +31,7 @@ public static class DocumentNumbers
     {
         var scope = await ScopeAsync(db, companyId, vesselId);
         var year = DateTime.UtcNow.Year;
-        var lane = NodeContext.Profile == "Vessel" ? "" : "H";
+        var lane = db.Node.IsVessel ? "" : "H";
         var seq = await IncrementAsync(db, scope, TypeCode(type), year, lane);
         return $"{scope}-{TypeCode(type)}-{year}-{lane}{seq:0000}";
     }

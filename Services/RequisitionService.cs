@@ -1,3 +1,4 @@
+using Chandlery.Services.Sync;
 using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
@@ -80,6 +81,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
             IsBreakdown = request.IsBreakdown,
             Remarks = request.Remarks.Trim(),
             Status = RequisitionStatus.Open,
+            OwnerStage = db.Node.IsVessel ? SyncStages.Vessel : SyncStages.Office,
             CreatedByUserId = actor.UserId,
             CreatedByName = actor.Name,
             CreatedAt = DateTime.UtcNow,
@@ -227,6 +229,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
         var requisition = await db.Requisitions.Include(r => r.Lines)
             .FirstOrDefaultAsync(r => r.Id == requisitionId && r.CompanyId == companyId)
             ?? throw new InvalidOperationException("Requisition not found.");
+        RequisitionOwnership.EnsureEditable(db, requisition);
         if (requisition.Status is RequisitionStatus.Cancelled or RequisitionStatus.Ordered)
             throw new InvalidOperationException("This requisition can no longer be changed.");
 
@@ -251,6 +254,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
 
         var requisition = await db.Requisitions.FirstOrDefaultAsync(r => r.Id == requisitionId && r.CompanyId == companyId)
             ?? throw new InvalidOperationException("Requisition not found.");
+        RequisitionOwnership.EnsureEditable(db, requisition);
         if (requisition.Status == RequisitionStatus.Cancelled) return;
         if (requisition.Status == RequisitionStatus.Ordered)
             throw new InvalidOperationException("Purchase orders were already raised from this requisition.");

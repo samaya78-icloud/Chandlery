@@ -37,15 +37,53 @@ public enum DocType
     Invoice
 }
 
-/// <summary>This installation's node id, loaded once at startup and stamped onto every record that is saved.</summary>
-public static class NodeContext
+/// <summary>
+/// Who this installation is: its node id and profile, and whether sync is switched on. One instance per installation,
+/// handed to every database context. (Tests run a shore and a vessel side by side, so it is not a static.)
+/// </summary>
+public sealed class NodeIdentity
 {
-    public static Guid? NodeId { get; private set; }
-    public static string Profile { get; private set; } = "Shore";
+    public Guid? Id { get; private set; }
+    public string Profile { get; private set; } = "Shore";
+    public bool IsVessel => Profile == "Vessel";
 
-    public static void Set(NodeInfo node)
+    /// <summary>When on, every change to a synced document leaves a note for the sync publisher.</summary>
+    public bool SyncEnabled { get; set; }
+
+    /// <summary>The sync id of this node: how the hub knows it.</summary>
+    public string? SyncNodeId => Id?.ToString("N");
+
+    public void Set(NodeInfo node)
     {
-        NodeId = node.Id;
+        Id = node.Id;
         Profile = node.Profile;
     }
+}
+
+/// <summary>The installation-wide identity used by the running application.</summary>
+public static class NodeContext
+{
+    public static NodeIdentity Current { get; } = new();
+    public static Guid? NodeId => Current.Id;
+    public static string Profile => Current.Profile;
+    public static void Set(NodeInfo node) => Current.Set(node);
+}
+
+/// <summary>Which side of a synced document may change it right now.</summary>
+public static class SyncStages
+{
+    public const string Vessel = "vessel";
+    public const string Office = "office";
+}
+
+/// <summary>
+/// A note that a synced document changed and has not yet been handed to the sync engine. Written in the same transaction as the
+/// change, so a crash can never lose a change; the publisher turns notes into messages and removes them.
+/// </summary>
+public class SyncDirty
+{
+    public Guid Id { get; set; }
+    public string DocType { get; set; } = "";
+    public Guid DocId { get; set; }
+    public DateTime At { get; set; }
 }

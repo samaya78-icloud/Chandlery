@@ -3,6 +3,8 @@ using Chandlery.Components;
 using Chandlery.Data;
 using Chandlery.Models;
 using Chandlery.Services;
+using Chandlery.Services.Sync;
+using Marine.Sync;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -16,6 +18,8 @@ builder.Services.AddRazorComponents()
 
 builder.Services.AddDbContextFactory<ChandleryDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Chandlery")));
+
+builder.Services.AddChandlerySync(builder.Configuration, NodeContext.Current);
 
 builder.Services.AddScoped<ProcurementService>();
 builder.Services.AddScoped<AuditService>();
@@ -102,6 +106,9 @@ app.UseAuthorization();
 app.UseAntiforgery();
 
 app.MapStaticAssets();
+
+// The office is the sync hub: vessels connect to /v1/sync, administrators use /console and /admin (see ChandlerySyncSetup).
+if (ChandlerySyncSetup.Mode(app.Configuration) == "Hub") app.MapSyncHub();
 
 static List<Claim> BuildClaims(AppUser user)
 {

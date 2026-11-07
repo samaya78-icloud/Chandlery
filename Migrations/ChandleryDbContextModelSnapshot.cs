@@ -1352,6 +1352,10 @@ namespace Chandlery.Migrations
                     b.Property<Guid?>("OriginNodeId")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("OwnerStage")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("Remarks")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1785,6 +1789,45 @@ namespace Chandlery.Migrations
                     b.ToTable("SupplierBankAccounts");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.SyncDirty", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("DocId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DocType")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SyncDirties");
+                });
+
             modelBuilder.Entity("Chandlery.Models.TaxCode", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2002,6 +2045,9 @@ namespace Chandlery.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("NodeId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("OriginNodeId")
                         .HasColumnType("uuid");

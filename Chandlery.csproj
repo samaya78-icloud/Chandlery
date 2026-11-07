@@ -9,7 +9,25 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The test project lives inside this folder; keep it out of the application's own compilation. -->
+    <Compile Remove="tests\**" />
+    <Content Remove="tests\**" />
+    <EmbeddedResource Remove="tests\**" />
+    <None Remove="tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Chandlery.Sync.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.105.1" />
+    <PackageReference Include="Marine.Sync.Contracts" Version="0.1.0" />
+    <PackageReference Include="Marine.Sync.Core" Version="0.1.0" />
+    <PackageReference Include="Marine.Sync.Hub" Version="0.1.0" />
+    <PackageReference Include="Marine.Sync.Node" Version="0.1.0" />
+    <PackageReference Include="Marine.Sync.Postgres" Version="0.1.0" />
+    <PackageReference Include="Marine.Sync.Transport.Http" Version="0.1.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

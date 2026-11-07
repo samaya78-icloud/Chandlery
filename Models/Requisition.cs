@@ -36,6 +36,12 @@ public class Requisition
     public string CreatedByName { get; set; } = "";
     public DateTime CreatedAt { get; set; }
 
+    /// <summary>
+    /// Who may change this requisition: <see cref="SyncStages.Vessel"/> until it is first sent to the office, then
+    /// <see cref="SyncStages.Office"/>. Requisitions raised ashore are office-owned from the start.
+    /// </summary>
+    public string OwnerStage { get; set; } = SyncStages.Office;
+
     public List<RequisitionLine> Lines { get; set; } = new();
 }
 
