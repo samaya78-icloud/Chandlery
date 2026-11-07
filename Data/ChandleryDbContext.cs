@@ -473,7 +473,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             var stamped = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach (var entry in entries)
             {
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
                 if (!stamped.Add(root.Entity)) continue;
 
@@ -499,6 +499,21 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         {
             ChangeTracker.AutoDetectChangesEnabled = autoDetect;
         }
+    }
+
+    /// <summary>
+    /// A requisition line is its own table but part of the requisition document: changing one changes the requisition's version.
+    /// The requisition must be tracked alongside its lines (load it with them), otherwise its version could not move and sync
+    /// would silently drop the change, so that case is refused.
+    /// </summary>
+    private EntityEntry? RequisitionOf(EntityEntry line)
+    {
+        var property = line.Property("RequisitionId");
+        var requisitionId = (Guid)(line.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Requisition>().FirstOrDefault(e => e.Entity.Id == requisitionId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A requisition line was changed without loading its requisition; load the requisition with its lines.");
+        return parent;
     }
 
     /// <summary>The tracked document that owns a child line, found through the line's owner key.</summary>

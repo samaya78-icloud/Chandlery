@@ -65,6 +65,23 @@ public class RequisitionSyncTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OfficeEditingOnlyAQuantity_StillMovesTheVersion_AndReachesTheVessel()
+    {
+        var made = await _s.VesselRequisitions.CreateAsync(_s.CompanyId, _s.NewRequisition("quantity only"), _s.User);
+        await _s.SettleAsync();
+        var before = await _s.VersionAsync(_s.ShoreFactory, made.Id);
+
+        var line = made.Lines.OrderBy(l => l.Id).Last();
+        await _s.ShoreRequisitions.SetApprovedQuantitiesAsync(_s.CompanyId, made.Id, new Dictionary<Guid, decimal> { [line.Id] = 1 }, _s.User);
+        Assert.Equal(before + 1, await _s.VersionAsync(_s.ShoreFactory, made.Id));          // a line edit alone is a new version of the document
+        await _s.SettleAsync();
+
+        var onboard = await _s.FindAsync(_s.VesselFactory, made.Id);
+        Assert.Equal(1, onboard!.Lines.Single(l => l.Id == line.Id).ApprovedQuantity);
+        Assert.Equal(before + 1, await _s.VersionAsync(_s.VesselFactory, made.Id));
+    }
+
+    [Fact]
     public async Task OnceSentToTheOffice_TheVesselCannotChangeIt()
     {
         var made = await _s.VesselRequisitions.CreateAsync(_s.CompanyId, _s.NewRequisition("locked after sending"), _s.User);
