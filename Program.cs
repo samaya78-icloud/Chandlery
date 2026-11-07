@@ -35,6 +35,8 @@ builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<DeliveryService>();
 builder.Services.AddScoped<PoDocumentService>();
 builder.Services.AddScoped<InvoiceService>();
+builder.Services.AddSingleton(sp => CrewCrypto.From(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHostEnvironment>()));
+builder.Services.AddScoped<CrewService>();
 builder.Services.AddSingleton<IFileStore, DiskFileStore>();
 builder.Services.AddHttpClient<FxFeed>(client =>
 {
@@ -45,7 +47,7 @@ builder.Services.AddScoped<FxService>();
 builder.Services.AddHostedService<FxRefreshWorker>();
 
 builder.Services.AddCascadingAuthenticationState();
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")));
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -57,6 +59,18 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         {
             var user = context.Principal;
             var ids = new[] { user?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, user?.FindFirst("CompanyId")?.Value, user?.FindFirst("SupplierId")?.Value };
+            // A crew login that was disabled (signed off, or switched off by a crew admin) stops working at once, not at cookie expiry.
+            if (user?.FindFirst("Crew") is not null && Guid.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var crewUserId))
+            {
+                var dbFactory = context.HttpContext.RequestServices.GetRequiredService<IDbContextFactory<ChandleryDbContext>>();
+                await using var crewDb = await dbFactory.CreateDbContextAsync();
+                if (!await crewDb.Users.AnyAsync(u => u.Id == crewUserId && u.IsEnabled))
+                {
+                    context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    return;
+                }
+            }
             if (ids.Any(v => v is not null && !Guid.TryParse(v, out _)))
             {
                 context.RejectPrincipal();
@@ -111,7 +125,7 @@ app.MapStaticAssets();
 // The office is the sync hub: vessels connect to /v1/sync, administrators use /console and /admin (see ChandlerySyncSetup).
 if (ChandlerySyncSetup.Mode(app.Configuration) == "Hub") app.MapSyncHub();
 
-static List<Claim> BuildClaims(AppUser user)
+static List<Claim> BuildClaims(AppUser user, bool crewAdmin = false)
 {
     var claims = new List<Claim>
     {
@@ -124,12 +138,15 @@ static List<Claim> BuildClaims(AppUser user)
         claims.Add(new Claim("CompanyId", user.CompanyId.Value.ToString()));
     if (user.SupplierId.HasValue)
         claims.Add(new Claim("SupplierId", user.SupplierId.Value.ToString()));
+    if (user.LoginName is not null) claims.Add(new Claim("Crew", "true"));
+    if (crewAdmin) claims.Add(new Claim("CrewAdmin", "true"));
+    if (user.MustChangePassword) claims.Add(new Claim("MustChange", "true"));
     return claims;
 }
 
 static string DefaultHomeFor(UserRole role) => "/";
 
-app.MapPost("/account/login", async (HttpContext http, ProcurementService procurement, IAntiforgery antiforgery) =>
+app.MapPost("/account/login", async (HttpContext http, ProcurementService procurement, CrewService crew, IAntiforgery antiforgery) =>
 {
     try
     {
@@ -151,13 +168,39 @@ app.MapPost("/account/login", async (HttpContext http, ProcurementService procur
         return Results.Redirect($"/login?error=1&returnUrl={Uri.EscapeDataString(returnUrl)}");
     }
 
-    var identity = new ClaimsIdentity(BuildClaims(user), CookieAuthenticationDefaults.AuthenticationScheme);
+    var identity = new ClaimsIdentity(BuildClaims(user, user.LoginName is not null && await crew.IsCrewAdminAsync(user.Id)), CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 
+    if (user.MustChangePassword) return Results.Redirect("/change-password");
     var defaultHome = DefaultHomeFor(user.Role);
     var redirectTo = string.IsNullOrWhiteSpace(returnUrl) || returnUrl == "/" ? defaultHome : returnUrl;
     return Results.Redirect(redirectTo);
 });
+
+// A crew member choosing a new password (after a temporary one was handed over, or any time).
+app.MapPost("/account/change-password", async (HttpContext http, CrewService crew, ProcurementService procurement, IAntiforgery antiforgery) =>
+{
+    try { await antiforgery.ValidateRequestAsync(http); }
+    catch (AntiforgeryValidationException) { return Results.BadRequest("Invalid request."); }
+    if (http.User.Identity?.IsAuthenticated != true || !Guid.TryParse(http.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+        return Results.Redirect("/login");
+
+    var form = await http.Request.ReadFormAsync();
+    var next = form["new"].ToString();
+    if (next != form["confirm"].ToString()) return Results.Redirect("/change-password?error=match");
+    try
+    {
+        if (!await crew.ChangeOwnPasswordAsync(userId, form["current"].ToString(), next)) return Results.Redirect("/change-password?error=current");
+    }
+    catch (InvalidOperationException) { return Results.Redirect("/change-password?error=short"); }
+
+    // Sign in again so the "must change" mark is gone from the session.
+    var user = await procurement.FindUserByIdAsync(userId);
+    if (user is null) return Results.Redirect("/login");
+    var identity = new ClaimsIdentity(BuildClaims(user, await crew.IsCrewAdminAsync(user.Id)), CookieAuthenticationDefaults.AuthenticationScheme);
+    await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+    return Results.Redirect("/");
+}).RequireAuthorization();
 
 app.MapPost("/account/register", async (HttpContext http, ProcurementService procurement, IAntiforgery antiforgery) =>
 {

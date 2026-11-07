@@ -25,6 +25,7 @@ public static class AuditEntityTypes
     public const string Invoice = "Invoice";
     public const string VesselGroup = "VesselGroup";
     public const string VesselPolicy = "VesselPolicy";
+    public const string CrewMember = "CrewMember";
 }
 
 public static class AuditLog

@@ -22,6 +22,11 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
 
     public async Task ApplyAsync(StreamKey stream, SyncDocument document, CancellationToken ct = default)
     {
+        if (document.DocType == SyncDocTypes.CrewCredential)
+        {
+            await ApplyCrewCredentialAsync(stream, document, ct);
+            return;
+        }
         if (MasterData.Find(document.DocType) is { } master)
         {
             await ApplyMasterAsync(stream, document, master, ct);
@@ -181,6 +186,7 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         {
             _present.Clear();
             if (existing is null) return;
+            if (existing is CrewMember leaving) await CrewAccounts.DisableAsync(db, leaving.UserId);
             db.Remove(existing);
             try
             {
@@ -193,10 +199,19 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             return;
         }
 
+        // A crew record carries the login too; the vessel keeps a login change of its own that is newer than the one arriving.
+        var keepOwnLogin = existing is CrewMember held
+            && MasterData.TryRead(type.FindProperty(nameof(CrewMember.CredentialsChangedAt))!, payload, out var incomingAt)
+            && incomingAt is DateTime at && at <= held.CredentialsChangedAt;
+
         EntityEntry entry = existing is null ? db.Add(Activator.CreateInstance(master.Clr)!) : db.Entry(existing);
         foreach (var property in type.GetProperties())
+        {
+            if (keepOwnLogin && CrewMember.CredentialColumns.Contains(property.Name)) continue;
             if (MasterData.TryRead(property, payload, out var value))
                 entry.Property(property.Name).CurrentValue = value;
+        }
+        if (entry.Entity is CrewMember arrived) await CrewAccounts.ApplyAsync(db, arrived);
         entry.Property(ChandleryDbContext.SyncVersion).CurrentValue = (int)document.Version;
 
         try
@@ -233,5 +248,36 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
 
         if (missing.Count > 0)
             throw new DeferredException($"{master.DocType} refers to {string.Join(", ", missing)}, which has not arrived yet.");
+    }
+
+    /// <summary>
+    /// A login change made onboard, arriving at the office. It must come from the vessel the person serves on, and it counts only
+    /// if it is newer than the login the office holds.
+    /// </summary>
+    private async Task ApplyCrewCredentialAsync(StreamKey stream, SyncDocument document, CancellationToken ct)
+    {
+        if (stream.Direction != Direction.Up || node.IsVessel)
+            throw new InvalidOperationException("Login changes are sent by vessels to the office.");
+        if (document.SchemaVersion > CrewCredentialDocument.SchemaVersion)
+            throw new NotSupportedException($"Crew credential schema {document.SchemaVersion} is newer than this installation understands.");
+
+        var incoming = CrewCredentialDocument.FromJson(document.Payload);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        db.Node.SyncEnabled = node.SyncEnabled;
+        db.ApplyingSync = true;
+
+        var crew = await db.CrewMembers.FirstOrDefaultAsync(c => c.Id == incoming.CrewId, ct)
+            ?? throw new DeferredException($"Crew member {incoming.CrewId} has not been created here yet.");
+        var vessel = crew.VesselId is { } vesselId ? await db.Vessels.FirstOrDefaultAsync(v => v.Id == vesselId, ct) : null;
+        if (vessel?.NodeId?.ToString("N") != stream.NodeId)
+            throw new InvalidOperationException($"Node {stream.NodeId} may not change the login of {crew.CrewCode}, who does not serve on its vessel.");
+
+        if (incoming.ChangedAt <= crew.CredentialsChangedAt) return;   // the office already holds a newer change
+        crew.PasswordHash = incoming.PasswordHash;
+        crew.MustChangePassword = incoming.MustChangePassword;
+        crew.LoginEnabled = incoming.LoginEnabled;
+        crew.CredentialsChangedAt = DateTime.SpecifyKind(incoming.ChangedAt, DateTimeKind.Utc);
+        crew.CredentialsChangedBy = incoming.ChangedBy;
+        await db.SaveChangesAsync(ct);
     }
 }

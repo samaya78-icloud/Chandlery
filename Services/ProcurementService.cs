@@ -50,10 +50,33 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return await db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower());
     }
 
-    public async Task<AppUser?> VerifyLoginAsync(string email, string password)
+    public async Task<AppUser?> FindUserByIdAsync(Guid id)
     {
-        var user = await FindUserByEmailAsync(email);
-        if (user is null) return null;
+        await using var db = await factory.CreateDbContextAsync();
+        return await db.Users.FirstOrDefaultAsync(u => u.Id == id);
+    }
+
+    /// <summary>
+    /// Signs in with an email, or (onboard only) a crew code. Disabled accounts and accounts without a password never sign in.
+    /// Crew codes are not accepted at the office: crew are not office staff.
+    /// </summary>
+    public async Task<AppUser?> VerifyLoginAsync(string emailOrCode, string password)
+    {
+        var login = (emailOrCode ?? "").Trim();
+        AppUser? user = null;
+        if (login.Contains('@'))
+            user = await FindUserByEmailAsync(login);
+        else
+        {
+            await using var db = await factory.CreateDbContextAsync();
+            if (db.Node.IsVessel)
+            {
+                var code = login.ToUpperInvariant();
+                user = await db.Users.FirstOrDefaultAsync(u => u.LoginName == code);
+            }
+        }
+
+        if (user is null || !user.IsEnabled || user.PasswordHash == "") return null;
 
         var result = _hasher.VerifyHashedPassword(user, user.PasswordHash, password);
         return result == PasswordVerificationResult.Failed ? null : user;

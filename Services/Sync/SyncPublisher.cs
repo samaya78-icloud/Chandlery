@@ -31,6 +31,18 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         var masterNotes = notes.Where(n => MasterData.Find(n.DocType) is not null).ToList();
         if (masterNotes.Count > 0 && !node.IsVessel) sent += await PublishMasterAsync(db, masterNotes, ct);
 
+        if (node.IsVessel)
+        {
+            foreach (var crewId in notes.Where(n => n.DocType == SyncDocTypes.CrewCredential).Select(n => n.DocId).Distinct())
+            {
+                var crew = await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == crewId, ct);
+                if (crew is null) continue;
+                var message = CrewCredentialDocument.From(crew).ToSyncDocument(clock.Now(), node.SyncNodeId ?? "");
+                await services.GetRequiredService<INodePublisher>().PublishAsync(message, Lane.Transaction);
+                sent++;
+            }
+        }
+
         foreach (var docId in notes.Where(n => n.DocType == SyncDocTypes.Requisition).Select(n => n.DocId).Distinct())
         {
             var requisition = await db.Requisitions.IgnoreQueryFilters().Include(r => r.Lines).FirstOrDefaultAsync(r => r.Id == docId, ct);

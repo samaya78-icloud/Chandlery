@@ -1,0 +1,115 @@
+@page "/crew"
+@attribute [Authorize(Policy = "CrewAdmin")]
+@rendermode InteractiveServer
+@inject CrewService Crew
+@inject ToastService Toasts
+
+<PageTitle>Crew · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Vessel" Title="Crew logins" Subtitle="Reset passwords and switch logins on or off for the crew of your vessel. Changes reach the office when the vessel next connects.">
+</PageHeader>
+
+<div class="card overflow-x-auto">
+    <table class="w-full text-left text-sm">
+        <thead>
+            <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                <th class="px-4 py-3 font-medium">Code</th>
+                <th class="px-4 py-3 font-medium">Name</th>
+                <th class="px-4 py-3 font-medium">Rank</th>
+                <th class="px-4 py-3 font-medium">ID</th>
+                <th class="px-4 py-3 font-medium">Login</th>
+                <th class="px-4 py-3"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var c in _crew)
+            {
+                <tr class="border-b border-line/60">
+                    <td class="px-4 py-3 font-mono font-semibold">@c.CrewCode</td>
+                    <td class="px-4 py-3">@c.FullName @if (c.IsCrewAdmin) { <span class="chip">crew admin</span> }</td>
+                    <td class="px-4 py-3">@c.Rank</td>
+                    <td class="px-4 py-3 font-mono">
+                        @if (_revealed.TryGetValue(c.Id, out var number)) { <span>@number</span> }
+                        else { <span>@c.IdType @CrewCrypto.Mask(c.IdLast4)</span> }
+                    </td>
+                    <td class="px-4 py-3">
+                        @if (c.PasswordHash == "") { <span class="text-muted">no password</span> }
+                        else if (!c.LoginEnabled) { <span class="text-rose-600">disabled</span> }
+                        else { <span class="text-emerald-600">enabled</span> }
+                        <span class="block text-xs text-muted">changed @c.CredentialsChangedAt.ToString("dd MMM HH:mm") by @c.CredentialsChangedBy</span>
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap">
+                        <button @onclick="() => Reveal(c)" class="link">@(_revealed.ContainsKey(c.Id) ? "Hide ID" : "Show ID")</button>
+                        <button @onclick="() => StartReset(c)" class="link ml-3">Reset password</button>
+                        <button @onclick="() => Toggle(c)" class="link ml-3">@(c.LoginEnabled ? "Disable login" : "Enable login")</button>
+                    </td>
+                </tr>
+                @if (_passwordFor == c.Id)
+                {
+                    <tr class="border-b border-line/60 bg-surface-2/50">
+                        <td colspan="6" class="px-4 py-3">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <input @bind="_password" placeholder="Temporary password (min 8)" class="input max-w-xs font-mono" />
+                                <span class="text-xs text-muted">They choose their own at next sign-in.</span>
+                                <button @onclick="() => Reset(c)" class="btn btn-primary btn-sm">Save</button>
+                                <button @onclick="() => _passwordFor = null" class="btn btn-secondary btn-sm">Cancel</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            }
+            @if (_crew.Count == 0)
+            {
+                <tr><td colspan="6" class="px-4 py-8 text-center text-muted">No crew has been received from the office yet.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private List<CrewMember> _crew = new();
+    private Guid? _passwordFor;
+    private string _password = "";
+    private readonly Dictionary<Guid, string> _revealed = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await Load();
+    }
+
+    private async Task Load() => _crew = await Crew.ListOnboardAsync(_actor);
+
+    private void StartReset(CrewMember c) { _passwordFor = c.Id; _password = ""; }
+
+    private async Task Reset(CrewMember c)
+    {
+        try
+        {
+            await Crew.SetPasswordAsync(_companyId, c.Id, _password, mustChange: true, _actor);
+            _passwordFor = null;
+            await Toasts.Success($"Password reset for {c.CrewCode}.");
+            await Load();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { await Toasts.Error(ex.Message); }
+    }
+
+    private async Task Toggle(CrewMember c)
+    {
+        try { await Crew.SetLoginEnabledAsync(_companyId, c.Id, !c.LoginEnabled, _actor); await Load(); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { await Toasts.Error(ex.Message); }
+    }
+
+    private async Task Reveal(CrewMember c)
+    {
+        if (_revealed.Remove(c.Id)) return;
+        try { _revealed[c.Id] = await Crew.RevealIdAsync(_companyId, c.Id, _actor); }
+        catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException) { await Toasts.Error(ex.Message); }
+    }
+}

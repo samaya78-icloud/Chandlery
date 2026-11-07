@@ -42,6 +42,12 @@ public sealed class TwoSites : IAsyncLifetime
     public RequisitionService ShoreRequisitions { get; private set; } = null!;
     public RequisitionService VesselRequisitions { get; private set; } = null!;
 
+    public CrewCrypto Crypto { get; } = new(System.Security.Cryptography.SHA256.HashData("test-crew-key"u8.ToArray()));
+    public CrewService ShoreCrew { get; private set; } = null!;
+    public CrewService VesselCrew { get; private set; } = null!;
+    public ProcurementService ShoreLogin { get; private set; } = null!;
+    public ProcurementService VesselLogin { get; private set; } = null!;
+
     public PostgresSyncStore ShoreSyncStore { get; private set; } = null!;
     public PostgresSyncStore VesselSyncStore { get; private set; } = null!;
     public HubEndpoint Hub { get; private set; } = null!;
@@ -229,6 +235,10 @@ public sealed class TwoSites : IAsyncLifetime
 
         ShoreRequisitions = new RequisitionService(ShoreFactory, new AttachmentService(ShoreFactory, new NoFiles()));
         VesselRequisitions = new RequisitionService(VesselFactory, new AttachmentService(VesselFactory, new NoFiles()));
+        ShoreCrew = new CrewService(ShoreFactory, Crypto);
+        VesselCrew = new CrewService(VesselFactory, Crypto);
+        ShoreLogin = new ProcurementService(ShoreFactory);
+        VesselLogin = new ProcurementService(VesselFactory);
     }
 
     /// <summary>Let everything pending travel: both publishers and a few exchanges, enough for messages and acknowledgements both ways.</summary>

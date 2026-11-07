@@ -16,6 +16,12 @@
         </Authorized>
     </AuthorizeView>
 
+    <AuthorizeView Policy="CrewAdmin">
+        <Authorized>
+            @Group("Vessel", _crewAdminItems)
+        </Authorized>
+    </AuthorizeView>
+
     <AuthorizeView Roles="SupplierAdmin,SupplierUser">
         <Authorized>
             @Group("Workspace", _supplierItems)
@@ -104,6 +110,7 @@
         new("/company/suppliers", "Suppliers", SupplierIcon),
         new("/company/items", "Catalog", ItemIcon),
         new("/company/vessels", "Vessels", VesselIcon),
+        new("/company/crew", "Crew", TeamIcon),
         new("/company/departments", "Departments", DepartmentIcon),
         new("/company/ports", "Ports", PortIcon),
         new("/company/uoms", "Units of Measure", UnitIcon),
@@ -117,6 +124,11 @@
         new("/company/exchange-rates", "Exchange Rates", RatesIcon),
         new("/company/profile", "Company Profile", ProfileIcon),
         new("/company/team", "Team", TeamIcon),
+    };
+
+    private readonly List<NavItem> _crewAdminItems = new()
+    {
+        new("/crew", "Crew logins", TeamIcon),
     };
 
     private readonly List<NavItem> _supplierItems = new()

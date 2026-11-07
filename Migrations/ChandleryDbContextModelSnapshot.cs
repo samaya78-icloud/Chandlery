@@ -43,6 +43,16 @@ namespace Chandlery.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LoginName")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<bool>("MustChangePassword")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid?>("OriginNodeId")
                         .HasColumnType("uuid");
 
@@ -73,12 +83,14 @@ namespace Chandlery.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CompanyId");
-
                     b.HasIndex("Email")
                         .IsUnique();
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("CompanyId", "LoginName")
+                        .IsUnique()
+                        .HasFilter("\"LoginName\" IS NOT NULL");
 
                     b.ToTable("Users");
                 });
@@ -447,6 +459,129 @@ namespace Chandlery.Migrations
                         .IsUnique();
 
                     b.ToTable("CompanySuppliers");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.CrewMember", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CredentialsChangedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CredentialsChangedBy")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("CrewCode")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<DateTime?>("DateOfBirth")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<DateTime?>("IdExpiry")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IdLast4")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
+                    b.Property<string>("IdNumberEnc")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("IdType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsCrewAdmin")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("LoginEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("MustChangePassword")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Nationality")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Phone")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("Rank")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<DateTime?>("SignOffDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("SignOnDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("VesselId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("VesselId");
+
+                    b.HasIndex("CompanyId", "CrewCode")
+                        .IsUnique();
+
+                    b.ToTable("CrewMembers");
                 });
 
             modelBuilder.Entity("Chandlery.Models.Currency", b =>
@@ -2429,6 +2564,20 @@ namespace Chandlery.Migrations
                         .HasForeignKey("SupplierId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.CrewMember", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.Vessel", null)
+                        .WithMany()
+                        .HasForeignKey("VesselId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Chandlery.Models.DeliveryOrder", b =>

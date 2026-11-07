@@ -44,6 +44,15 @@ adding a type is one line). The office owns it all: a vessel installation refuse
 its own company record, its own vessel, the groups above it, and company-wide catalogue data; never other vessels, their policies or office staff.
 Removals travel too, as do records leaving a vessel's scope (a vessel moved to another group forgets the old branch's policies and gets the new one's).
 
+**Crew.** The office keeps crew records (`/company/crew`: code, name, rank, nationality, ID, vessel, crew admin flag). A vessel receives only the crew
+who serve on it, and removes a person when they are signed off or moved. Crew sign in onboard with their **crew code** and a password (the sign-in
+box takes an email or a crew code; crew codes are refused at the office). The office sets a temporary password; the person must choose their own at
+first sign-in. A designated **crew admin** (set at the office) gets `/crew` onboard: reset passwords, enable or disable logins, reveal an ID number
+(audited), for the crew of their own vessel only. A login change made onboard travels to the office; when both sides change the same login, the latest
+change wins. ID numbers are AES-256-GCM encrypted: the database and the sync queue only ever hold ciphertext; every installation needs the same key,
+`Crew:IdKey` (32 random bytes, base64; Development uses a fixed key when none is set). Screens show the last four characters only.
+Reveal audit entries stay on the installation where the reveal happened.
+
 ## Not yet
-Suppliers (they wait for the RFQ stage), RFQs, POs, deliveries, attachments, crew and crew logins, onboard UI restrictions beyond the data rules.
+Suppliers (they wait for the RFQ stage), RFQs, POs, deliveries, attachments, crew CSV import, onboard UI restrictions beyond the data rules (stage 4).
 A vessel that lost its database needs its sync state reset together with it (sync skips versions it has already applied).

@@ -18,7 +18,7 @@
     @if (Error)
     {
         <div class="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
-            Invalid email or password.
+            Invalid sign-in or password.
         </div>
     }
 
@@ -27,8 +27,8 @@
         <input type="hidden" name="returnUrl" value="@ReturnUrl" />
 
         <div>
-            <label class="label">Email</label>
-            <input name="email" type="email" required autocomplete="username" placeholder="you@company.com" class="input" />
+            <label class="label">Email or crew code</label>
+            <input name="email" type="text" required autocomplete="username" placeholder="you@company.com, or your crew code onboard" class="input" />
         </div>
         <div>
             <label class="label">Password</label>

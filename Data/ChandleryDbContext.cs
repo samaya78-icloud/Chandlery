@@ -37,6 +37,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<UserGroupScope> UserGroupScopes => Set<UserGroupScope>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Port> Ports => Set<Port>();
+    public DbSet<CrewMember> CrewMembers => Set<CrewMember>();
     public DbSet<RfqArchive> RfqArchives => Set<RfqArchive>();
     public DbSet<Rfq> Rfqs => Set<Rfq>();
     public DbSet<Quote> Quotes => Set<Quote>();
@@ -103,6 +104,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         modelBuilder.Entity<AppUser>(b =>
         {
             b.HasIndex(u => u.Email).IsUnique();
+            b.Property(u => u.LoginName).HasMaxLength(30);
+            b.HasIndex(u => new { u.CompanyId, u.LoginName }).IsUnique().HasFilter("\"LoginName\" IS NOT NULL");
             b.HasOne<Company>().WithMany().HasForeignKey(u => u.CompanyId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Supplier>().WithMany().HasForeignKey(u => u.SupplierId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -177,6 +180,24 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Vessel>().WithMany().HasForeignKey(m => m.VesselId).OnDelete(DeleteBehavior.Cascade);
             b.HasIndex(m => new { m.CompanyId, m.GroupId, m.VesselId, m.Module }).IsUnique();
             b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<CrewMember>(b =>
+        {
+            b.Property(c => c.CrewCode).HasMaxLength(30);
+            b.Property(c => c.FullName).HasMaxLength(120);
+            b.Property(c => c.Rank).HasMaxLength(60);
+            b.Property(c => c.Nationality).HasMaxLength(60);
+            b.Property(c => c.IdType).HasMaxLength(40);
+            b.Property(c => c.IdLast4).HasMaxLength(8);
+            b.Property(c => c.Phone).HasMaxLength(40);
+            b.Property(c => c.Email).HasMaxLength(200);
+            b.Property(c => c.CredentialsChangedBy).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => new { c.CompanyId, c.CrewCode }).IsUnique();
+            b.HasIndex(c => c.VesselId);
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<Department>(b =>
@@ -484,7 +505,9 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                 // Master data belongs to the office: a vessel installation holds a copy and may not change it.
                 if (Node.SyncEnabled && MasterData.Find(entry.Metadata.ClrType) is { } master)
                 {
-                    if (Node.IsVessel)
+                    // The one thing a vessel may change on a crew record is its login (a crew admin resets a password).
+                    var credentialsOnly = entry.Entity is CrewMember && entry.State == EntityState.Modified && OnlyCredentialsChanged(entry);
+                    if (Node.IsVessel && !credentialsOnly)
                         throw new InvalidOperationException($"{master.DocType} is master data kept by the office; a vessel receives it through sync and cannot change it.");
                     if (entry.State == EntityState.Deleted)
                     {
@@ -514,7 +537,12 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                 if (Node.SyncEnabled && root.Entity is Requisition requisition)
                     SyncDirties.Add(new SyncDirty { DocType = SyncDocTypes.Requisition, DocId = requisition.Id, At = now });
                 else if (Node.SyncEnabled && MasterData.Find(root.Entity.GetType()) is { } changed)
-                    SyncDirties.Add(MasterData.NoteFor(root, changed, now));
+                {
+                    var note = MasterData.NoteFor(root, changed, now);
+                    // Onboard, a crew change is a login change, and it travels up to the office as such.
+                    if (Node.IsVessel) { note.DocType = SyncDocTypes.CrewCredential; note.Snapshot = null; }
+                    SyncDirties.Add(note);
+                }
             }
         }
         finally
@@ -522,6 +550,10 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             ChangeTracker.AutoDetectChangesEnabled = autoDetect;
         }
     }
+
+    private static bool OnlyCredentialsChanged(EntityEntry crew)
+        => crew.Properties.Where(p => p.IsModified).All(p => CrewMember.CredentialColumns.Contains(p.Metadata.Name)
+            || p.Metadata.Name is SyncUpdatedAt or SyncVersion);
 
     /// <summary>
     /// A requisition line is its own table but part of the requisition document: changing one changes the requisition's version.

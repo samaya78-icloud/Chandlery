@@ -1,0 +1,226 @@
+@page "/company/crew"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@inject CrewService CrewSvc
+@inject ProcurementService Procurement
+@inject ToastService Toasts
+
+<PageTitle>Crew · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Master data" Title="Crew" Subtitle="@($"{_rows.Count:N0} people. Each vessel receives only its own crew, and they sign in there with their crew code.")">
+    <Actions>
+        <button @onclick="StartAdd" class="btn btn-primary">+ Add crew member</button>
+    </Actions>
+</PageHeader>
+
+<div class="mb-4 flex flex-wrap items-center gap-3">
+    <input @bind="_search" @bind:event="oninput" @bind:after="Load" placeholder="Search code, name or rank…" class="input max-w-xs" />
+    <div class="w-64">
+        <SelectBox TValue="Guid" @bind-Value="_vesselFilter" @bind-Value:after="Load" Options="_vesselOptions" AllowClear="true" Placeholder="All vessels" />
+    </div>
+</div>
+
+@if (_form is not null)
+{
+    <div class="mb-6 card p-5">
+        <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-muted">@(_form.Id is null ? "New crew member" : "Edit crew member")</h2>
+        <div class="grid gap-4 md:grid-cols-3">
+            <div><label class="label">Crew code</label><input @bind="_form.CrewCode" class="input uppercase" placeholder="e.g. C1024" /></div>
+            <div><label class="label">Full name</label><input @bind="_form.FullName" class="input" /></div>
+            <div><label class="label">Rank</label><input @bind="_form.Rank" class="input" placeholder="e.g. Chief Officer" /></div>
+            <div><label class="label">Nationality</label><input @bind="_form.Nationality" class="input" /></div>
+            <div><label class="label">Date of birth</label><input type="date" @bind="_form.DateOfBirth" class="input" /></div>
+            <div><label class="label">Phone</label><input @bind="_form.Phone" class="input" /></div>
+            <div><label class="label">ID type</label><input @bind="_form.IdType" class="input" placeholder="Passport, NRIC, Seaman's book…" /></div>
+            <div>
+                <label class="label">ID number</label>
+                <input @bind="_form.IdNumber" class="input font-mono" placeholder="@(_editing is { IdLast4: not "" } e ? "Stored encrypted " + CrewCrypto.Mask(e.IdLast4) + " (leave blank to keep)" : "Stored encrypted")" />
+            </div>
+            <div><label class="label">ID expiry</label><input type="date" @bind="_form.IdExpiry" class="input" /></div>
+            <div><label class="label">Email (optional)</label><input @bind="_form.Email" type="email" class="input" /></div>
+            <div>
+                <label class="label">Serving on</label>
+                <SelectBox TValue="Guid" @bind-Value="_formVessel" Options="_vesselOptions" AllowClear="true" Placeholder="Not on a vessel" />
+            </div>
+            <div><label class="label">Sign-on date</label><input type="date" @bind="_form.SignOnDate" class="input" /></div>
+        </div>
+        <div class="mt-4 flex flex-wrap gap-6">
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" @bind="_form.IsActive" /> Active</label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" @bind="_form.IsCrewAdmin" /> Crew admin on their vessel (can reset crew passwords onboard)</label>
+        </div>
+        @if (_error is not null)
+        {
+            <div class="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+        <div class="mt-4 flex gap-2">
+            <button @onclick="Save" class="btn btn-primary">Save</button>
+            <button @onclick="Cancel" class="btn btn-secondary">Cancel</button>
+        </div>
+    </div>
+}
+
+<div class="card overflow-x-auto">
+    <table class="w-full text-left text-sm">
+        <thead>
+            <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                <th class="px-4 py-3 font-medium">Code</th>
+                <th class="px-4 py-3 font-medium">Name</th>
+                <th class="px-4 py-3 font-medium">Rank</th>
+                <th class="px-4 py-3 font-medium">Vessel</th>
+                <th class="px-4 py-3 font-medium">ID</th>
+                <th class="px-4 py-3 font-medium">Login</th>
+                <th class="px-4 py-3"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in _rows)
+            {
+                var c = row.Crew;
+                <tr class="border-b border-line/60">
+                    <td class="px-4 py-3 font-mono font-semibold">@c.CrewCode</td>
+                    <td class="px-4 py-3">@c.FullName @if (c.IsCrewAdmin) { <span class="chip">crew admin</span> } @if (!c.IsActive) { <span class="chip">inactive</span> }</td>
+                    <td class="px-4 py-3">@c.Rank</td>
+                    <td class="px-4 py-3">@(row.VesselName ?? "–")</td>
+                    <td class="px-4 py-3 font-mono">
+                        @if (_revealed.TryGetValue(c.Id, out var number)) { <span>@number</span> }
+                        else { <span>@(c.IdType) @CrewCrypto.Mask(c.IdLast4)</span> }
+                    </td>
+                    <td class="px-4 py-3">
+                        @if (c.PasswordHash == "") { <span class="text-muted">no password</span> }
+                        else if (!c.LoginEnabled) { <span class="text-rose-600">disabled</span> }
+                        else { <span class="text-emerald-600">enabled</span> }
+                        <span class="block text-xs text-muted">changed @c.CredentialsChangedAt.ToString("dd MMM HH:mm") by @c.CredentialsChangedBy</span>
+                    </td>
+                    <td class="px-4 py-3 text-right whitespace-nowrap">
+                        <button @onclick="() => Edit(c)" class="link">Edit</button>
+                        <button @onclick="() => Reveal(c)" class="link ml-3">@(_revealed.ContainsKey(c.Id) ? "Hide ID" : "Show ID")</button>
+                        <button @onclick="() => StartPassword(c)" class="link ml-3">Set password</button>
+                        <button @onclick="() => ToggleLogin(c)" class="link ml-3">@(c.LoginEnabled ? "Disable login" : "Enable login")</button>
+                        @if (c.VesselId is not null) { <button @onclick="() => SignOff(c)" class="link ml-3">Sign off</button> }
+                    </td>
+                </tr>
+                @if (_passwordFor == c.Id)
+                {
+                    <tr class="border-b border-line/60 bg-surface-2/50">
+                        <td colspan="7" class="px-4 py-3">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <input @bind="_password" placeholder="Temporary password (min 8)" class="input max-w-xs font-mono" />
+                                <span class="text-xs text-muted">They must choose their own at first sign-in. Hand it over in person; nothing is emailed.</span>
+                                <button @onclick="() => SetPassword(c)" class="btn btn-primary btn-sm">Save password</button>
+                                <button @onclick="() => _passwordFor = null" class="btn btn-secondary btn-sm">Cancel</button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            }
+            @if (_rows.Count == 0)
+            {
+                <tr><td colspan="7" class="px-4 py-8 text-center text-muted">No crew yet.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private List<CrewRow> _rows = new();
+    private List<SelectOption<Guid>> _vesselOptions = new();
+    private string _search = "";
+    private Guid _vesselFilter;
+    private Guid _formVessel;
+    private CrewForm? _form;
+    private CrewMember? _editing;
+    private Guid? _passwordFor;
+    private string _password = "";
+    private string? _error;
+    private readonly Dictionary<Guid, string> _revealed = new();
+
+    private sealed class CrewForm
+    {
+        public Guid? Id;
+        public string CrewCode = "", FullName = "", Rank = "", Nationality = "", IdType = "", IdNumber = "", Phone = "", Email = "";
+        public DateTime? DateOfBirth, IdExpiry, SignOnDate;
+        public bool IsActive = true, IsCrewAdmin;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vesselOptions = SelectOptions.From(await Procurement.GetVesselsAsync(_companyId), v => v.Id, v => v.Name);
+        await Load();
+    }
+
+    private async Task Load()
+        => _rows = await CrewSvc.ListAsync(_companyId, _search, _vesselFilter == Guid.Empty ? null : _vesselFilter);
+
+    private void StartAdd() { _form = new CrewForm(); _editing = null; _formVessel = Guid.Empty; _error = null; }
+
+    private void Edit(CrewMember c)
+    {
+        _editing = c;
+        _form = new CrewForm
+        {
+            Id = c.Id, CrewCode = c.CrewCode, FullName = c.FullName, Rank = c.Rank, Nationality = c.Nationality, IdType = c.IdType,
+            Phone = c.Phone, Email = c.Email, DateOfBirth = c.DateOfBirth, IdExpiry = c.IdExpiry, SignOnDate = c.SignOnDate,
+            IsActive = c.IsActive, IsCrewAdmin = c.IsCrewAdmin,
+        };
+        _formVessel = c.VesselId ?? Guid.Empty;
+        _error = null;
+    }
+
+    private void Cancel() { _form = null; _editing = null; }
+
+    private async Task Save()
+    {
+        if (_form is null) return;
+        try
+        {
+            await CrewSvc.SaveAsync(_companyId, new CrewInput(_form.Id, _form.CrewCode, _form.FullName, _form.Rank, _form.Nationality, _form.DateOfBirth,
+                _form.IdType, _form.IdNumber == "" && _form.Id is not null ? null : _form.IdNumber, _form.IdExpiry, _form.Phone, _form.Email,
+                _formVessel == Guid.Empty ? null : _formVessel, _form.SignOnDate, _form.IsActive, _form.IsCrewAdmin), _actor);
+            _form = null;
+            await Toasts.Success("Saved. The vessel they serve on will receive the change.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private void StartPassword(CrewMember c) { _passwordFor = c.Id; _password = ""; }
+
+    private async Task SetPassword(CrewMember c)
+    {
+        try
+        {
+            await CrewSvc.SetPasswordAsync(_companyId, c.Id, _password, mustChange: true, _actor);
+            _passwordFor = null;
+            await Toasts.Success($"Password set for {c.CrewCode}.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+    }
+
+    private async Task ToggleLogin(CrewMember c)
+    {
+        await CrewSvc.SetLoginEnabledAsync(_companyId, c.Id, !c.LoginEnabled, _actor);
+        await Load();
+    }
+
+    private async Task SignOff(CrewMember c)
+    {
+        await CrewSvc.SignOffAsync(_companyId, c.Id, _actor);
+        await Toasts.Success($"{c.FullName} signed off. The vessel will drop the record and the login stops working there.");
+        await Load();
+    }
+
+    private async Task Reveal(CrewMember c)
+    {
+        if (_revealed.Remove(c.Id)) return;
+        try { _revealed[c.Id] = await CrewSvc.RevealIdAsync(_companyId, c.Id, _actor); }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+    }
+}

@@ -28,7 +28,7 @@ public static class MasterData
 
     public static readonly IReadOnlyList<MasterType> Types =
     [
-        Of<Company>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(),
+        Of<Company>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(), Of<CrewMember>(),
         Of<Department>(), Of<Category>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
         Of<VesselPolicy>(), Of<VesselModuleSwitch>(),
     ];
@@ -196,6 +196,7 @@ public static class MasterData
             case nameof(ExchangeRate): return company is null || company == scope.CompanyId;
             case nameof(VesselGroup): return ReadGuid(d, "Id") is { } g && scope.Groups.Contains(g);
             case nameof(Vessel): return ReadGuid(d, "Id") == scope.VesselId;
+            case nameof(CrewMember): return company == scope.CompanyId && ReadGuid(d, "VesselId") == scope.VesselId;
             case nameof(VesselPolicy) or nameof(VesselModuleSwitch):
                 if (company != scope.CompanyId) return false;
                 return ReadGuid(d, "VesselId") is { } vessel

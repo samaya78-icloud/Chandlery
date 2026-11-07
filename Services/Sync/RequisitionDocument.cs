@@ -7,6 +7,9 @@ namespace Chandlery.Services.Sync;
 public static class SyncDocTypes
 {
     public const string Requisition = "Requisition";
+
+    /// <summary>A crew member's login as changed onboard, on its way to the office.</summary>
+    public const string CrewCredential = "CrewCredential";
 }
 
 /// <summary>
