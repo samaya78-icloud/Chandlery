@@ -28,7 +28,7 @@
                 <li class="flex flex-wrap items-center gap-3 py-2">
                     <a href="/vessel/orders/@r.Id" class="link font-mono font-semibold">@r.PoNumber</a>
                     <span>@r.SupplierName</span>
-                    <StatusChip Value="@r.Status" Label="@Chandlery.Components.Pages.Onboard.Orders.StatusLabel(r.Status)" />
+                    <StatusChip Value="@r.Status" Label="@Chandlery.Components.Pages.Onboard.Orders.StatusLabel(r.Status, r.Handover)" />
                     @if (r.Status == PoStatus.Approved) { <StatusChip Value="@r.Delivery" /> }
                     <span class="ml-auto text-muted">@Money.Format(r.Total, r.Currency)</span>
                 </li>

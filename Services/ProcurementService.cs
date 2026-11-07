@@ -1546,7 +1546,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         return cleared;
     }
 
-    public async Task<List<PurchaseOrder>> RaisePurchaseOrdersAsync(Guid companyId, Guid rfqId, Actor? actor = null)
+    public async Task<List<PurchaseOrder>> RaisePurchaseOrdersAsync(Guid companyId, Guid rfqId, Actor? actor = null, string? emergencyJustification = null)
     {
         actor ??= Actor.System;
         await using var db = await factory.CreateDbContextAsync();
@@ -1619,12 +1619,13 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             var supplierName = supplierNames.GetValueOrDefault(po.SupplierId) ?? "supplier";
             AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor,
                 $"CREATED PO {po.PoNumber} for {supplierName} from {rfq.RfqNumber}: {po.Lines.Count} lines, total {Money.Format(po.Total, po.Currency)}");
-            await ApprovalEngine.RouteAsync(db, po, actor);
+            await ApprovalRouting.RouteAsync(db, po, actor, emergencyJustification);
             AuditLog.Add(db, companyId, AuditEntityTypes.Rfq, rfq.Id, actor,
                 $"RAISED {po.PoNumber} for {supplierName} ({po.Lines.Count} lines)");
         }
 
-        if (requisition is not null && rfq.Status == RfqStatus.Awarded)
+        // Onboard the requisition may already be with the office, which owns it, so it is left to the office to mark it ordered.
+        if (requisition is not null && !db.Node.IsVessel && rfq.Status == RfqStatus.Awarded)
         {
             var coveredLineIds = await db.Rfqs
                 .Where(r => r.RequisitionId == requisition.Id && r.Status == RfqStatus.Awarded)
@@ -1731,11 +1732,46 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         }
         else
         {
-            await ApprovalEngine.RouteAsync(db, po, actor);
+            await ApprovalRouting.RouteAsync(db, po, actor, request.EmergencyJustification);
         }
 
         await db.SaveChangesAsync();
         return po;
+    }
+
+    /// <summary>Orders raised on vessels (and handed over to the office), emergency purchases and those still to review first.</summary>
+    public async Task<List<OnboardOrderRow>> GetOnboardOrdersAsync(Guid companyId, bool unreviewedOnly = false)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var orders = await db.PurchaseOrders.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && (p.OwnerStage == SyncStages.Vessel || p.HandoverRequested || p.ForReview))
+            .ToListAsync();
+        if (unreviewedOnly) orders = orders.Where(p => p.ForReview && p.ReviewedAt == null).ToList();
+        var vessels = await db.Vessels.AsNoTracking().ToDictionaryAsync(v => v.Id, v => v.Name);
+        var suppliers = await db.Suppliers.AsNoTracking().ToDictionaryAsync(s => s.Id, s => s.Name);
+        return orders
+            .OrderByDescending(p => p.IsEmergency && p.ReviewedAt == null)
+            .ThenByDescending(p => p.ForReview && p.ReviewedAt == null)
+            .ThenByDescending(p => p.CreatedDate)
+            .Select(p => new OnboardOrderRow(p, p.VesselId is { } v ? vessels.GetValueOrDefault(v) ?? "" : "", suppliers.GetValueOrDefault(p.SupplierId) ?? ""))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Marks an onboard-approved order as looked at. Kept at the office: it changes only columns that never travel, so the vessel's
+    /// order does not get a new version and nothing is sent back.
+    /// </summary>
+    public async Task MarkOnboardReviewedAsync(Guid companyId, Guid poId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var po = await db.PurchaseOrders.FirstOrDefaultAsync(p => p.Id == poId && p.CompanyId == companyId)
+            ?? throw new InvalidOperationException("Purchase order not found.");
+        po.ReviewedAt = DateTime.UtcNow;
+        po.ReviewedByName = actor.Name;
+        AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, "REVIEWED the order approved onboard");
+        await db.SaveChangesAsync();
     }
 
     public async Task<List<PurchaseOrder>> GetPurchaseOrdersAsync(Guid companyId)

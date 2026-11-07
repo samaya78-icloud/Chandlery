@@ -38,6 +38,9 @@ public class CrewMember
     /// <summary>May reset passwords and enable or disable logins of the crew on their own vessel.</summary>
     public bool IsCrewAdmin { get; set; }
 
+    /// <summary>The Master: approves purchase orders onboard within the limit the office sets for the vessel.</summary>
+    public bool IsMaster { get; set; }
+
     /// <summary>The local sign-in account (<see cref="AppUser"/>) onboard. The id is fixed here so both sides agree.</summary>
     public Guid UserId { get; set; }
 

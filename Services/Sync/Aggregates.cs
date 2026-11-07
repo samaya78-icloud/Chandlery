@@ -39,7 +39,7 @@ public static class Aggregates
     /// <summary>Columns each side keeps for itself: the delivery status is recomputed from the deliveries held, and the invoice lock exists only at the office.</summary>
     private static readonly Dictionary<Type, string[]> LocalOnly = new()
     {
-        [typeof(PurchaseOrder)] = [nameof(PurchaseOrder.DeliveryStatus)],
+        [typeof(PurchaseOrder)] = [nameof(PurchaseOrder.DeliveryStatus), nameof(PurchaseOrder.ReviewedAt), nameof(PurchaseOrder.ReviewedByName)],
         [typeof(DeliveryOrder)] = [nameof(DeliveryOrder.InvoiceId)],
     };
 

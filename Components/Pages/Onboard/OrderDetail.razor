@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject OrdersService OrdersSvc
 @inject DeliveryService DeliverySvc
+@inject ApprovalService ApprovalSvc
 @inject ToastService Toasts
 
 <PageTitle>@(_view?.Order.PoNumber ?? "Order") · Chandlery</PageTitle>
@@ -23,10 +24,38 @@ else
 
     <div class="mb-6 card p-5">
         <div class="flex flex-wrap items-center gap-3">
-            <StatusChip Value="@po.Status" Label="@Orders.StatusLabel(po.Status)" />
+            <StatusChip Value="@po.Status" Label="@Orders.StatusLabel(po.Status, po.HandoverRequested)" />
             @if (po.Status == PoStatus.Approved) { <StatusChip Value="@po.DeliveryStatus" /> }
             @if (po.IsSpot) { <span class="chip">direct order</span> }
         </div>
+
+        @if (po.Status == PoStatus.PendingApproval)
+        {
+            <div class="mt-4 rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 text-sm dark:bg-amber-500/10">
+                @if (_view.CanDecide)
+                {
+                    <p class="font-medium">This order is waiting for your approval@(po.IsEmergency ? " (emergency purchase above the usual limit)" : "").</p>
+                    @if (po.IsEmergency) { <p class="mt-1 text-muted">Justification: @po.EmergencyJustification</p> }
+                    <input @bind="_decisionNote" placeholder="Reason (needed to reject)" class="input mt-3 max-w-md" />
+                    <div class="mt-3 flex gap-2">
+                        <button @onclick="() => Decide(true)" disabled="@_busy" class="btn btn-primary btn-sm">Approve</button>
+                        <button @onclick="() => Decide(false)" disabled="@_busy" class="btn btn-secondary btn-sm">Reject</button>
+                    </div>
+                }
+                else if (po.HandoverRequested)
+                {
+                    <p>Awaiting office approval. It is above what the Master may approve onboard, so the office decides.</p>
+                }
+                else
+                {
+                    <p>Awaiting the Master's approval.</p>
+                }
+            </div>
+        }
+        else if (po.ApprovedOnboardByName != "")
+        {
+            <p class="mt-4 text-sm text-muted">Approved onboard by @po.ApprovedOnboardByName@(po.ApprovedOnboardAt is { } at ? $" on {at:dd MMM yyyy HH:mm}" : "").@(po.IsEmergency ? " Emergency purchase: the office will review it." : "")</p>
+        }
 
         @* Where it stands, in plain words *@
         <ol class="mt-5 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
@@ -182,9 +211,25 @@ else
         await Load();
     }
 
+    private string _decisionNote = "";
+
+    private async Task Decide(bool approve)
+    {
+        _busy = true;
+        try
+        {
+            await ApprovalSvc.DecideAsync(_companyId, OrderId, _actor, approve, _decisionNote);
+            _decisionNote = "";
+            await Toasts.Success(approve ? "Approved. The office is told when the vessel next connects." : "Rejected.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+        finally { _busy = false; }
+    }
+
     private async Task Load()
     {
-        _view = await OrdersSvc.GetAsync(_companyId, OrderId);
+        _view = await OrdersSvc.GetAsync(_companyId, OrderId, _actor.UserId);
         _loaded = true;
     }
 

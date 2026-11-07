@@ -300,6 +300,13 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
         else if (CurrentLevel(approvals) is null)
         {
             po.Status = PoStatus.Approved;
+            if (db.Node.IsVessel)
+            {
+                // Approved by the Master onboard: the office is told who, and sees it for review.
+                po.ApprovedOnboardByName = actor.Name;
+                po.ApprovedOnboardAt = DateTime.UtcNow;
+                po.ForReview = true;
+            }
             AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, $"APPROVED ({levelNames.Name(current)}){commentText}");
             AuditLog.Add(db, companyId, AuditEntityTypes.PurchaseOrder, po.Id, actor, "APPROVED purchase order fully approved and released to the supplier");
         }

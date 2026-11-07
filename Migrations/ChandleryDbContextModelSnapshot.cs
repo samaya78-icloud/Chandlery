@@ -519,6 +519,9 @@ namespace Chandlery.Migrations
                     b.Property<bool>("IsCrewAdmin")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsMaster")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("LoginEnabled")
                         .HasColumnType("boolean");
 
@@ -1352,6 +1355,13 @@ namespace Chandlery.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<DateTime?>("ApprovedOnboardAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ApprovedOnboardByName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<Guid>("CompanyId")
                         .HasColumnType("uuid");
 
@@ -1372,7 +1382,20 @@ namespace Chandlery.Migrations
                         .HasPrecision(5, 2)
                         .HasColumnType("numeric(5,2)");
 
+                    b.Property<string>("EmergencyJustification")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("ForReview")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("HandoverRequested")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsDummy")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsEmergency")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("IsSpot")
@@ -1401,6 +1424,13 @@ namespace Chandlery.Migrations
 
                     b.Property<Guid?>("RequisitionId")
                         .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReviewedByName")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<Guid?>("RfqId")
                         .HasColumnType("uuid");

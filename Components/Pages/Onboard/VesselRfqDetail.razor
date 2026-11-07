@@ -104,6 +104,16 @@ else
             }
         </div>
 
+        @if (rfq.Lines.Any(l => l.WinningSupplierId.HasValue))
+        {
+            <div class="mb-6 card p-5">
+                <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Raise the purchase order</h2>
+                <p class="mb-3 text-xs text-muted">One order per awarded supplier, at the quoted prices. The Master approves it within the limit the office set; above that it goes to the office.</p>
+                <input @bind="_emergency" placeholder="Emergency justification (only if the Master must approve above his limit)" class="input max-w-xl" />
+                <button @onclick="RaiseOrders" disabled="@_busy" class="btn btn-primary mt-3">Raise purchase order(s)</button>
+            </div>
+        }
+
         @if (_quotable.Count > 0)
         {
             <div class="mb-6 card p-5">
@@ -209,6 +219,21 @@ else
             }
             var count = await Procurement.AwardLinesAsync(_companyId, RfqId, pick, _actor, "lowest price per line");
             await Toasts.Success($"{count} line(s) awarded.");
+            await Load();
+        }
+        catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }
+        finally { _busy = false; }
+    }
+
+    private string _emergency = "";
+
+    private async Task RaiseOrders()
+    {
+        _busy = true;
+        try
+        {
+            var orders = await Procurement.RaisePurchaseOrdersAsync(_companyId, RfqId, _actor, string.IsNullOrWhiteSpace(_emergency) ? null : _emergency);
+            await Toasts.Success(orders.Count == 0 ? "Nothing new to order." : $"{orders.Count} purchase order(s) raised: {string.Join(", ", orders.Select(o => o.PoNumber))}.");
             await Load();
         }
         catch (InvalidOperationException ex) { await Toasts.Error(ex.Message); }

@@ -47,6 +47,7 @@
         <div class="mt-4 flex flex-wrap gap-6">
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" @bind="_form.IsActive" /> Active</label>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" @bind="_form.IsCrewAdmin" /> Crew admin on their vessel (can reset crew passwords onboard)</label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" @bind="_form.IsMaster" /> Master (approves purchase orders onboard, within the vessel's limit)</label>
         </div>
         @if (_error is not null)
         {
@@ -78,7 +79,7 @@
                 var c = row.Crew;
                 <tr class="border-b border-line/60">
                     <td class="px-4 py-3 font-mono font-semibold">@c.CrewCode</td>
-                    <td class="px-4 py-3">@c.FullName @if (c.IsCrewAdmin) { <span class="chip">crew admin</span> } @if (!c.IsActive) { <span class="chip">inactive</span> }</td>
+                    <td class="px-4 py-3">@c.FullName @if (c.IsCrewAdmin) { <span class="chip">crew admin</span> } @if (c.IsMaster) { <span class="chip" data-tone="info">master</span> } @if (!c.IsActive) { <span class="chip">inactive</span> }</td>
                     <td class="px-4 py-3">@c.Rank</td>
                     <td class="px-4 py-3">@(row.VesselName ?? "–")</td>
                     <td class="px-4 py-3 font-mono">
@@ -143,7 +144,7 @@
         public Guid? Id;
         public string CrewCode = "", FullName = "", Rank = "", Nationality = "", IdType = "", IdNumber = "", Phone = "", Email = "";
         public DateTime? DateOfBirth, IdExpiry, SignOnDate;
-        public bool IsActive = true, IsCrewAdmin;
+        public bool IsActive = true, IsCrewAdmin, IsMaster;
     }
 
     protected override async Task OnInitializedAsync()
@@ -167,7 +168,7 @@
         {
             Id = c.Id, CrewCode = c.CrewCode, FullName = c.FullName, Rank = c.Rank, Nationality = c.Nationality, IdType = c.IdType,
             Phone = c.Phone, Email = c.Email, DateOfBirth = c.DateOfBirth, IdExpiry = c.IdExpiry, SignOnDate = c.SignOnDate,
-            IsActive = c.IsActive, IsCrewAdmin = c.IsCrewAdmin,
+            IsActive = c.IsActive, IsCrewAdmin = c.IsCrewAdmin, IsMaster = c.IsMaster,
         };
         _formVessel = c.VesselId ?? Guid.Empty;
         _error = null;
@@ -182,7 +183,7 @@
         {
             await CrewSvc.SaveAsync(_companyId, new CrewInput(_form.Id, _form.CrewCode, _form.FullName, _form.Rank, _form.Nationality, _form.DateOfBirth,
                 _form.IdType, _form.IdNumber == "" && _form.Id is not null ? null : _form.IdNumber, _form.IdExpiry, _form.Phone, _form.Email,
-                _formVessel == Guid.Empty ? null : _formVessel, _form.SignOnDate, _form.IsActive, _form.IsCrewAdmin), _actor);
+                _formVessel == Guid.Empty ? null : _formVessel, _form.SignOnDate, _form.IsActive, _form.IsCrewAdmin, _form.IsMaster), _actor);
             _form = null;
             await Toasts.Success("Saved. The vessel they serve on will receive the change.");
             await Load();

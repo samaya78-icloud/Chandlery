@@ -353,6 +353,19 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             throw new InvalidOperationException($"{aggregate.DocType} could not be stored: {ex.GetBaseException().Message}", ex);
         }
 
+        // An order the Master could not approve onboard: the office takes it over, approves it through its own matrix, and tells the vessel.
+        if (atHub && entry.Entity is PurchaseOrder handed && handed.HandoverRequested && handed.OwnerStage == SyncStages.Vessel && handed.Status == PoStatus.PendingApproval)
+        {
+            var now = DateTime.UtcNow;
+            handed.OwnerStage = SyncStages.Office;
+            entry.Property(ChandleryDbContext.SyncVersion).CurrentValue = (int)document.Version + 1;
+            entry.Property(ChandleryDbContext.SyncUpdatedAt).CurrentValue = now;
+            AuditLog.Add(db, handed.CompanyId, AuditEntityTypes.PurchaseOrder, handed.Id, Actor.System, $"RECEIVED {handed.PoNumber} from the vessel for approval (above the Master's authority)");
+            await ApprovalEngine.RouteAsync(db, handed, Actor.System);
+            db.SyncDirties.Add(new SyncDirty { DocType = aggregate.DocType, DocId = handed.Id, At = now });
+            await db.SaveChangesAsync(ct);
+        }
+
         // A quote reached the vessel for an RFQ it raised: the vessel notes that quotes are in, as a normal change that goes up too.
         if (!atHub && entry.Entity is Quote arrived && arrived.OwnerStage == SyncStages.Office)
         {

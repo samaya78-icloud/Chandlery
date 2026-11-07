@@ -64,6 +64,9 @@ public class NewSpotPo
 
     /// <summary>A spot PO with no value, only so deliveries and invoices have something to attach to. Skips approval.</summary>
     public bool IsDummy { get; set; }
+
+    /// <summary>Onboard only: the Master may approve above his limit in an emergency, with a justification. The office reviews it afterwards.</summary>
+    public string EmergencyJustification { get; set; } = "";
     public decimal DiscountPct { get; set; }
     public decimal AdditionalCharges { get; set; }
     public string AdditionalChargeDescription { get; set; } = "";
@@ -113,3 +116,6 @@ public record SupplierRfqRow(Rfq Rfq, SupplierRfqStatus Status, int QuotedLines,
 }
 
 public record SupplierRfqPage(List<SupplierRfqRow> Rows, int Total);
+
+/// <summary>One row of the office's list of orders raised on vessels.</summary>
+public record OnboardOrderRow(PurchaseOrder Order, string VesselName, string SupplierName);

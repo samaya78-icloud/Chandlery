@@ -1,5 +1,6 @@
 @page "/company/purchase-orders/new-spot"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject FxService FxSvc
@@ -8,7 +9,7 @@
 <PageTitle>New Spot PO · Chandlery</PageTitle>
 
 <PageHeader Eyebrow="Procurement" Title="New Spot PO"
-            Subtitle="Order straight from a supplier without an RFQ. The order goes through the approval matrix by its total, like any other PO." />
+            Subtitle="@(NodeContext.Current.IsVessel ? "Order straight from a supplier. The Master approves it within the limit the office has set; above that it goes to the office." : "Order straight from a supplier without an RFQ. The order goes through the approval matrix by its total, like any other PO.")" />
 
 @if (_companyId != Guid.Empty)
 {
@@ -58,6 +59,15 @@
         </label>
     </div>
 
+    @if (NodeContext.Current.IsVessel)
+    {
+        <div class="card p-6">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Emergency</h2>
+            <p class="mb-3 text-xs text-muted">Only if this order is above the Master's limit and cannot wait for the office. Write why: the Master may then approve it, and the office reviews it afterwards.</p>
+            <input @bind="_po.EmergencyJustification" placeholder="Leave empty unless this is an emergency" class="input" />
+        </div>
+    }
+
     <ItemLinePicker CompanyId="_companyId" Lines="_po.Lines" ShowPrice="@(!_po.IsDummy)" OnChanged="StateHasChanged"
                     DepartmentId="@(_departmentId == Guid.Empty ? null : _departmentId)" RequireDepartment="@(_departments.Count > 0)"
                     VesselId="@(_vesselId == Guid.Empty ? null : _vesselId)" PolicyFor="PolicyAction.DirectPurchase" />
@@ -104,7 +114,7 @@
         <button @onclick="Submit" disabled="@_busy" class="btn btn-primary">
             @(_busy ? "Creating…" : $"Create spot PO ({_po.Lines.Count} lines)")
         </button>
-        <a href="/company/purchase-orders" class="btn btn-secondary">Cancel</a>
+        <a href="@(NodeContext.Current.IsVessel ? "/vessel/orders" : "/company/purchase-orders")" class="btn btn-secondary">Cancel</a>
     </div>
 </div>
 }
@@ -145,6 +155,7 @@
         _portOptions = SelectOptions.From(_ports, p => p.Id, p => $"{p.Name}, {p.Country}");
         _currencyOptions = await FxSvc.GetCompanyCurrencyOptionsAsync(companyId);
 
+        if (_vessels.Count == 1) _vesselId = _vessels[0].Id;   // a vessel installation knows only its own ship
         _companyId = companyId; // the form is only rendered once everything above is loaded
     }
 
@@ -183,6 +194,7 @@
             OrderPortId = _portId == Guid.Empty ? null : _portId,
             Remarks = _po.Remarks,
             IsDummy = _po.IsDummy,
+            EmergencyJustification = _po.EmergencyJustification,
             DiscountPct = _po.DiscountPct,
             AdditionalCharges = _po.AdditionalCharges,
             AdditionalChargeDescription = _po.AdditionalChargeDescription,
@@ -193,7 +205,7 @@
         try
         {
             var po = await Procurement.CreateSpotPoAsync(_companyId, request, _actor);
-            Navigation.NavigateTo($"/company/purchase-orders/{po.Id}");
+            Navigation.NavigateTo(NodeContext.Current.IsVessel ? $"/vessel/orders/{po.Id}" : $"/company/purchase-orders/{po.Id}");
         }
         catch (InvalidOperationException ex)
         {

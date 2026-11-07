@@ -1,0 +1,86 @@
+@page "/company/onboard-orders"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProcurementService Procurement
+@inject ToastService Toasts
+
+<PageTitle>Onboard orders · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Procurement" Title="Onboard orders" Subtitle="@($"{_rows.Count:N0} orders raised on vessels. Approved onboard orders are for your information; mark each one reviewed once you have looked at it. Emergency purchases are listed first.")" />
+
+<div class="mb-4 flex gap-4 text-sm">
+    <label class="flex items-center gap-2"><input type="checkbox" @bind="_unreviewedOnly" @bind:after="Load" /> Only orders still to review</label>
+</div>
+
+<div class="card overflow-x-auto">
+    <table class="w-full text-left text-sm">
+        <thead>
+            <tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                <th class="px-4 py-3 font-medium">Order</th>
+                <th class="px-4 py-3 font-medium">Vessel</th>
+                <th class="px-4 py-3 font-medium">Supplier</th>
+                <th class="px-4 py-3 font-medium">Status</th>
+                <th class="px-4 py-3 font-medium">Approved onboard by</th>
+                <th class="px-4 py-3 text-right font-medium">Total</th>
+                <th class="px-4 py-3 font-medium">Review</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var r in _rows)
+            {
+                var po = r.Order;
+                <tr class="border-b border-line/60 @(po.IsEmergency && po.ReviewedAt is null ? "bg-rose-500/5" : "")">
+                    <td class="px-4 py-3 font-mono font-semibold"><a href="/company/purchase-orders/@po.Id" class="link">@po.PoNumber</a></td>
+                    <td class="px-4 py-3">@r.VesselName</td>
+                    <td class="px-4 py-3">@r.SupplierName</td>
+                    <td class="px-4 py-3">
+                        <StatusChip Value="@po.Status" />
+                        @if (po.IsEmergency) { <span class="chip" data-tone="danger" title="@po.EmergencyJustification">emergency</span> }
+                        @if (po.OwnerStage == SyncStages.Office && po.HandoverRequested) { <span class="chip" data-tone="info">handed over</span> }
+                    </td>
+                    <td class="px-4 py-3">@(po.ApprovedOnboardByName == "" ? "–" : po.ApprovedOnboardByName)<span class="block text-xs text-muted">@(po.ApprovedOnboardAt is { } at ? at.ToString("dd MMM HH:mm") : "")</span></td>
+                    <td class="px-4 py-3 text-right font-medium">@Money.Format(po.Total, po.Currency)</td>
+                    <td class="px-4 py-3">
+                        @if (po.ReviewedAt is { } reviewed) { <span class="text-emerald-600">reviewed @reviewed.ToString("dd MMM") by @po.ReviewedByName</span> }
+                        else if (po.ForReview) { <button @onclick="() => Review(po)" class="link">Mark reviewed</button> }
+                        else { <span class="text-muted">–</span> }
+                    </td>
+                </tr>
+                @if (po.IsEmergency)
+                {
+                    <tr class="border-b border-line/60"><td colspan="7" class="px-4 pb-3 text-xs text-muted">Emergency justification: @po.EmergencyJustification</td></tr>
+                }
+            }
+            @if (_rows.Count == 0)
+            {
+                <tr><td colspan="7" class="px-4 py-8 text-center text-muted">Nothing raised onboard yet.</td></tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _unreviewedOnly;
+    private List<OnboardOrderRow> _rows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await Load();
+    }
+
+    private async Task Load() => _rows = await Procurement.GetOnboardOrdersAsync(_companyId, _unreviewedOnly);
+
+    private async Task Review(PurchaseOrder po)
+    {
+        await Procurement.MarkOnboardReviewedAsync(_companyId, po.Id, _actor);
+        await Toasts.Success($"{po.PoNumber} marked as reviewed.");
+        await Load();
+    }
+}

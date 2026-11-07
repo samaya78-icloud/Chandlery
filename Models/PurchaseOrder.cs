@@ -38,6 +38,22 @@ public class PurchaseOrder
     /// <summary>Which side may change this order: the side that created it, until it is handed over. See <see cref="SyncStages"/>.</summary>
     public string OwnerStage { get; set; } = SyncStages.Office;
 
+    /// <summary>A vessel-raised order the Master could not approve onboard: the office takes it over and approves it through its matrix.</summary>
+    public bool HandoverRequested { get; set; }
+
+    /// <summary>The Master approved above his limit because of an emergency, with this justification. The office reviews it afterwards.</summary>
+    public bool IsEmergency { get; set; }
+    public string EmergencyJustification { get; set; } = "";
+
+    /// <summary>Who approved it onboard (the Master) and when.</summary>
+    public string ApprovedOnboardByName { get; set; } = "";
+    public DateTime? ApprovedOnboardAt { get; set; }
+
+    /// <summary>Approved onboard: the office sees it for information and may mark it reviewed (kept at the office, never sent back).</summary>
+    public bool ForReview { get; set; }
+    public DateTime? ReviewedAt { get; set; }
+    public string ReviewedByName { get; set; } = "";
+
     public DeliveryStatus DeliveryStatus { get; set; } = DeliveryStatus.Pending;
 
     /// <summary>Suppliers only see approved POs.</summary>

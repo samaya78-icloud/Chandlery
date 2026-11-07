@@ -43,6 +43,57 @@ public static class PolicyGuard
         return action == PolicyAction.Requisition ? resolved.CanRequisition : resolved.CanPurchaseDirect;
     }
 
+    /// <summary>
+    /// May the Master approve this order onboard? Needs a Master approval limit (USD) for every category on it and a total within the
+    /// tightest of them, and no category's monthly budget used up. With no policy rows at all, or no limit set, the answer is no
+    /// (the office decides), never "no limit".
+    /// </summary>
+    public static async Task<MasterAuthority> MasterAuthorityAsync(ChandleryDbContext db, PurchaseOrder po, decimal totalUsd, DateTime now)
+    {
+        var loaded = await LoadAsync(db, po.CompanyId, po.VesselId);
+        if (loaded is null) return new MasterAuthority(false, "the office has not set an approval limit for this vessel", null);
+
+        var itemIds = po.Lines.Select(l => l.ItemId).Distinct().ToList();
+        var items = await db.Items.Where(i => i.CompanyId == po.CompanyId && itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.CategoryId);
+        var paths = Category.BuildTree(loaded.Categories).ToDictionary(t => t.Category.Id, t => t.Path);
+        var rate = po.UsdRate is > 0 ? po.UsdRate.Value : 1m;
+        decimal? tightest = null;
+        var budgetsChecked = new HashSet<Guid>();
+
+        // This month's orders for the vessel, for the budget rows.
+        var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var others = await db.PurchaseOrders.Where(p => p.VesselId == po.VesselId && p.Id != po.Id && p.CreatedDate >= monthStart && p.Status != PoStatus.Rejected).ToListAsync();
+        var otherItemIds = others.SelectMany(p => p.Lines).Select(l => l.ItemId).Distinct().ToList();
+        var otherCategories = await db.Items.Where(i => otherItemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.CategoryId);
+
+        foreach (var categoryId in items.Values.Distinct())
+        {
+            var resolved = PolicyResolver.Resolve(loaded.Vessel.Id, loaded.Chain, loaded.Rows, loaded.Categories, loaded.GroupNames, po.DepartmentId, categoryId, now);
+            var path = paths.GetValueOrDefault(categoryId, "this category");
+            if (resolved.MasterApprovalLimitUsd.Value is not { } limit)
+                return new MasterAuthority(false, $"no Master approval limit is set for {path}", null);
+            tightest = tightest is null ? limit : Math.Min(tightest.Value, limit);
+
+            if (resolved.MonthlyBudgetUsd.Value is { } budget && resolved.MonthlyBudgetUsd.Row is { } row && budgetsChecked.Add(row.Id))
+            {
+                bool Covered(Guid itemCategory, Guid? orderDepartment)
+                    => (row.DepartmentId is null || row.DepartmentId == orderDepartment)
+                       && (row.CategoryId is null || CategoryIds.Descendants(loaded.Categories, row.CategoryId.Value).Contains(itemCategory));
+
+                decimal Net(PoLine l) => Money.LineNet(l.Quantity, l.UnitPrice, l.DiscountPct);
+                var thisOrder = po.Lines.Where(l => items.TryGetValue(l.ItemId, out var c) && Covered(c, po.DepartmentId)).Sum(Net) / rate;
+                var spent = others.Sum(p => p.Lines.Where(l => otherCategories.TryGetValue(l.ItemId, out var c) && Covered(c, p.DepartmentId)).Sum(Net) / (p.UsdRate is > 0 ? p.UsdRate.Value : 1m));
+                if (spent + thisOrder > budget)
+                    return new MasterAuthority(false, $"the monthly budget for {path} would be exceeded (USD {spent + thisOrder:N2} of {budget:N2})", tightest);
+            }
+        }
+
+        if (tightest is null) return new MasterAuthority(false, "the order has no items to check", null);
+        return totalUsd <= tightest
+            ? new MasterAuthority(true, "", tightest)
+            : new MasterAuthority(false, $"USD {totalUsd:N2} is above the Master's limit of USD {tightest:N2}", tightest);
+    }
+
     /// <summary>The categories the vessel may use for this action, or null when policy is not in use (everything allowed).</summary>
     public static async Task<HashSet<Guid>?> AllowedCategoriesAsync(ChandleryDbContext db, Guid companyId, Guid? vesselId, Guid? departmentId, PolicyAction action)
     {

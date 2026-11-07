@@ -124,7 +124,9 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         if (node.IsVessel)
         {
             if (stage != SyncStages.Vessel) return 0;
-            await services.GetRequiredService<INodePublisher>().PublishAsync(document, Lane.Transaction);
+            // An emergency purchase tells the office at once.
+            var lane = payload[nameof(PurchaseOrder.IsEmergency)] is { } flag && flag.GetValueKind() == System.Text.Json.JsonValueKind.True ? Lane.Urgent : Lane.Transaction;
+            await services.GetRequiredService<INodePublisher>().PublishAsync(document, lane);
             return 1;
         }
 

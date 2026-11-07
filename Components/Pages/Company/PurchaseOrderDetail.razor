@@ -38,6 +38,26 @@ else
         </Actions>
     </PageHeader>
 
+    @if (_po.OwnerStage == SyncStages.Vessel || _po.ForReview || _po.HandoverRequested)
+    {
+        <div class="mb-4 rounded-xl border border-sky-300/50 bg-sky-50/60 px-4 py-3 text-sm dark:bg-sky-500/10">
+            <p class="font-medium">
+                @if (_po.HandoverRequested && _po.OwnerStage == SyncStages.Office) { <span>Raised onboard and handed over: it is above what the Master may approve, so it follows your approval matrix.</span> }
+                else if (_po.ApprovedOnboardByName != "") { <span>Raised and approved onboard by @_po.ApprovedOnboardByName@(_po.ApprovedOnboardAt is { } at ? $" on {at:dd MMM yyyy HH:mm}" : "").</span> }
+                else { <span>Raised onboard; the Master has not approved it yet.</span> }
+            </p>
+            @if (_po.IsEmergency) { <p class="mt-1 text-rose-600">Emergency purchase above the Master's limit. Justification: @_po.EmergencyJustification</p> }
+            @if (_po.ForReview && _po.ReviewedAt is null)
+            {
+                <button @onclick="MarkReviewed" class="btn btn-secondary btn-sm mt-2">Mark as reviewed</button>
+            }
+            else if (_po.ReviewedAt is { } reviewed)
+            {
+                <p class="mt-1 text-muted">Reviewed by @_po.ReviewedByName on @reviewed.ToString("dd MMM yyyy").</p>
+            }
+        </div>
+    }
+
     <RelatedDocuments CompanyId="_companyId" Kind="DocKind.PurchaseOrder" Id="_po.Id" Version="_auditVersion" />
 
     @if (_po.IsSpot && (_vesselName != "" || _portName != "" || _po.SupplierRef != "" || _po.Remarks != ""))
@@ -314,6 +334,13 @@ else
             await LoadApprovals();
             await LoadDeliveries();
         }
+    }
+
+    private async Task MarkReviewed()
+    {
+        await Procurement.MarkOnboardReviewedAsync(_companyId, PoId, _actor);
+        _po = await Procurement.GetPurchaseOrderAsync(_companyId, PoId);
+        _auditVersion++;
     }
 
     private async Task LoadDeliveries()
