@@ -1,0 +1,111 @@
+@inject VesselHomeService HomeSvc
+@inject SyncStatusService Sync
+
+@if (_data is null)
+{
+    <Skeleton Rows="6" />
+}
+else
+{
+    <PageHeader Eyebrow="@DateTime.UtcNow.ToString("dddd, d MMMM")" Title="@($"Welcome aboard, {_firstName}")" Subtitle="Where things stand on this vessel.">
+        <Actions>
+            <a href="/vessel/port-calls" class="btn btn-secondary">Port calls</a>
+            <a href="/company/requisitions/new" class="btn btn-primary">+ New requisition</a>
+        </Actions>
+    </PageHeader>
+
+    @if (_sync is { Offline: true } offline)
+    {
+        <div class="mb-6 rounded-xl border border-rose-300/50 bg-rose-50/60 px-4 py-3 text-sm dark:bg-rose-500/10">
+            <p class="font-medium">No link to the office right now.</p>
+            <p class="text-muted">Everything here keeps working. @(offline.Waiting == 0 ? "Nothing is waiting." : $"{offline.Waiting} change(s) will be sent when the link returns.")</p>
+        </div>
+    }
+
+    <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard Label="Open requisitions" Value="@_data.OpenRequisitions.ToString("N0")" Hint="Not yet fully ordered" Href="/company/requisitions" />
+        <StatCard Label="RFQs awaiting quotes" Value="@_data.RfqsAwaitingQuotes.ToString("N0")" Hint="@($"{_data.QuotesToEvaluate} with quotes to compare")" Href="/vessel/rfqs" Tone="warning" />
+        <StatCard Label="Orders awaiting approval" Value="@((_data.AwaitingMaster + _data.AwaitingOffice).ToString("N0"))" Hint="@($"{_data.AwaitingMaster} with the Master · {_data.AwaitingOffice} with the office")" Href="/vessel/orders" Tone="info" />
+        <StatCard Label="Deliveries expected" Value="@_data.Deliveries.Count.ToString("N0")" Hint="Approved, not yet fully received" Href="/vessel/port-calls" Tone="success" />
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+        @if (_data.NeedsMyApproval.Count > 0)
+        {
+            <div class="card p-5 lg:col-span-2">
+                <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Waiting for your approval</h2>
+                <ul class="divide-y divide-line/60 text-sm">
+                    @foreach (var o in _data.NeedsMyApproval)
+                    {
+                        <li class="flex flex-wrap items-center gap-3 py-2">
+                            <a href="/vessel/orders/@o.Id" class="link font-mono font-semibold">@o.PoNumber</a>
+                            <span>@o.SupplierName</span>
+                            <span class="ml-auto font-medium">@Money.Format(o.Total, o.Currency)</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <div class="card p-5">
+            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Deliveries expected</h2>
+            @if (_data.Deliveries.Count == 0)
+            {
+                <p class="text-sm text-muted">Nothing is on its way right now.</p>
+            }
+            else
+            {
+                <ul class="divide-y divide-line/60 text-sm">
+                    @foreach (var d in _data.Deliveries.Take(8))
+                    {
+                        <li class="flex flex-wrap items-center gap-3 py-2">
+                            <a href="/vessel/orders/@d.OrderId" class="link font-mono font-semibold">@d.PoNumber</a>
+                            <span>@d.Supplier</span>
+                            <span class="text-muted">@(d.Port ?? "port not set")</span>
+                            <span class="ml-auto"><StatusChip Value="@d.Delivery" /></span>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        <div class="card p-5">
+            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Recent requisitions</h2>
+            @if (_data.Requisitions.Count == 0)
+            {
+                <p class="text-sm text-muted">No requisitions yet.</p>
+            }
+            else
+            {
+                <ul class="divide-y divide-line/60 text-sm">
+                    @foreach (var r in _data.Requisitions)
+                    {
+                        <li class="flex flex-wrap items-center gap-3 py-2">
+                            <a href="/company/requisitions/@r.Id" class="link font-mono font-semibold">@r.Number</a>
+                            <span class="text-muted">@r.Date.ToString("dd MMM") · @r.Lines line(s)</span>
+                            <span class="ml-auto"><StatusChip Value="@r.Status" /></span>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private VesselHomeData? _data;
+    private SyncStatusView? _sync;
+    private string _firstName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        Guid? userId = Guid.TryParse(state.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var uid) ? uid : null;
+        _firstName = (state.User.Identity?.Name ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "";
+        _data = await HomeSvc.GetAsync(companyId, userId);
+        _sync = await Sync.GetAsync();
+    }
+}

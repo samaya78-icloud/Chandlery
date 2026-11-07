@@ -49,6 +49,12 @@
         </AuthorizeView>
 
         <div class="ml-auto flex items-center gap-2">
+            @* On a vessel: how the link to the office is doing, always visible *@
+            @if (NodeContext.Current.IsVessel)
+            {
+                <SyncChip @rendermode="InteractiveServer" />
+            }
+
             @* Theme and mode picker *@
             <details class="menu">
                 <summary class="btn btn-secondary btn-sm" title="Appearance">

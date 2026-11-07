@@ -7,7 +7,11 @@
 
 <PageTitle>Dashboard · Chandlery</PageTitle>
 
-@if (_company is null && _supplier is null)
+@if (NodeContext.Current.IsVessel)
+{
+    <VesselHome />
+}
+else if (_company is null && _supplier is null)
 {
     <Skeleton Rows="6" />
 }
@@ -250,6 +254,7 @@ else if (_supplier is { } s)
     protected override async Task OnInitializedAsync()
     {
         var user = (await AuthStateTask!).User;
+        if (NodeContext.Current.IsVessel) return;   // a vessel has its own home (VesselHome)
         _firstName = (user.Identity?.Name ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
 
         var isCompany = user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser");

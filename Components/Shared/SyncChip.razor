@@ -1,0 +1,62 @@
+@implements IDisposable
+@inject SyncStatusService Sync
+
+@if (_view is { Enabled: true } view)
+{
+    <div class="flex items-center gap-2 rounded-xl border border-line bg-surface-2 px-2.5 py-1.5 text-xs" title="@Tooltip(view)">
+        <span class="h-2 w-2 shrink-0 rounded-full @Dot(view.Tone)"></span>
+        <span class="hidden font-medium text-ink-2 sm:inline">@view.Text</span>
+        <button type="button" @onclick="SyncNow" disabled="@_busy" class="link font-semibold">Sync now</button>
+    </div>
+}
+
+@code {
+    private SyncStatusView? _view;
+    private bool _busy;
+    private readonly CancellationTokenSource _stop = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _view = await Sync.GetAsync();
+        _ = RefreshLoopAsync();
+    }
+
+    private async Task RefreshLoopAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+            {
+                var view = await Sync.GetAsync();
+                await InvokeAsync(() => { _view = view; StateHasChanged(); });
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task SyncNow()
+    {
+        _busy = true;
+        Sync.SyncNow();
+        await Task.Delay(1500);
+        _view = await Sync.GetAsync();
+        _busy = false;
+    }
+
+    private static string Dot(string tone) => tone switch
+    {
+        "success" => "bg-emerald-500",
+        "warning" => "bg-amber-500",
+        "danger" => "bg-rose-500",
+        _ => "bg-slate-400",
+    };
+
+    private static string Tooltip(SyncStatusView v) =>
+        v.Offline ? "No link to the office. Everything keeps working and is sent when the link returns." + (v.Error is null ? "" : $" ({v.Error})")
+        : v.LastSuccess is { } at ? $"Last exchange with the office: {at.ToLocalTime():dd MMM HH:mm:ss}"
+        : "Waiting for the first exchange with the office.";
+
+    public void Dispose() => _stop.Cancel();
+}

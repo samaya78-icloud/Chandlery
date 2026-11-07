@@ -1,0 +1,73 @@
+@page "/vessel/port-calls"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject VesselHomeService HomeSvc
+
+<PageTitle>Port calls · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Vessel" Title="Port calls" Subtitle="Where requisitions and orders are waiting to be received, by delivery port and the vessel's ETA." />
+
+@if (_calls is null)
+{
+    <Skeleton Rows="4" />
+}
+else if (_calls.Count == 0)
+{
+    <EmptyState Title="Nothing is waiting" Message="Open requisitions and orders still to be received appear here, grouped by port." />
+}
+else
+{
+    <div class="grid gap-6 lg:grid-cols-2">
+        @foreach (var call in _calls)
+        {
+            <div class="card p-5">
+                <div class="mb-3 flex items-baseline justify-between gap-3">
+                    <h2 class="font-display text-lg font-extrabold text-ink">@call.Port</h2>
+                    <span class="text-sm @(call.Eta is null ? "text-muted" : "font-medium")">@(call.Eta is { } eta ? $"ETA {eta:dd MMM yyyy}" : "no ETA set")</span>
+                </div>
+
+                @if (call.Requisitions.Count > 0)
+                {
+                    <p class="mb-1 text-xs font-bold uppercase tracking-wider text-muted">Requisitions</p>
+                    <ul class="mb-3 divide-y divide-line/60 text-sm">
+                        @foreach (var r in call.Requisitions)
+                        {
+                            <li class="flex items-center gap-3 py-1.5">
+                                <a href="/company/requisitions/@r.Id" class="link font-mono font-semibold">@r.Number</a>
+                                <span class="text-muted">@r.Lines line(s)</span>
+                                <span class="ml-auto"><StatusChip Value="@r.Status" /></span>
+                            </li>
+                        }
+                    </ul>
+                }
+                @if (call.Orders.Count > 0)
+                {
+                    <p class="mb-1 text-xs font-bold uppercase tracking-wider text-muted">Orders due</p>
+                    <ul class="divide-y divide-line/60 text-sm">
+                        @foreach (var o in call.Orders)
+                        {
+                            <li class="flex items-center gap-3 py-1.5">
+                                <a href="/vessel/orders/@o.OrderId" class="link font-mono font-semibold">@o.PoNumber</a>
+                                <span>@o.Supplier</span>
+                                <span class="ml-auto"><StatusChip Value="@o.Delivery" /></span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private List<PortCall>? _calls;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _calls = await HomeSvc.PortCallsAsync(Guid.Parse(state.User.FindFirst("CompanyId")!.Value));
+    }
+}
