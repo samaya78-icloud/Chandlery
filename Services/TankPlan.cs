@@ -15,6 +15,23 @@ public static class TankLook
         _ => type.ToString(),
     };
 
+    public static string Label(CriterionGroup group) => group switch
+    {
+        CriterionGroup.VariableData => "Variable data",
+        CriterionGroup.InternalFittings => "Internal fittings",
+        CriterionGroup.Reports => "Reports",
+        CriterionGroup.TypeSpecific => "Type-specific",
+        _ => "Structure",
+    };
+
+    /// <summary>What an answer on a checklist means, for a tooltip.</summary>
+    public static string Meaning(string value) => value switch
+    {
+        "NI" => "Not inspected",
+        "NA" => "Not applicable",
+        _ => value,
+    };
+
     public static string Label(TankHealth health) => health switch
     {
         TankHealth.NotInspected => "Not inspected",

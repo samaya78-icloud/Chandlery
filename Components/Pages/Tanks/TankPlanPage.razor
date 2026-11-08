@@ -126,7 +126,10 @@ else
                 <span class="chip chip-plain">@TankLook.Label(sel.Tank.Type)</span>
                 <StatusChip Value="@sel.Health" />
                 @if (!sel.Tank.IsActive) { <span class="chip" data-tone="neutral">out of service</span> }
-                <span class="ml-auto"><button class="btn btn-secondary btn-sm" @onclick="() => StartEdit(sel)">Edit</button></span>
+                <span class="ml-auto flex gap-2">
+                    @if (sel.Tank.IsActive) { <a href="/tanks/inspections/new?tank=@sel.Tank.Id" class="btn btn-primary btn-sm">Inspect this tank</a> }
+                    <button class="btn btn-secondary btn-sm" @onclick="() => StartEdit(sel)">Edit</button>
+                </span>
             </div>
             <dl class="mt-4 grid gap-x-6 gap-y-2 md:grid-cols-4">
                 @Fact("Steel, deck", sel.Tank.SteelGradeDeck)
@@ -146,7 +149,7 @@ else
                     @foreach (var h in _history)
                     {
                         <li class="flex flex-wrap items-center gap-3 py-2">
-                            <span class="font-mono text-xs font-semibold">@h.Inspection.Code</span>
+                            <a href="/tanks/inspections/@h.Inspection.Id" class="link font-mono text-xs font-semibold">@h.Inspection.Code</a>
                             <span>@h.Inspection.InspectedOn.ToString("dd MMM yyyy")</span>
                             <span class="text-muted">@h.Inspection.Place</span>
                             <StatusChip Value="@h.Status" />

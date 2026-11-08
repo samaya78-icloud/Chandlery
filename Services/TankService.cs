@@ -89,6 +89,13 @@ public class TankService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
+    public async Task<Tank?> GetTankAsync(Guid companyId, Guid tankId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.Tanks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tankId && t.CompanyId == companyId);
+    }
+
     public async Task<List<Tank>> ListTanksAsync(Guid companyId, Guid vesselId, bool includeInactive = false)
     {
         await using var db = await factory.CreateDbContextAsync();

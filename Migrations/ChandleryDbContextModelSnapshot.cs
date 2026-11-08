@@ -2138,6 +2138,9 @@ namespace Chandlery.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(1);
 
+                    b.Property<Guid?>("TankId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("TemplateId")
                         .HasColumnType("uuid");
 

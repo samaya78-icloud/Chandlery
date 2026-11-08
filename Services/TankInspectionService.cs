@@ -14,11 +14,14 @@ public record InspectionDetail(TankInspection Inspection, Tank Tank, List<TankIn
 
 public record InspectionRow(TankInspection Inspection, string TankName, string TankCode, TankType TankType, InspectionStatus Status);
 
+/// <summary>What submitting an inspection set in motion elsewhere: the worklist tasks raised for exceptions, whether the maintenance job was completed, and anything that could not be done.</summary>
+public record SubmitOutcome(List<WorklistTask> TasksRaised, bool JobCompleted, List<string> Notes);
+
 /// <summary>
 /// Tank inspections: started and filled in by one side (the vessel), submitted, and looked at by the office through review records. A draft or a returned
 /// inspection can be changed by the side that made it; a submitted or reviewed one is locked. The status is always worked out, never stored.
 /// </summary>
-public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory)
+public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory, WorklistService? worklist = null, PmsService? pms = null)
 {
     private static DateTime Day(DateTime d) => DateTime.SpecifyKind(d.Date, DateTimeKind.Utc);
 
@@ -39,6 +42,11 @@ public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory
         var template = await db.TankChecklistTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Id == input.TemplateId && t.CompanyId == companyId) ?? throw new InvalidOperationException("Checklist not found.");
         if (!template.IsActive) throw new InvalidOperationException("That checklist is no longer in use.");
         if (template.TankType != tank.Type) throw new InvalidOperationException($"That checklist is for {template.TankType} tanks, and {tank.Name} is a {tank.Type} tank.");
+        if (input.PlannedJobId is { } jobId)
+        {
+            var job = await db.PlannedJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId && j.CompanyId == companyId) ?? throw new InvalidOperationException("Maintenance job not found.");
+            if (job.TankId != tank.Id) throw new InvalidOperationException("That maintenance job is not an inspection of this tank.");
+        }
         var criteria = await db.TankCriteria.AsNoTracking().Where(c => c.TemplateId == template.Id && c.IsActive).OrderBy(c => c.Group).ThenBy(c => c.SortOrder).ThenBy(c => c.Name).ToListAsync();
         if (criteria.Count == 0) throw new InvalidOperationException("That checklist has nothing to look at yet.");
 
@@ -89,7 +97,7 @@ public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory
     }
 
     /// <summary>Submits the inspection for review. Every criterion must be answered (NI and NA are answers) and the place and date given.</summary>
-    public async Task SubmitAsync(Guid companyId, Guid inspectionId, Actor actor)
+    public async Task<SubmitOutcome> SubmitAsync(Guid companyId, Guid inspectionId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -99,11 +107,62 @@ public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory
         if (problems.Count > 0) throw new InvalidOperationException($"{problems.Count} criterion(s) still need an answer: {string.Join(" ", problems.Take(3))}{(problems.Count > 3 ? " …" : "")}");
 
         var exceptions = TankStatus.Exceptions(inspection.Results);
+        var firstSubmission = inspection.SubmissionCount == 0;
         inspection.SubmissionCount++;
         inspection.SubmittedAt = DateTime.UtcNow;
         inspection.ExceptionCount = exceptions.Count;
         inspection.HasBadRating = exceptions.Any(r => r.Scale == ScaleKind.Rating && r.Value == "Bad");
         await db.SaveChangesAsync();
+        return await FollowUpAsync(db, companyId, inspection, exceptions, firstSubmission, actor);
+    }
+
+    /// <summary>
+    /// After a submission: a worklist task for each exception that has none yet (a Bad rating urgent), and, the first time, completion of the maintenance job the
+    /// inspection was started from. The submission itself is already saved, so a problem here is reported and never undoes it; a resubmission raises nothing twice.
+    /// </summary>
+    private async Task<SubmitOutcome> FollowUpAsync(ChandleryDbContext db, Guid companyId, TankInspection inspection, List<TankInspectionResult> exceptions, bool firstSubmission, Actor actor)
+    {
+        var raised = new List<WorklistTask>();
+        var notes = new List<string>();
+        var jobCompleted = false;
+
+        var pending = exceptions.Where(r => r.WorklistTaskId is null).ToList();
+        if (pending.Count > 0 && worklist is not null)
+        {
+            if (!await WorklistService.IsEnabledForVesselAsync(db, companyId, inspection.VesselId))
+                notes.Add("The worklist is off for this vessel, so no tasks were raised for the exceptions.");
+            else
+            {
+                var tank = await db.Tanks.AsNoTracking().FirstAsync(t => t.Id == inspection.TankId);
+                var source = await db.WorklistListItems.AsNoTracking().Where(i => i.CompanyId == companyId && i.Kind == WorklistListKind.Source && i.IsActive && i.Name == "Vessel").Select(i => (Guid?)i.Id).FirstOrDefaultAsync();
+                foreach (var r in pending)
+                {
+                    try
+                    {
+                        var urgent = r.Scale == ScaleKind.Rating && r.Value == "Bad";
+                        var description = $"Found at the tank inspection {inspection.Code} on {inspection.InspectedOn:dd MMM yyyy}: {r.CriterionName} is {r.Value}." + (r.Comment == "" ? "" : $" {r.Comment}");
+                        var task = await worklist.CreateTaskAsync(companyId, new NewWorklistTask(inspection.VesselId, $"{tank.Code} {tank.Name}: {r.CriterionName} ({r.Value})", description, source,
+                            Priority: urgent ? WorklistPriority.Urgent : WorklistPriority.Normal), actor);
+                        await worklist.AddEntryAsync(companyId, task.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.TankInspection, LinkTarget: inspection.Id, LinkLabel: $"Tank inspection {inspection.Code}"), actor);
+                        r.WorklistTaskId = task.Id;
+                        raised.Add(task);
+                    }
+                    catch (InvalidOperationException ex) { notes.Add($"{r.CriterionName}: no task raised ({ex.Message})"); }
+                }
+                if (raised.Count > 0) await db.SaveChangesAsync();
+            }
+        }
+
+        if (firstSubmission && inspection.PlannedJobId is { } jobId && pms is not null)
+        {
+            try
+            {
+                jobCompleted = await pms.CompleteJobByInspectionAsync(companyId, jobId, inspection.InspectedOn, $"Tank inspection {inspection.Code}: {exceptions.Count} exception(s).", actor) is not null;
+                if (!jobCompleted) notes.Add("Planned maintenance is off for this vessel, so the maintenance job was not completed.");
+            }
+            catch (InvalidOperationException ex) { notes.Add($"The maintenance job was not completed ({ex.Message})"); }
+        }
+        return new SubmitOutcome(raised, jobCompleted, notes);
     }
 
     // ---- review (the office) ----

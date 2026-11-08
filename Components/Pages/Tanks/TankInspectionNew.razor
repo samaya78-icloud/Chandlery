@@ -1,0 +1,129 @@
+@page "/tanks/inspections/new"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject TankService Tanks
+@inject TankInspectionService Inspections
+@inject PmsService Pms
+@inject NavigationManager Nav
+
+<PageTitle>New tank inspection · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Tank inspection" Title="New inspection" Subtitle="Choose the tank and the checklist. The checklist is copied into the inspection, so later changes to it never alter this one.">
+    <Actions>
+        <a href="/tanks/inspections" class="btn btn-secondary">All inspections</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Tank inspection is switched off" Message="The module has not been switched on for this vessel." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @if (_jobCode is not null) { <div class="mb-4 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-800">Done for maintenance job <span class="font-mono font-semibold">@_jobCode</span>: submitting this inspection will complete that job.</div> }
+
+    <div class="card max-w-2xl p-5 text-sm">
+        <div class="grid gap-4 md:grid-cols-2">
+            @if (_vessels.Count > 1 && _jobId is null)
+            {
+                <label class="md:col-span-2">Vessel
+                    <select class="select mt-1" @bind="_vesselId" @bind:after="ChangeVesselAsync">
+                        @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+            }
+            <label>Tank
+                <select class="select mt-1" @bind="_tankId" @bind:after="ChangeTank" disabled="@(_jobId is not null)">
+                    <option value="@Guid.Empty">Choose…</option>
+                    @foreach (var t in _tanks) { <option value="@t.Id">@t.Code · @t.Name</option> }
+                </select>
+            </label>
+            <label>Checklist
+                <select class="select mt-1" @bind="_templateId">
+                    <option value="@Guid.Empty">Choose…</option>
+                    @foreach (var t in _templates) { <option value="@t.Template.Id">@t.Template.Name (@t.Criteria.Count items)</option> }
+                </select>
+            </label>
+            <label>Date of inspection <input type="date" class="input mt-1" max="@DateTime.UtcNow.ToString("yyyy-MM-dd")" @bind="_date" /></label>
+            <label>Where <input class="input mt-1" @bind="_place" placeholder="At sea, or the port" /></label>
+            <label class="md:col-span-2">Work done <textarea class="textarea mt-1" rows="2" @bind="_workDone" placeholder="For example: cleaned and gas-freed, inspected from the manhole"></textarea></label>
+        </div>
+        <div class="mt-5 flex gap-2">
+            <button class="btn btn-primary" @onclick="StartAsync">Start the inspection</button>
+            <a href="/tanks/inspections" class="btn btn-ghost">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "tank")] public Guid? TankQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "job")] public Guid? JobQuery { get; set; }
+
+    private Guid _companyId, _vesselId, _tankId, _templateId;
+    private Guid? _jobId;
+    private string? _error, _jobCode;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private DateTime? _date = DateTime.UtcNow.Date;
+    private string _place = "", _workDone = "";
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<Tank> _tanks = [];
+    private List<TankTemplateView> _templates = [];
+    private List<TankTemplateView> _allTemplates = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Tanks.EnabledVesselsAsync(_companyId);
+        _allTemplates = await Tanks.ListTemplatesAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _vessels[0].Id;
+
+        if (TankQuery is { } tankId && await Tanks.GetTankAsync(_companyId, tankId) is { } tank && _vessels.Any(v => v.Id == tank.VesselId))
+        {
+            _vesselId = tank.VesselId;
+            _tankId = tank.Id;
+            if (JobQuery is { } jobId && await Pms.GetJobAsync(_companyId, jobId) is { } job && job.Job.TankId == tank.Id) (_jobId, _jobCode) = (jobId, job.Job.Code);
+        }
+        await LoadTanksAsync();
+        ChangeTank();
+        _loaded = true;
+    }
+
+    private async Task LoadTanksAsync() => _tanks = _vesselId == Guid.Empty ? [] : await Tanks.ListTanksAsync(_companyId, _vesselId);
+
+    private async Task ChangeVesselAsync()
+    {
+        _tankId = _templateId = Guid.Empty; _templates = [];
+        await LoadTanksAsync();
+    }
+
+    private void ChangeTank()
+    {
+        var tank = _tanks.FirstOrDefault(t => t.Id == _tankId);
+        _templates = tank is null ? [] : _allTemplates.Where(t => t.Template.TankType == tank.Type).ToList();
+        _templateId = _templates.Count == 1 ? _templates[0].Template.Id : Guid.Empty;
+    }
+
+    private async Task StartAsync()
+    {
+        _error = null;
+        try
+        {
+            if (_tankId == Guid.Empty) throw new InvalidOperationException("Choose the tank.");
+            if (_templateId == Guid.Empty) throw new InvalidOperationException("Choose the checklist.");
+            if (_date is null) throw new InvalidOperationException("Enter the date of the inspection.");
+            var inspection = await Inspections.StartAsync(_companyId, new NewInspection(_tankId, _templateId, _date.Value, _place, _workDone, _jobId), _actor);
+            Nav.NavigateTo($"/tanks/inspections/{inspection.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

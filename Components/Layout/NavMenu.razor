@@ -88,6 +88,7 @@
             if (await TankSvc.IsEnabledForCompanyAsync(companyId))
             {
                 _tankItems.Add(new NavItem("/tanks", "Tanks", TankIcon));
+                _tankItems.Add(new NavItem("/tanks/inspections", "Inspections", TankIcon));
                 if (!NodeContext.Current.IsVessel && (await TankSvc.EnabledVesselsAsync(companyId)).Count > 1) _tankItems.Add(new NavItem("/tanks/copy", "Copy to sister vessels", TankIcon));
             }
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
@@ -108,7 +109,7 @@
                 @foreach (var item in items)
                 {
                     var badge = item.Href == "/company/approvals" ? _pendingApprovals : item.Badge;
-                    <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
+                    <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" or "/tanks" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
                         <span class="nav-icon">@item.Icon</span>
                         <span class="nav-label">@item.Label</span>
                         @if (badge > 0)

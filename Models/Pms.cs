@@ -107,6 +107,9 @@ public class PlannedJob
     public int? EstimatedMinutes { get; set; }
     public bool RequiresVerification { get; set; }
 
+    /// <summary>An inspection job that is done by inspecting this tank: submitting the inspection completes the job, and it cannot be completed any other way.</summary>
+    public Guid? TankId { get; set; }
+
     /// <summary>When the job was put on the plan; the first due date counts from here when nothing has been done yet.</summary>
     public DateTime StartDate { get; set; }
 
