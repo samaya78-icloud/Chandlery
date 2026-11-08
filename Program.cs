@@ -45,6 +45,8 @@ builder.Services.AddScoped<PmsIntegrationService>();
 builder.Services.AddScoped<PmsImportService>();
 builder.Services.AddScoped<TankService>();
 builder.Services.AddScoped<TankInspectionService>();
+builder.Services.AddScoped<RestHoursService>();
+builder.Services.AddScoped<WorkArrangementService>();
 builder.Services.AddSingleton<SyncStatusService>();
 builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();

@@ -18,6 +18,7 @@ One platform used by ship managers and their vessels. The **office (shore)** and
 | 08 | [Tank inspection](08-tank-inspection.md) | Tank master and plan, inspections, ratings, trends, exceptions, review |
 | 09 | [Projects](09-projects.md) | Drydock and technical projects with budget vs actual |
 | 10 | [Collaboration and chat](10-collaboration-chat.md) | A conversation thread on every record in every module, across vessel, office and suppliers |
+| 11 | [Safety: rest hours](11-safety-rest-hours.md) | Seafarers' hours of work and rest (ILO 180 / STCW / MLC): daily records, limits check, sign-off, working-arrangements table, fleet compliance. Plan: [11a](11a-rest-hours-plan.md) |
 
 ## Principles (apply to every module)
 1. **Offline-first.** Every screen reads and writes the local store; sync is a background process. A vessel must work for weeks without connectivity.

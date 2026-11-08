@@ -22,8 +22,11 @@ public sealed class TwoSites : IAsyncLifetime
 
     private readonly string _tag = Guid.NewGuid().ToString("N")[..8];
     private readonly bool _isTemplate;
-    public string ShoreDb => $"chandlery_sync_{(_isTemplate ? "tpl_" : "")}{_tag}_shore";
-    public string VesselDb => $"chandlery_sync_{(_isTemplate ? "tpl_" : "")}{_tag}_vessel";
+    // Test databases are named from a prefix. Two checkouts testing at the same time (a git worktree beside the main one) must use different
+    // prefixes (env CHANDLERY_TEST_PREFIX), or one run's clean-up of "stale" templates drops the other run's live template.
+    private static string Prefix => Environment.GetEnvironmentVariable("CHANDLERY_TEST_PREFIX") is { Length: > 0 } p ? p : "chandlery_sync";
+    public string ShoreDb => $"{Prefix}_{(_isTemplate ? "tpl_" : "")}{_tag}_shore";
+    public string VesselDb => $"{Prefix}_{(_isTemplate ? "tpl_" : "")}{_tag}_vessel";
 
     // Building an office and an empty vessel, and sending the baseline, takes about twenty seconds, so it is done once per test
     // run; every test then starts from a copy of the two finished databases.
@@ -91,7 +94,7 @@ public sealed class TwoSites : IAsyncLifetime
         await using var conn = new NpgsqlConnection($"{Server};Database=postgres;Pooling=false");
         await conn.OpenAsync();
         var names = new List<string>();
-        await using (var list = new NpgsqlCommand("SELECT datname FROM pg_database WHERE datname LIKE 'chandlery!_sync!_tpl!_%' ESCAPE '!'", conn))
+        await using (var list = new NpgsqlCommand($"SELECT datname FROM pg_database WHERE datname LIKE '{Prefix.Replace("_", "!_")}!_tpl!_%' ESCAPE '!'", conn))
         await using (var reader = await list.ExecuteReaderAsync())
             while (await reader.ReadAsync()) names.Add(reader.GetString(0));
         foreach (var name in names)

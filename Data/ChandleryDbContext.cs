@@ -69,6 +69,12 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<TankInspection> TankInspections => Set<TankInspection>();
     public DbSet<TankInspectionResult> TankInspectionResults => Set<TankInspectionResult>();
     public DbSet<TankInspectionReview> TankInspectionReviews => Set<TankInspectionReview>();
+    public DbSet<RestRuleSet> RestRuleSets => Set<RestRuleSet>();
+    public DbSet<RestEntry> RestEntries => Set<RestEntry>();
+    public DbSet<RestSignOff> RestSignOffs => Set<RestSignOff>();
+    public DbSet<RestBreachNote> RestBreachNotes => Set<RestBreachNote>();
+    public DbSet<VesselDayStatus> VesselDayStatuses => Set<VesselDayStatus>();
+    public DbSet<WorkArrangementTable> WorkArrangementTables => Set<WorkArrangementTable>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -606,6 +612,82 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<TankInspection>().WithMany().HasForeignKey(r => r.InspectionId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(r => r.InspectionId);
             b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        // ---- rest hours (spec 11). Crew references are plain ids with the person's name kept beside them: a seafarer who signs off is removed from
+        // the vessel's copy of the crew, but the records of their hours stay. ----
+        modelBuilder.Entity<RestRuleSet>(b =>
+        {
+            b.Property(r => r.Name).HasMaxLength(160);
+            b.Property(r => r.FlagState).HasMaxLength(80);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(r => new { r.CompanyId, r.VesselId });
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<RestEntry>(b =>
+        {
+            b.Property(e => e.CrewName).HasMaxLength(120);
+            b.Property(e => e.Rank).HasMaxLength(60);
+            b.Property(e => e.WorkSpans).HasMaxLength(400);
+            b.Property(e => e.Reason).HasMaxLength(500);
+            b.Property(e => e.EnteredByName).HasMaxLength(120);
+            b.Property(e => e.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(e => e.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(e => new { e.CrewMemberId, e.Date, e.EnteredAt });
+            b.HasIndex(e => new { e.VesselId, e.Date });
+            b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<RestSignOff>(b =>
+        {
+            b.Property(s => s.CrewName).HasMaxLength(120);
+            b.Property(s => s.Fingerprint).HasMaxLength(64);
+            b.Property(s => s.SignedByName).HasMaxLength(120);
+            b.Property(s => s.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(s => s.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(s => s.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(s => new { s.CrewMemberId, s.FromDate });
+            b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<RestBreachNote>(b =>
+        {
+            b.Property(n => n.CrewName).HasMaxLength(120);
+            b.Property(n => n.Rule).HasMaxLength(30);
+            b.Property(n => n.Text).HasMaxLength(1000);
+            b.Property(n => n.ByName).HasMaxLength(120);
+            b.Property(n => n.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(n => n.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(n => n.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(n => new { n.CrewMemberId, n.Date });
+            b.HasQueryFilter(n => CurrentCompanyId == null || n.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<VesselDayStatus>(b =>
+        {
+            b.Property(s => s.PortName).HasMaxLength(120);
+            b.Property(s => s.SetByName).HasMaxLength(120);
+            b.Property(s => s.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(s => s.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(s => s.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(s => new { s.VesselId, s.Date, s.At });
+            b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<WorkArrangementTable>(b =>
+        {
+            b.Property(t => t.LawReference).HasMaxLength(300);
+            b.Property(t => t.LimitsText).HasMaxLength(300);
+            b.Property(t => t.OtherRequirements).HasMaxLength(1000);
+            b.Property(t => t.CreatedByName).HasMaxLength(120);
+            b.Property(t => t.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(t => t.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(t => new { t.VesselId, t.VersionNo }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<PoDispatch>(b =>

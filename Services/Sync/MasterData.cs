@@ -31,6 +31,7 @@ public static class MasterData
         Of<Company>(), Of<Supplier>(), Of<CompanySupplier>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(), Of<CrewMember>(),
         Of<Department>(), Of<Category>(), Of<WorklistListItem>(), Of<MachineryClass>(), Of<JobTemplate>(), Of<TankChecklistTemplate>(), Of<TankCriterion>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
         Of<VesselPolicy>(), Of<VesselModuleSwitch>(),
+        Of<RestRuleSet>(),
     ];
 
     private static readonly Dictionary<string, MasterType> ByName = Types.ToDictionary(t => t.DocType);
@@ -208,6 +209,8 @@ public static class MasterData
                 return ReadGuid(d, "VesselId") is { } vessel
                     ? vessel == scope.VesselId
                     : ReadGuid(d, "GroupId") is { } group && scope.Groups.Contains(group);
+            case nameof(RestRuleSet):      // the company's default, and the set written for this vessel; never another vessel's
+                return company == scope.CompanyId && (ReadGuid(d, "VesselId") is not { } ruleVessel || ruleVessel == scope.VesselId);
             default: return company == scope.CompanyId;
         }
     }

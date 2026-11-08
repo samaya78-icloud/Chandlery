@@ -176,6 +176,8 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             || aggregate.Clr == typeof(JobDeferralRequest) || aggregate.Clr == typeof(JobDeferralDecision) || aggregate.Clr == typeof(PlanChangeRequest) || aggregate.Clr == typeof(PlanChangeDecision) || aggregate.Clr == typeof(MachinerySpare)
             || aggregate.Clr == typeof(Tank) || aggregate.Clr == typeof(TankInspection) || aggregate.Clr == typeof(TankInspectionReview))
             return MasterData.ReadGuid(payload, nameof(PlannedJob.VesselId));
+        if (aggregate.Clr == typeof(RestEntry) || aggregate.Clr == typeof(RestSignOff) || aggregate.Clr == typeof(RestBreachNote) || aggregate.Clr == typeof(VesselDayStatus) || aggregate.Clr == typeof(WorkArrangementTable))
+            return MasterData.ReadGuid(payload, nameof(RestEntry.VesselId));
         if (aggregate.Clr == typeof(JobVerification))
         {
             var completionId = MasterData.ReadGuid(payload, nameof(JobVerification.CompletionId));
@@ -409,6 +411,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.RunningHoursReadings.IgnoreQueryFilters().Where(r => r.VesselId == scope.VesselId && r.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.JobCompletions.IgnoreQueryFilters().Where(c => c.VesselId == scope.VesselId && c.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.JobVerifications.IgnoreQueryFilters().Where(v => v.VesselId == scope.VesselId && v.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.WorkArrangementTables.IgnoreQueryFilters().Where(t => t.VesselId == scope.VesselId && t.OwnerStage == SyncStages.Office), ct);
         }
         log.LogInformation("Queued {Count} documents for node {Node}.", queued, nodeId);
         return queued;
