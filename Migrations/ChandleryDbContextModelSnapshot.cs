@@ -2587,6 +2587,249 @@ namespace Chandlery.Migrations
                     b.ToTable("VesselPolicies");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.WorklistEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AuthorName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid?>("AuthorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OwnerStage")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("office");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId");
+
+                    b.HasIndex("TaskId", "At");
+
+                    b.ToTable("WorklistEntries");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.WorklistListItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("RequiresVerification")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParentId");
+
+                    b.HasIndex("CompanyId", "Kind");
+
+                    b.ToTable("WorklistListItems");
+                });
+
+            modelBuilder.Entity("Chandlery.Models.WorklistTask", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AssigneeName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid?>("CategoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DeferralCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("DepartmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastEntryAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("NatureId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OwnerStage")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("office");
+
+                    b.Property<int>("PercentComplete")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("PlannedDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("RequiresVerification")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid?>("SourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<DateTime?>("TargetDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("VesselId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("VesselId");
+
+                    b.HasIndex("CompanyId", "Code")
+                        .IsUnique();
+
+                    b.ToTable("WorklistTasks");
+                });
+
             modelBuilder.Entity("Chandlery.Models.AppUser", b =>
                 {
                     b.HasOne("Chandlery.Models.Company", null)
@@ -3297,6 +3540,50 @@ namespace Chandlery.Migrations
                         .WithMany()
                         .HasForeignKey("VesselId")
                         .OnDelete(DeleteBehavior.Cascade);
+                });
+
+            modelBuilder.Entity("Chandlery.Models.WorklistEntry", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.WorklistTask", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.WorklistListItem", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.WorklistListItem", null)
+                        .WithMany()
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Chandlery.Models.WorklistTask", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.Vessel", null)
+                        .WithMany()
+                        .HasForeignKey("VesselId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Chandlery.Models.Requisition", b =>

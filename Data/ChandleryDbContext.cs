@@ -48,6 +48,9 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<Rfq> Rfqs => Set<Rfq>();
     public DbSet<Quote> Quotes => Set<Quote>();
     public DbSet<PoDispatch> PoDispatches => Set<PoDispatch>();
+    public DbSet<WorklistListItem> WorklistListItems => Set<WorklistListItem>();
+    public DbSet<WorklistTask> WorklistTasks => Set<WorklistTask>();
+    public DbSet<WorklistEntry> WorklistEntries => Set<WorklistEntry>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -319,6 +322,41 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
         });
 
+        modelBuilder.Entity<WorklistListItem>(b =>
+        {
+            b.Property(i => i.Name).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<WorklistListItem>().WithMany().HasForeignKey(i => i.ParentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(i => new { i.CompanyId, i.Kind });
+            b.HasQueryFilter(i => CurrentCompanyId == null || i.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<WorklistTask>(b =>
+        {
+            b.Property(t => t.Code).HasMaxLength(40);
+            b.Property(t => t.Title).HasMaxLength(200);
+            b.Property(t => t.AssigneeName).HasMaxLength(120);
+            b.Property(t => t.CreatedByName).HasMaxLength(120);
+            b.Property(t => t.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.Ignore(t => t.AwaitingVerification);
+            b.Ignore(t => t.IsClosed);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(t => t.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(t => new { t.CompanyId, t.Code }).IsUnique();
+            b.HasIndex(t => t.VesselId);
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<WorklistEntry>(b =>
+        {
+            b.Property(e => e.AuthorName).HasMaxLength(120);
+            b.Property(e => e.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<WorklistTask>().WithMany().HasForeignKey(e => e.TaskId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(e => new { e.TaskId, e.At });
+            b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<PoDispatch>(b =>
         {
             b.Property(d => d.AcknowledgedByName).HasMaxLength(120);
@@ -522,6 +560,12 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             var stamped = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach (var entry in entries)
             {
+                // History is never rewritten: an entry cannot be changed or removed by anyone, and a task changes only in the columns that are
+                // worked out from its entries.
+                if (Aggregates.IsAppendOnly(entry.Metadata.ClrType) && entry.State is EntityState.Modified or EntityState.Deleted
+                    && !(entry.State == EntityState.Modified && Aggregates.OnlyLocalChanged(entry)))
+                    throw new InvalidOperationException($"{entry.Metadata.ClrType.Name.Replace("Worklist", "Worklist ")} records are history and cannot be changed or deleted.");
+
                 // A vessel keeps requisitions, crew logins and its own bookkeeping; RFQs, orders, invoices and the like are the office's.
                 var localOnlyOrder = entry.Entity is PurchaseOrder && Aggregates.OnlyLocalChanged(entry);   // e.g. the delivery status, worked out onboard
                 if (Node.SyncEnabled && Node.IsVessel && MasterData.Find(entry.Metadata.ClrType) is null && !VesselRules.MayWrite(entry.Metadata.ClrType) && !localOnlyOrder)
@@ -608,6 +652,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         DeliveryOrder d => d.DoNumber,
         Rfq r => r.RfqNumber,
         Quote q => q.SupplierRef,
+        WorklistTask t => t.Code,
         _ => "",
     };
 

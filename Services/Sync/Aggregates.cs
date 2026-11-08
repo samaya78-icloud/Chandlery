@@ -29,7 +29,12 @@ public static class Aggregates
         new(nameof(Rfq), typeof(Rfq)),
         new(nameof(Quote), typeof(Quote)),
         new(nameof(PoDispatch), typeof(PoDispatch)),
+        new(nameof(WorklistTask), typeof(WorklistTask)),
+        new(nameof(WorklistEntry), typeof(WorklistEntry)),
     ];
+
+    /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
+    public static bool IsAppendOnly(Type clr) => clr == typeof(WorklistTask) || clr == typeof(WorklistEntry);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
     private static readonly Dictionary<Type, AggregateType> ByClr = Types.ToDictionary(t => t.Clr);
@@ -42,6 +47,12 @@ public static class Aggregates
     {
         [typeof(PurchaseOrder)] = [nameof(PurchaseOrder.DeliveryStatus), nameof(PurchaseOrder.ReviewedAt), nameof(PurchaseOrder.ReviewedByName)],
         [typeof(DeliveryOrder)] = [nameof(DeliveryOrder.InvoiceId)],
+        [typeof(WorklistTask)] =
+        [
+            nameof(WorklistTask.Title), nameof(WorklistTask.Description), nameof(WorklistTask.Priority), nameof(WorklistTask.Status),
+            nameof(WorklistTask.PlannedDate), nameof(WorklistTask.TargetDate), nameof(WorklistTask.AssigneeName), nameof(WorklistTask.PercentComplete),
+            nameof(WorklistTask.DeferralCount), nameof(WorklistTask.CompletedAt), nameof(WorklistTask.VerifiedAt), nameof(WorklistTask.LastEntryAt),
+        ],
     };
 
     public static string[] LocalColumns(Type clr) => LocalOnly.GetValueOrDefault(clr, []);
@@ -54,6 +65,8 @@ public static class Aggregates
         DeliveryOrder d => d.OwnerStage,
         Rfq r => r.OwnerStage,
         Quote q => q.OwnerStage,
+        WorklistTask t => t.OwnerStage,
+        WorklistEntry e => e.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -63,6 +76,8 @@ public static class Aggregates
         else if (root is DeliveryOrder d) d.OwnerStage = stage;
         else if (root is Rfq r) r.OwnerStage = stage;
         else if (root is Quote q) q.OwnerStage = stage;
+        else if (root is WorklistTask t) t.OwnerStage = stage;
+        else if (root is WorklistEntry e) e.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

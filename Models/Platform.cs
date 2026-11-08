@@ -34,7 +34,8 @@ public enum DocType
     Rfq,
     PurchaseOrder,
     Delivery,
-    Invoice
+    Invoice,
+    Worklist
 }
 
 /// <summary>
@@ -111,7 +112,7 @@ public static class VesselRules
     private static readonly HashSet<Type> Writable =
     [
         typeof(Requisition), typeof(RequisitionLine), typeof(Attachment), typeof(AuditEntry), typeof(SyncDirty),
-        typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember), typeof(DeliveryOrder), typeof(DeliveryOrderLine),
+        typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember), typeof(DeliveryOrder), typeof(DeliveryOrderLine), typeof(WorklistTask), typeof(WorklistEntry),
         typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine), typeof(PoApproval), typeof(PurchaseOrder), typeof(PoLine),
     ];
 

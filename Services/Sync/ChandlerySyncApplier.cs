@@ -318,6 +318,8 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
                 throw new DeferredException("The delivery refers to a purchase order that has not arrived yet.");
             if (aggregate.Clr == typeof(Quote) && !await db.Rfqs.AnyAsync(r => r.Id == MasterData.ReadGuid(payload, nameof(Quote.RfqId)), ct))
                 throw new DeferredException("The quote refers to an RFQ that has not arrived yet.");
+            if (aggregate.Clr == typeof(WorklistEntry) && !await db.WorklistTasks.AnyAsync(t => t.Id == MasterData.ReadGuid(payload, nameof(WorklistEntry.TaskId)), ct))
+                throw new DeferredException("The entry belongs to a task that has not arrived yet.");
             var vesselId = await SyncPublisher.VesselOfAsync(db, aggregate, payload, ct);
             var vesselNode = vesselId is { } v ? await db.Vessels.Where(x => x.Id == v).Select(x => x.NodeId).FirstOrDefaultAsync(ct) : null;
             if (vesselNode?.ToString("N") != stream.NodeId)
@@ -365,6 +367,10 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             db.SyncDirties.Add(new SyncDirty { DocType = aggregate.DocType, DocId = handed.Id, At = now });
             await db.SaveChangesAsync(ct);
         }
+
+        // A timeline entry arrived: this side re-reads the task's history and works out its current state for itself.
+        if (entry.Entity is WorklistEntry arrivedEntry)
+            await WorklistProjection.RefreshAsync(db, arrivedEntry.TaskId, ct);
 
         // An order the vessel approved reached the office: the supplier can see it in the portal from now on, and the vessel is told.
         if (atHub && entry.Entity is PurchaseOrder released && released.Status == PoStatus.Approved && released.OwnerStage == SyncStages.Vessel)

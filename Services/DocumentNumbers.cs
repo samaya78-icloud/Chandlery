@@ -23,6 +23,7 @@ public static class DocumentNumbers
         DocType.PurchaseOrder => "PO",
         DocType.Delivery => "DO",
         DocType.Invoice => "INV",
+        DocType.Worklist => "WL",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

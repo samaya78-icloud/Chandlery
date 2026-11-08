@@ -28,6 +28,7 @@ public static class DbSeeder
             await EnsureTaxCodesAsync(db);
             await EnsureCurrenciesAsync(db);
             await EnsureUomsAsync(db);
+            await EnsureWorklistListsAsync(db);
             await EnsureVesselCodesAsync(db);
             return;
         }
@@ -205,6 +206,7 @@ public static class DbSeeder
         await EnsureTaxCodesAsync(db);
         await EnsureCurrenciesAsync(db);
         await EnsureUomsAsync(db);
+        await EnsureWorklistListsAsync(db);
         await EnsureVesselCodesAsync(db);
     }
 
@@ -220,6 +222,14 @@ public static class DbSeeder
                 taken.Add(vessel.ShortCode);
             }
         }
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Gives every company the starter worklist lists (sources, natures, categories) it does not have yet. Idempotent.</summary>
+    private static async Task EnsureWorklistListsAsync(ChandleryDbContext db)
+    {
+        foreach (var companyId in await db.Companies.Select(c => c.Id).ToListAsync())
+            await Chandlery.Services.WorklistLists.EnsureDefaultsAsync(db, companyId);
         await db.SaveChangesAsync();
     }
 
