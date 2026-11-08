@@ -73,6 +73,16 @@
         WorklistPriority.Urgent => ("Urgent", "danger"),
         WorklistPriority.Normal => ("Normal", "neutral"),
 
+        InspectionStatus.Draft => ("Draft", "neutral"),
+        InspectionStatus.Submitted => ("Submitted", "info"),
+        InspectionStatus.InReview => ("In review", "warning"),
+        InspectionStatus.Returned => ("Returned", "danger"),
+        InspectionStatus.Reviewed => ("Reviewed", "success"),
+        TankHealth.NotInspected => ("Not inspected", "neutral"),
+        TankHealth.Clean => ("No exceptions", "success"),
+        TankHealth.Exceptions => ("Exceptions", "warning"),
+        TankHealth.Bad => ("Bad rating", "danger"),
+
         null => ("", "neutral"),
         _ => (Humanize(value.ToString() ?? ""), "neutral")
     };

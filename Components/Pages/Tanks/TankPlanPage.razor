@@ -1,0 +1,276 @@
+@page "/tanks"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject TankService Svc
+@inject TankInspectionService Inspections
+
+<PageTitle>Tanks · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Tanks"
+            Subtitle="The tank plan: where each tank sits, what it is, and how its last inspection went. Click a tank to see its details and history.">
+    <Actions>
+        <button class="btn btn-primary" @onclick="StartAdd">+ Add tank</button>
+        @if (!NodeContext.Current.IsVessel && _vessels.Count > 1) { <a href="/tanks/copy" class="btn btn-secondary">Copy to sister vessels</a> }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Tank inspection is switched off" Message="The module has not been switched on for this vessel." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId" @bind:after="ChangeVesselAsync">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <div>
+            <div class="mb-1">Colour by</div>
+            <div class="flex gap-2">
+                <button class="btn btn-sm @(!_byHealth ? "btn-primary" : "btn-secondary")" @onclick="() => _byHealth = false">Tank type</button>
+                <button class="btn btn-sm @(_byHealth ? "btn-primary" : "btn-secondary")" @onclick="() => _byHealth = true">Latest inspection</button>
+            </div>
+        </div>
+        <label class="flex items-center gap-2"><input type="checkbox" @bind="_showInactive" @bind:after="LoadAsync" /> Show tanks out of service</label>
+        <div class="ml-auto flex flex-wrap gap-3 text-xs">
+            @if (_byHealth)
+            {
+                @foreach (var h in Enum.GetValues<TankHealth>()) { <span class="flex items-center gap-1"><span class="inline-block h-3 w-3 rounded" style="background:@TankLook.Colour(h)"></span>@TankLook.Label(h)</span> }
+            }
+            else
+            {
+                @foreach (var t in Enum.GetValues<TankType>()) { <span class="flex items-center gap-1"><span class="inline-block h-3 w-3 rounded" style="background:@TankLook.Colour(t)"></span>@TankLook.Label(t)</span> }
+            }
+        </div>
+    </div>
+
+    <div class="card mb-5 overflow-x-auto p-4">
+        <svg viewBox="0 0 1000 400" class="w-full min-w-[640px]" role="img" aria-label="Tank plan, profile view with the bow to the right">
+            <path d="M10 30 H880 Q990 40 990 200 Q990 360 880 370 H10 Q0 370 0 340 V60 Q0 30 10 30 Z" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2" />
+            <text x="14" y="22" font-size="11" fill="currentColor" fill-opacity="0.5">Stern</text>
+            <text x="950" y="22" font-size="11" fill="currentColor" fill-opacity="0.5" text-anchor="end">Bow</text>
+            @foreach (var row in _rows)
+            {
+                var t = row.Tank;
+                var fill = _byHealth ? TankLook.Colour(row.Health) : TankLook.Colour(t.Type);
+                var selected = _selected?.Tank.Id == t.Id;
+                <g class="cursor-pointer" @onclick="() => Select(row)" role="button" aria-label="@($"{t.Code} {t.Name}")">
+                    <rect x="@(t.PlanX * 10)" y="@(t.PlanY * 10)" width="@(t.PlanWidth * 10)" height="@(t.PlanHeight * 10)" rx="6"
+                          fill="@fill" fill-opacity="@(t.IsActive ? "0.55" : "0.15")" stroke="@(selected ? "currentColor" : fill)" stroke-width="@(selected ? 4 : 2)" />
+                    <text x="@(t.PlanX * 10 + t.PlanWidth * 5)" y="@(t.PlanY * 10 + t.PlanHeight * 5 + 5)" font-size="14" font-weight="700" text-anchor="middle" fill="currentColor">@t.Code</text>
+                </g>
+            }
+            @if (_form is not null && _fieldsValid)
+            {
+                <rect x="@(_x * 10)" y="@(_y * 10)" width="@(_w * 10)" height="@(_h * 10)" rx="6" fill="none" stroke="currentColor" stroke-width="3" stroke-dasharray="8 6" />
+            }
+        </svg>
+        @if (_rows.Count == 0) { <p class="mt-2 text-sm text-muted">No tanks yet. Add the first one, or the office can copy a sister vessel's tank list.</p> }
+    </div>
+
+    @if (_form is not null)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">@(_editing is null ? "Add a tank" : $"Edit {_editing.Name}")</h2>
+            <div class="grid gap-3 md:grid-cols-4">
+                <label>Code <input class="input mt-1" @bind="_code" placeholder="e.g. 2P" /></label>
+                <label class="md:col-span-2">Name <input class="input mt-1" @bind="_name" placeholder="e.g. No. 2 wing ballast tank (port)" /></label>
+                <label>Type
+                    <select class="select mt-1" @bind="_type">
+                        @foreach (var t in Enum.GetValues<TankType>()) { <option value="@t">@TankLook.Label(t)</option> }
+                    </select>
+                </label>
+                <label>Plan: column (0 to @(TankService.PlanColumns - 1)) <input type="number" min="0" class="input mt-1" @bind="_x" @bind:event="oninput" /></label>
+                <label>Plan: row (0 to @(TankService.PlanRows - 1)) <input type="number" min="0" class="input mt-1" @bind="_y" @bind:event="oninput" /></label>
+                <label>Width (columns) <input type="number" min="1" class="input mt-1" @bind="_w" @bind:event="oninput" /></label>
+                <label>Height (rows) <input type="number" min="1" class="input mt-1" @bind="_h" @bind:event="oninput" /></label>
+                <label>Steel grade, deck <input class="input mt-1" @bind="_deck" /></label>
+                <label>Steel grade, bottom <input class="input mt-1" @bind="_bottom" /></label>
+                <label>Steel grade, side <input class="input mt-1" @bind="_side" /></label>
+                <label>Steel grade, bulkhead <input class="input mt-1" @bind="_bulkhead" /></label>
+                <label class="md:col-span-2">Original coating <input class="input mt-1" @bind="_coating" /></label>
+                <label>Coated area (m²) <input type="number" min="0" step="0.1" class="input mt-1" @bind="_coatedArea" /></label>
+                <label>Cathodic protection <input class="input mt-1" @bind="_cathodic" placeholder="e.g. Zinc anodes" /></label>
+                <label>Protected area (m²) <input type="number" min="0" step="0.1" class="input mt-1" @bind="_protectedArea" /></label>
+                @if (_editing is not null)
+                {
+                    <label class="flex items-end gap-2 pb-2"><input type="checkbox" @bind="_active" /> In service</label>
+                }
+            </div>
+            <p class="mt-2 text-xs text-muted">The dashed outline on the plan above shows where the tank will sit.</p>
+            <div class="mt-4 flex gap-2">
+                <button class="btn btn-primary" @onclick="SaveAsync">@(_editing is null ? "Add tank" : "Save")</button>
+                <button class="btn btn-ghost" @onclick="CancelForm">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_selected is { } sel)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <div class="flex flex-wrap items-center gap-3">
+                <span class="font-mono text-sm font-semibold">@sel.Tank.Code</span>
+                <h2 class="font-display text-lg font-extrabold text-ink">@sel.Tank.Name</h2>
+                <span class="chip chip-plain">@TankLook.Label(sel.Tank.Type)</span>
+                <StatusChip Value="@sel.Health" />
+                @if (!sel.Tank.IsActive) { <span class="chip" data-tone="neutral">out of service</span> }
+                <span class="ml-auto"><button class="btn btn-secondary btn-sm" @onclick="() => StartEdit(sel)">Edit</button></span>
+            </div>
+            <dl class="mt-4 grid gap-x-6 gap-y-2 md:grid-cols-4">
+                @Fact("Steel, deck", sel.Tank.SteelGradeDeck)
+                @Fact("Steel, bottom", sel.Tank.SteelGradeBottom)
+                @Fact("Steel, side", sel.Tank.SteelGradeSide)
+                @Fact("Steel, bulkhead", sel.Tank.SteelGradeBulkhead)
+                @Fact("Original coating", sel.Tank.OriginalCoating)
+                @Fact("Coated area", sel.Tank.CoatedAreaM2 is { } c ? $"{c:0.#} m²" : "")
+                @Fact("Cathodic protection", sel.Tank.CathodicProtection)
+                @Fact("Protected area", sel.Tank.ProtectedAreaM2 is { } p ? $"{p:0.#} m²" : "")
+            </dl>
+            <h3 class="mt-5 mb-2 font-semibold text-ink">Inspection history</h3>
+            @if (_history.Count == 0) { <p class="text-muted">This tank has not been inspected yet.</p> }
+            else
+            {
+                <ul class="divide-y divide-line/60">
+                    @foreach (var h in _history)
+                    {
+                        <li class="flex flex-wrap items-center gap-3 py-2">
+                            <span class="font-mono text-xs font-semibold">@h.Inspection.Code</span>
+                            <span>@h.Inspection.InspectedOn.ToString("dd MMM yyyy")</span>
+                            <span class="text-muted">@h.Inspection.Place</span>
+                            <StatusChip Value="@h.Status" />
+                            @if (h.Inspection.ExceptionCount > 0) { <span class="chip" data-tone="@(h.Inspection.HasBadRating ? "danger" : "warning")">@h.Inspection.ExceptionCount exception(s)</span> }
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    @if (_rows.Count > 0)
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="p-3">Code</th><th class="p-3">Name</th><th class="p-3">Type</th><th class="p-3">Last inspected</th><th class="p-3">Latest result</th><th class="p-3"></th></tr>
+                </thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var row in _rows)
+                    {
+                        <tr class="@(_selected?.Tank.Id == row.Tank.Id ? "bg-accent-50" : "")">
+                            <td class="p-3 font-mono text-xs font-semibold">@row.Tank.Code</td>
+                            <td class="p-3"><button class="link text-left" @onclick="() => Select(row)">@row.Tank.Name</button>@if (!row.Tank.IsActive) { <span class="chip ml-2" data-tone="neutral">out of service</span> }</td>
+                            <td class="p-3">@TankLook.Label(row.Tank.Type)</td>
+                            <td class="p-3">@(row.LastInspectedOn?.ToString("dd MMM yyyy") ?? "never")</td>
+                            <td class="p-3"><StatusChip Value="@row.Health" /></td>
+                            <td class="p-3 text-right"><button class="btn btn-ghost btn-sm" @onclick="() => StartEdit(row)">Edit</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _byHealth, _showInactive, _active = true;
+    private string? _error;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<TankPlanRow> _rows = [];
+    private List<InspectionRow> _history = [];
+    private TankPlanRow? _selected;
+
+    // the add / edit form
+    private object? _form;
+    private Tank? _editing;
+    private string _code = "", _name = "", _deck = "", _bottom = "", _side = "", _bulkhead = "", _coating = "", _cathodic = "";
+    private TankType _type;
+    private int _x, _y, _w = 10, _h = 8;
+    private decimal? _coatedArea, _protectedArea;
+
+    private bool _fieldsValid => _w >= 1 && _h >= 1 && _x >= 0 && _y >= 0 && _x + _w <= TankService.PlanColumns && _y + _h <= TankService.PlanRows;
+
+    private RenderFragment Fact(string label, string value) => __builder =>
+    {
+        <div><dt class="text-xs text-muted">@label</dt><dd>@(value == "" ? "–" : value)</dd></div>
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task ChangeVesselAsync()
+    {
+        _selected = null; _form = null; _history = [];
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_vesselId == Guid.Empty) return;
+        _rows = await Svc.PlanAsync(_companyId, _vesselId, _showInactive);
+        if (_selected is { } s) _selected = _rows.FirstOrDefault(r => r.Tank.Id == s.Tank.Id);
+        _history = _selected is null ? [] : await Inspections.ListAsync(_companyId, tankId: _selected.Tank.Id);
+    }
+
+    private async Task Select(TankPlanRow row)
+    {
+        _error = null;
+        _selected = row;
+        _history = await Inspections.ListAsync(_companyId, tankId: row.Tank.Id);
+    }
+
+    private void StartAdd()
+    {
+        _error = null; _editing = null; _form = new();
+        _code = _name = _deck = _bottom = _side = _bulkhead = _coating = _cathodic = "";
+        _type = TankType.Ballast; (_x, _y, _w, _h) = (0, 0, 10, 8); _coatedArea = _protectedArea = null; _active = true;
+    }
+
+    private void StartEdit(TankPlanRow row)
+    {
+        var t = row.Tank;
+        _error = null; _editing = t; _form = new();
+        (_code, _name, _type, _x, _y, _w, _h) = (t.Code, t.Name, t.Type, t.PlanX, t.PlanY, t.PlanWidth, t.PlanHeight);
+        (_deck, _bottom, _side, _bulkhead, _coating, _coatedArea, _cathodic, _protectedArea) = (t.SteelGradeDeck, t.SteelGradeBottom, t.SteelGradeSide, t.SteelGradeBulkhead, t.OriginalCoating, t.CoatedAreaM2, t.CathodicProtection, t.ProtectedAreaM2);
+        _active = t.IsActive;
+    }
+
+    private void CancelForm() { _form = null; _editing = null; _error = null; }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        try
+        {
+            var input = new TankInput(_code, _name, _type, _x, _y, _w, _h, _deck, _bottom, _side, _bulkhead, _coating, _coatedArea, _cathodic, _protectedArea);
+            if (_editing is null) await Svc.AddTankAsync(_companyId, _vesselId, input, _actor);
+            else await Svc.UpdateTankAsync(_companyId, _editing.Id, input, _active);
+            _form = null; _editing = null;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}
