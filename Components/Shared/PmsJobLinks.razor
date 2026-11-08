@@ -1,0 +1,79 @@
+@inject PmsIntegrationService Links
+@inject AuthenticationStateProvider Auth
+
+<div class="card p-5 text-sm">
+    <h2 class="mb-3 font-display text-base font-extrabold text-ink">Parts and defects</h2>
+
+    <div class="mb-4">
+        @if (_draft is { SpareLines: > 0 } draft)
+        {
+            <a href="/company/requisitions/new?pmsjob=@Job.Id" class="btn btn-secondary btn-sm">Order the spares (@draft.SpareLines)</a>
+            <p class="mt-1 text-xs text-muted">Opens a requisition for this vessel with the spares kept for @draft.Machinery already filled in@(Job.IsCritical ? ", marked urgent because the job is critical" : "").</p>
+        }
+        else
+        {
+            <p class="text-xs text-muted">No spares are kept for this machinery. Add them under <a href="/pms/machinery" class="link">Machinery</a> and they can be ordered from here.</p>
+        }
+    </div>
+
+    <div class="border-t border-line pt-3">
+        <button class="btn btn-secondary btn-sm" @onclick="() => _open = !_open">Report a defect</button>
+        @if (_error is not null) { <p class="mt-2 text-rose-700">@_error</p> }
+        @if (_notice is not null) { <p class="mt-2 text-emerald-700">@_notice</p> }
+        @if (_open)
+        {
+            <div class="mt-3 space-y-2">
+                <label class="block">Title <input class="input mt-1" @bind="_title" placeholder="@($"Defect on {_draft?.Machinery}: {Job.Title}")" /></label>
+                <label class="block">What was found <textarea class="textarea mt-1" rows="3" @bind="_description"></textarea></label>
+                <button class="btn btn-primary" @onclick="RaiseAsync">Raise on the worklist</button>
+                <p class="text-xs text-muted">Creates a worklist task linked to this job@(Job.IsCritical ? ", urgent because the job is critical" : "").</p>
+            </div>
+        }
+    </div>
+
+    @if (_tasks.Count > 0)
+    {
+        <div class="mt-4 border-t border-line pt-3">
+            <p class="mb-1 text-xs font-bold uppercase tracking-wider text-muted">Worklist tasks for this job</p>
+            <ul class="space-y-1">
+                @foreach (var t in _tasks)
+                {
+                    <li class="flex flex-wrap items-center gap-2"><a href="/worklist/@t.Id" class="link font-mono text-xs font-semibold">@t.Code</a><span>@t.Title</span><StatusChip Value="@t.Status" /></li>
+                }
+            </ul>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public PlannedJob Job { get; set; } = null!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private Actor _actor = Actor.System;
+    private RequisitionDraft? _draft;
+    private List<WorklistTask> _tasks = [];
+    private bool _open;
+    private string? _error, _notice;
+    private string _title = "", _description = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _actor = Actor.From((await Auth.GetAuthenticationStateAsync()).User);
+        _draft = await Links.RequisitionDraftAsync(CompanyId, Job.Id);
+        _tasks = await Links.TasksForJobAsync(CompanyId, Job.Id);
+    }
+
+    private async Task RaiseAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var task = await Links.RaiseDefectAsync(CompanyId, Job.Id, _title, _description, _actor);
+            _notice = $"Raised {task.Code} on the worklist.";
+            _title = _description = ""; _open = false;
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

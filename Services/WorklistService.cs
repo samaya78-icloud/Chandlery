@@ -27,6 +27,7 @@ public static class WorklistLinkTypes
     public const string Requisition = "requisition";
     public const string Order = "order";
     public const string Task = "task";
+    public const string PmsJob = "pmsjob";
 
     /// <summary>Where the link opens, on the office or on a vessel.</summary>
     public static string Href(string type, Guid target, bool onVessel) => type switch
@@ -34,6 +35,7 @@ public static class WorklistLinkTypes
         Requisition => $"/company/requisitions/{target}",
         Order => onVessel ? $"/vessel/orders/{target}" : $"/company/purchase-orders/{target}",
         Task => $"/worklist/{target}",
+        PmsJob => $"/pms/jobs/{target}",
         _ => "#",
     };
 }

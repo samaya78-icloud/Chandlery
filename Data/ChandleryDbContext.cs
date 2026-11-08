@@ -62,6 +62,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<JobDeferralDecision> JobDeferralDecisions => Set<JobDeferralDecision>();
     public DbSet<PlanChangeRequest> PlanChangeRequests => Set<PlanChangeRequest>();
     public DbSet<PlanChangeDecision> PlanChangeDecisions => Set<PlanChangeDecision>();
+    public DbSet<MachinerySpare> MachinerySpares => Set<MachinerySpare>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -510,6 +511,20 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
         });
 
+        modelBuilder.Entity<MachinerySpare>(b =>
+        {
+            b.Property(m => m.Quantity).HasPrecision(12, 2);
+            b.Property(m => m.Note).HasMaxLength(300);
+            b.Property(m => m.CreatedByName).HasMaxLength(120);
+            b.Property(m => m.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(m => m.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(m => m.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<MachineryItem>().WithMany().HasForeignKey(m => m.MachineryItemId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Item>().WithMany().HasForeignKey(m => m.ItemId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(m => new { m.MachineryItemId, m.ItemId }).IsUnique();
+            b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<PoDispatch>(b =>
         {
             b.Property(d => d.AcknowledgedByName).HasMaxLength(120);
@@ -808,6 +823,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         WorklistTask t => t.Code,
         MachineryItem m => m.Name,
         PlannedJob j => j.Code,
+        MachinerySpare sp => sp.Id.ToString(),
         _ => "",
     };
 

@@ -1,0 +1,149 @@
+@page "/pms/sister-vessels"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject PmsIntegrationService Links
+@inject PmsReportService Reports
+
+<PageTitle>Sister vessels · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Sister vessels"
+            Subtitle="Copy one vessel's maintenance plan to others, and see how a vessel has drifted from its sister. Copying never changes what a vessel already has.">
+    <Actions>
+        <a href="/pms/fleet" class="btn btn-secondary">Fleet maintenance</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_vessels.Count < 2)
+{
+    <EmptyState Title="Two vessels are needed" Message="Switch the PMS module on for at least two vessels to copy a plan or compare them." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    <div class="grid gap-6 lg:grid-cols-2">
+        <div class="card p-5 text-sm">
+            <h2 class="font-display text-lg font-extrabold text-ink">Copy a plan</h2>
+            <p class="mb-3 text-xs text-muted">Machinery is matched by its name along the tree and jobs by code. What is missing is added; jobs start counting from today with the definition and library version they have on the source.</p>
+            <label class="block">Copy from
+                <select class="select mt-1" @bind="_source">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+            <label class="mt-3 block">Copy to
+                <select class="select mt-1" @bind="_targetGroup">
+                    <option value="@Guid.Empty">A single vessel…</option>
+                    @foreach (var g in _groups) { <option value="@g.Id">All vessels of @g.Name</option> }
+                </select>
+            </label>
+            @if (_targetGroup == Guid.Empty)
+            {
+                <label class="mt-3 block">Vessel
+                    <select class="select mt-1" @bind="_target">
+                        <option value="@Guid.Empty">Choose…</option>
+                        @foreach (var v in _vessels.Where(v => v.Id != _source)) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+            }
+            <label class="mt-3 flex items-center gap-2"><input type="checkbox" @bind="_spares" /> Copy the spares lists too</label>
+            <button class="btn btn-primary mt-4" @onclick="CloneAsync">Copy the plan</button>
+
+            @if (_results.Count > 0)
+            {
+                <ul class="mt-4 space-y-1 text-xs">
+                    @foreach (var r in _results)
+                    {
+                        <li class="rounded-lg bg-surface-2/60 px-3 py-2"><span class="font-semibold">@r.Vessel</span>:
+                            @(r.Problem ?? $"added {r.ItemsAdded} machinery, {r.JobsAdded} job(s), {r.SparesAdded} spare(s)")</li>
+                    }
+                </ul>
+            }
+        </div>
+
+        <div class="card p-5 text-sm">
+            <h2 class="font-display text-lg font-extrabold text-ink">Drift from a sister vessel</h2>
+            <p class="mb-3 text-xs text-muted">What differs from the reference vessel: machinery or jobs that are missing, extra, or set up differently.</p>
+            <div class="grid gap-3 md:grid-cols-2">
+                <label>Reference vessel
+                    <select class="select mt-1" @bind="_reference">
+                        @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+                <label>Compare
+                    <select class="select mt-1" @bind="_compare" @bind:after="DriftAsync">
+                        <option value="@Guid.Empty">Choose…</option>
+                        @foreach (var v in _vessels.Where(v => v.Id != _reference)) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+            </div>
+            <button class="btn btn-secondary mt-3" @onclick="DriftAsync">Compare</button>
+
+            @if (_drift is not null)
+            {
+                @if (_drift.Count == 0) { <p class="mt-4 text-emerald-700">No drift: the plans match.</p> }
+                else
+                {
+                    <ul class="mt-4 max-h-[26rem] divide-y divide-line/60 overflow-y-auto text-xs">
+                        @foreach (var d in _drift)
+                        {
+                            <li class="py-2">
+                                <span class="chip" data-tone="@(d.Kind == DriftKind.Different ? "warning" : d.Kind == DriftKind.MissingHere ? "danger" : "info")">@(d.Kind switch { DriftKind.MissingHere => "missing here", DriftKind.ExtraHere => "only here", _ => "different" })</span>
+                                <span class="ml-1 font-medium">@d.Machinery</span> @if (d.JobCode != "") { <span class="font-mono">· @d.JobCode</span> }
+                                <div class="text-muted">@d.Detail</div>
+                            </li>
+                        }
+                    </ul>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _source, _target, _targetGroup, _reference, _compare;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _spares = true;
+    private string? _error;
+    private List<PmsVesselOption> _vessels = [];
+    private List<VesselGroup> _groups = [];
+    private List<CloneResult> _results = [];
+    private List<DriftRow>? _drift;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        (_vessels, _groups) = await Reports.VesselsAsync(_companyId);
+        if (_vessels.Count > 0) _source = _reference = _vessels[0].Id;
+        _loaded = true;
+    }
+
+    private async Task CloneAsync()
+    {
+        _error = null; _results = [];
+        try
+        {
+            var targets = _targetGroup == Guid.Empty
+                ? (_target == Guid.Empty ? throw new InvalidOperationException("Choose the vessel to copy to.") : new List<Guid> { _target })
+                : _vessels.Where(v => PolicyResolver.GroupChain(_groups, v.GroupId).Contains(_targetGroup) && v.Id != _source).Select(v => v.Id).ToList();
+            if (targets.Count == 0) throw new InvalidOperationException("There is no other vessel to copy to.");
+            _results = await Links.ClonePlanAsync(_companyId, _source, targets, _spares, _actor);
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task DriftAsync()
+    {
+        _error = null; _drift = null;
+        if (_compare == Guid.Empty) return;
+        try { _drift = await Links.DriftAsync(_companyId, _reference, _compare); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

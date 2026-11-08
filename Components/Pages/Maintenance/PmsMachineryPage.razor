@@ -87,6 +87,7 @@ else
                     <span class="ml-auto flex items-center gap-2 text-xs">
                         @if (jobs.Count > 0) { <span class="text-muted">@jobs.Count job(s)</span> }
                         @if (overdue > 0) { <span class="chip" data-tone="danger">@overdue overdue</span> }
+                        <button class="btn btn-ghost btn-sm" @onclick="() => ToggleSpares(m.Id)">Spares (@_spares.Count(x => x.Spare.MachineryItemId == m.Id))</button>
                         <button class="btn btn-ghost btn-sm" @onclick="() => StartJob(m.Id)">+ Job</button>
                     </span>
                 </div>
@@ -102,6 +103,7 @@ else
                         }
                     </ul>
                 }
+                @if (_sparesFor == m.Id) { @SparesPanel(m) }
                 @if (_jobFor == m.Id) { @JobForm(m) }
             </div>
         }
@@ -128,6 +130,11 @@ else
     private List<PlannedJob> _jobs = [];
     private List<JobTemplate> _templates = [];
     private List<Department> _departments = [];
+    private List<SpareRow> _spares = [];
+    private List<Item> _found = [];
+    private Guid _sparesFor, _pickedItem;
+    private string _spareTerm = "", _spareNote = "";
+    private decimal _spareQty = 1;
 
     protected override async Task OnInitializedAsync()
     {
@@ -147,6 +154,7 @@ else
         _items = await Svc.ListMachineryAsync(_companyId, _vesselId);
         _jobs = await Svc.ListJobsAsync(_companyId, _vesselId);
         _templates = await Svc.ListTemplatesAsync(_companyId);
+        _spares = await Svc.ListSparesAsync(_companyId, _vesselId);
         await using var db = await Factory.CreateDbContextAsync();
         db.CurrentCompanyId = _companyId;
         _departments = await db.Departments.AsNoTracking().Where(d => d.CompanyId == _companyId).OrderBy(d => d.Name).ToListAsync();
@@ -183,6 +191,69 @@ else
         }
         catch (InvalidOperationException ex) { _error = ex.Message; }
     }
+
+    private void ToggleSpares(Guid itemId)
+    {
+        _sparesFor = _sparesFor == itemId ? Guid.Empty : itemId;
+        _error = null; _found = []; _pickedItem = Guid.Empty; _spareTerm = _spareNote = ""; _spareQty = 1;
+    }
+
+    private async Task SearchAsync() => _found = await Svc.SearchItemsAsync(_companyId, _spareTerm);
+
+    private async Task AddSpareAsync(Guid machineryId)
+    {
+        _error = null;
+        try
+        {
+            if (_pickedItem == Guid.Empty) throw new InvalidOperationException("Search for the item and choose it.");
+            await Svc.AddSpareAsync(_companyId, machineryId, _pickedItem, _spareQty, _spareNote, _actor);
+            _found = []; _pickedItem = Guid.Empty; _spareTerm = _spareNote = ""; _spareQty = 1;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task RemoveSpareAsync(Guid spareId)
+    {
+        _error = null;
+        try { await Svc.SetSpareQuantityAsync(_companyId, spareId, 0); await LoadAsync(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private RenderFragment SparesPanel(MachineryItem item) => __builder =>
+    {
+        <div class="mt-3 rounded-xl bg-surface-2/60 p-4 text-sm">
+            <p class="mb-2 text-xs text-muted">What to order when a job on @item.Name is done. "Order the spares" on a job fills a requisition from this list.</p>
+            <ul class="mb-3 divide-y divide-line/60">
+                @foreach (var sp in _spares.Where(x => x.Spare.MachineryItemId == item.Id))
+                {
+                    <li class="flex flex-wrap items-center gap-3 py-1.5">
+                        <span class="font-mono text-xs font-semibold">@sp.ItemCode</span><span>@sp.ItemName</span>
+                        <span class="text-muted">× @sp.Spare.Quantity.ToString("0.##") @sp.Uom</span>
+                        @if (sp.Spare.Note != "") { <span class="text-xs text-muted">@sp.Spare.Note</span> }
+                        <button class="btn btn-ghost btn-sm ml-auto" @onclick="() => RemoveSpareAsync(sp.Spare.Id)">Remove</button>
+                    </li>
+                }
+                @if (!_spares.Any(x => x.Spare.MachineryItemId == item.Id)) { <li class="py-1.5 text-muted">No spares yet.</li> }
+            </ul>
+            <div class="grid gap-2 md:grid-cols-4">
+                <input class="input md:col-span-2" placeholder="Search the catalog by code or name…" @bind="_spareTerm" @bind:event="oninput" @bind:after="SearchAsync" />
+                <input type="number" step="0.01" min="0.01" class="input" @bind="_spareQty" />
+                <input class="input" placeholder="Note" @bind="_spareNote" />
+            </div>
+            @if (_found.Count > 0)
+            {
+                <ul class="mt-2 max-h-40 divide-y divide-line/60 overflow-y-auto rounded-lg border border-line/60">
+                    @foreach (var f in _found)
+                    {
+                        <li><button class="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-2 @(_pickedItem == f.Id ? "bg-accent-50" : "")" @onclick="() => _pickedItem = f.Id">
+                            <span class="font-mono text-xs font-semibold">@f.Code</span><span>@f.Name</span><span class="ml-auto text-xs text-muted">@f.UnitOfMeasure</span></button></li>
+                    }
+                </ul>
+            }
+            <button class="btn btn-primary btn-sm mt-3" disabled="@(_pickedItem == Guid.Empty)" @onclick="() => AddSpareAsync(item.Id)">Add spare</button>
+        </div>
+    };
 
     private void StartJob(Guid itemId)
     {

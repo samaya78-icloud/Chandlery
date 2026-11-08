@@ -6,7 +6,7 @@
 (function () {
   var root = document.documentElement;
   var THEMES = ['aurora', 'sunset', 'forest', 'orchid', 'graphite'];
-  var KEY_THEME = 'chandlery.theme', KEY_MODE = 'chandlery.mode', KEY_NAV = 'chandlery.nav';
+  var KEY_THEME = 'chandlery.theme', KEY_MODE = 'chandlery.mode', KEY_NAV = 'chandlery.nav', KEY_GROUPS = 'chandlery.navclosed';
   var dark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   function read(key, fallback) {
@@ -24,6 +24,15 @@
     root.setAttribute('data-pref', pref);
     root.setAttribute('data-mode', pref === 'system' ? (dark && dark.matches ? 'dark' : 'light') : pref);
     root.setAttribute('data-nav', read(KEY_NAV, 'expanded'));
+    // Menu groups the person has closed (space-separated names); the stylesheet hides them, so there is no flash on load.
+    var closed = read(KEY_GROUPS, '');
+    root.setAttribute('data-nav-closed', closed);
+    var heads = document.querySelectorAll('[data-toggle-group]');
+    for (var g = 0; g < heads.length; g++) {
+      var group = heads[g].closest('[data-nav-group]');
+      var hidden = !!group && (' ' + closed + ' ').indexOf(' ' + group.getAttribute('data-nav-group') + ' ') >= 0;
+      heads[g].setAttribute('aria-expanded', String(!hidden));
+    }
     if (!root.hasAttribute('data-drawer')) root.setAttribute('data-drawer', 'closed');
 
     var themeButtons = document.querySelectorAll('[data-set-theme]');
@@ -69,6 +78,17 @@
     if ((el = target.closest && target.closest('[data-set-mode]'))) {
       write(KEY_MODE, el.getAttribute('data-set-mode'));
       apply();
+      return;
+    }
+    if ((el = target.closest && target.closest('[data-toggle-group]'))) {
+      var owner = el.closest('[data-nav-group]');
+      if (owner) {
+        var name = owner.getAttribute('data-nav-group');
+        var names = read(KEY_GROUPS, '').split(' ').filter(function (n) { return n && n !== name; });
+        if (el.getAttribute('aria-expanded') !== 'false') names.push(name);      // it was open: close it
+        write(KEY_GROUPS, names.join(' '));
+        apply();
+      }
       return;
     }
     if (target.closest && target.closest('[data-toggle-nav]')) {

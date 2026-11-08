@@ -145,7 +145,31 @@
     background-image: linear-gradient(135deg, var(--accent-from), var(--accent-to));
     box-shadow: 0 10px 22px -10px rgb(var(--accent-glow) / .8);
   }
-  .nav-group-title { padding: 1rem 1.1rem .4rem; font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--c-muted); }
+  .nav-group-title {
+    display: flex; width: 100%; align-items: center; justify-content: space-between; gap: .5rem; padding: 1rem 1.1rem .4rem; border: 0; background: none; cursor: pointer; text-align: left;
+    font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--c-muted); transition: color .15s ease;
+  }
+  .nav-group-title:hover, .nav-group-title:focus-visible { color: var(--c-ink); }
+  /* Open: the arrow points up (click to hide). Closed: it points down (click to show). */
+  .nav-group-chevron { width: .9rem; height: .9rem; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transform: rotate(180deg); transition: transform .15s ease; }
+  html[data-nav-closed~="work"] [data-nav-group="work"] .nav-group-chevron,
+  html[data-nav-closed~="maintenance"] [data-nav-group="maintenance"] .nav-group-chevron,
+  html[data-nav-closed~="procurement"] [data-nav-group="procurement"] .nav-group-chevron,
+  html[data-nav-closed~="master-data"] [data-nav-group="master-data"] .nav-group-chevron,
+  html[data-nav-closed~="admin"] [data-nav-group="admin"] .nav-group-chevron,
+  html[data-nav-closed~="onboard"] [data-nav-group="onboard"] .nav-group-chevron,
+  html[data-nav-closed~="vessel"] [data-nav-group="vessel"] .nav-group-chevron,
+  html[data-nav-closed~="workspace"] [data-nav-group="workspace"] .nav-group-chevron { transform: none; }
+  html[data-nav-closed~="work"] [data-nav-group="work"] .nav-group-items,
+  html[data-nav-closed~="maintenance"] [data-nav-group="maintenance"] .nav-group-items,
+  html[data-nav-closed~="procurement"] [data-nav-group="procurement"] .nav-group-items,
+  html[data-nav-closed~="master-data"] [data-nav-group="master-data"] .nav-group-items,
+  html[data-nav-closed~="admin"] [data-nav-group="admin"] .nav-group-items,
+  html[data-nav-closed~="onboard"] [data-nav-group="onboard"] .nav-group-items,
+  html[data-nav-closed~="vessel"] [data-nav-group="vessel"] .nav-group-items,
+  html[data-nav-closed~="workspace"] [data-nav-group="workspace"] .nav-group-items { display: none; }
+  /* The icon-only sidebar has no headings to click, so it always shows every entry. */
+  @media (min-width: 1024px) { html[data-nav="collapsed"] .nav-group-items { display: block !important; } }
   .nav-link {
     position: relative; display: flex; align-items: center; gap: .8rem; margin: .1rem .65rem; padding: .6rem .8rem;
     border-radius: .8rem; font-size: .875rem; font-weight: 600; color: var(--c-ink-2); text-decoration: none;

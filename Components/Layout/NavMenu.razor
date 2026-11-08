@@ -9,10 +9,12 @@
             @if (NodeContext.Current.IsVessel)
             {
                 @Group("Onboard", _vesselItems)
+                @if (_maintenanceItems.Count > 0) { @Group("Maintenance", _maintenanceItems) }
             }
             else
             {
                 @Group("Work", _workItems)
+                @if (_maintenanceItems.Count > 0) { @Group("Maintenance", _maintenanceItems) }
                 @Group("Procurement", _procurementItems)
                 @Group("Master data", _masterItems)
             }
@@ -65,39 +67,50 @@
             }
             if (await PmsSvc.IsEnabledForCompanyAsync(companyId))
             {
-                var pms = new[] { new NavItem("/pms", "Planned maintenance", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon), new NavItem("/pms/machinery", "Machinery", PmsIcon) };
-                _workItems.Add(pms[0]);
-                _workItems.Add(new NavItem("/pms/fleet", "Fleet maintenance", PmsIcon));
-                _workItems.Add(pms[1]);
-                _workItems.Add(pms[2]);
-                _workItems.Add(new NavItem("/pms/reports", "Maintenance reports", PmsIcon));
-                var waiting = (await PmsSvc.PendingDeferralsAsync(companyId)).Count + (await PmsSvc.PlanChangesAsync(companyId, pendingOnly: true)).Count;
-                _workItems.Add(new NavItem("/pms/approvals", "Maintenance approvals", PmsIcon, waiting));
-                _workItems.Add(new NavItem("/pms/template-updates", "Template updates", PmsIcon));
-                _adminItems.Add(new NavItem("/company/pms-library", "Maintenance library", PmsIcon));
-                _vesselItems.InsertRange(Math.Min(2, _vesselItems.Count), pms);
-                _vesselItems.Insert(Math.Min(5, _vesselItems.Count), new NavItem("/pms/approvals", "Maintenance approvals", PmsIcon, (await PmsSvc.PendingDeferralsAsync(companyId)).Count));
+                var waiting = (await PmsSvc.PendingDeferralsAsync(companyId)).Count;
+                if (NodeContext.Current.IsVessel)
+                {
+                    _maintenanceItems.AddRange([new NavItem("/pms", "Plan", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon), new NavItem("/pms/machinery", "Machinery", PmsIcon),
+                        new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting)]);
+                }
+                else
+                {
+                    waiting += (await PmsSvc.PlanChangesAsync(companyId, pendingOnly: true)).Count;
+                    _maintenanceItems.AddRange([new NavItem("/pms", "Plan", PmsIcon), new NavItem("/pms/fleet", "Fleet overview", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon),
+                        new NavItem("/pms/machinery", "Machinery", PmsIcon), new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting), new NavItem("/pms/template-updates", "Template updates", PmsIcon),
+                        new NavItem("/pms/sister-vessels", "Sister vessels", PmsIcon), new NavItem("/pms/reports", "Reports", PmsIcon)]);
+                    _adminItems.Add(new NavItem("/company/pms-library", "Maintenance library", PmsIcon));
+                }
             }
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
                                 + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;
         }
     }
 
+    /// <summary>A menu group. Clicking its heading shows or hides its entries (the choice is remembered in the browser, see app.js).</summary>
     private RenderFragment Group(string title, IEnumerable<NavItem> items) => __builder =>
     {
-        <p class="nav-group-title">@title</p>
-        foreach (var item in items)
-        {
-            var badge = item.Href == "/company/approvals" ? _pendingApprovals : item.Badge;
-            <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
-                <span class="nav-icon">@item.Icon</span>
-                <span class="nav-label">@item.Label</span>
-                @if (badge > 0)
+        var slug = title.ToLowerInvariant().Replace(' ', '-');
+        <div class="nav-group" data-nav-group="@slug">
+            <button type="button" class="nav-group-title" data-toggle-group aria-expanded="true" title="Show or hide @title">
+                <span>@title</span>
+                <svg class="nav-group-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            <div class="nav-group-items">
+                @foreach (var item in items)
                 {
-                    <span class="nav-badge">@badge</span>
+                    var badge = item.Href == "/company/approvals" ? _pendingApprovals : item.Badge;
+                    <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
+                        <span class="nav-icon">@item.Icon</span>
+                        <span class="nav-label">@item.Label</span>
+                        @if (badge > 0)
+                        {
+                            <span class="nav-badge">@badge</span>
+                        }
+                    </NavLink>
                 }
-            </NavLink>
-        }
+            </div>
+        </div>
     };
 
     private static MarkupString Icon(string path) =>
@@ -163,6 +176,8 @@
         new("/company/profile", "Company Profile", ProfileIcon),
         new("/company/team", "Team", TeamIcon),
     };
+
+    private readonly List<NavItem> _maintenanceItems = new();
 
     private readonly List<NavItem> _vesselItems = new()
     {

@@ -279,3 +279,22 @@ public class PlanChangeDecision
     public DateTime At { get; set; }
     public string OwnerStage { get; set; } = SyncStages.Office;
 }
+
+/// <summary>A spare part kept for a machinery item: what a job on it needs when it is ordered. Made and changed by the side that added it.</summary>
+public class MachinerySpare
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid MachineryItemId { get; set; }
+
+    /// <summary>The catalog item to order.</summary>
+    public Guid ItemId { get; set; }
+
+    /// <summary>How many to order when the job is done.</summary>
+    public decimal Quantity { get; set; } = 1;
+    public string Note { get; set; } = "";
+    public string CreatedByName { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Office;
+}

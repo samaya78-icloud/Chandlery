@@ -114,7 +114,7 @@ public static class VesselRules
         typeof(Requisition), typeof(RequisitionLine), typeof(Attachment), typeof(AuditEntry), typeof(SyncDirty),
         typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember), typeof(DeliveryOrder), typeof(DeliveryOrderLine), typeof(WorklistTask), typeof(WorklistEntry),
         typeof(MachineryItem), typeof(PlannedJob), typeof(RunningHoursReading), typeof(JobCompletion), typeof(JobVerification),
-        typeof(JobDeferralRequest), typeof(JobDeferralDecision), typeof(PlanChangeRequest), typeof(PlanChangeDecision),
+        typeof(JobDeferralRequest), typeof(JobDeferralDecision), typeof(PlanChangeRequest), typeof(PlanChangeDecision), typeof(MachinerySpare),
         typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine), typeof(PoApproval), typeof(PurchaseOrder), typeof(PoLine),
     ];
 

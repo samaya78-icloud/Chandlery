@@ -194,7 +194,7 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>Checks a job and adds it to the context with its schedule worked out, without saving (so several can be saved together).</summary>
-    private static async Task<PlannedJob> StageJobAsync(ChandleryDbContext db, Guid companyId, MachineryItem item, NewPlannedJob input, Actor actor, JobTemplate? known = null)
+    internal static async Task<PlannedJob> StageJobAsync(ChandleryDbContext db, Guid companyId, MachineryItem item, NewPlannedJob input, Actor actor, JobTemplate? known = null)
     {
         var job = new PlannedJob
         {
@@ -765,6 +765,60 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
         foreach (var id in touched) await PmsProjection.RefreshJobAsync(db, id);
         return (updated, skipped);
+    }
+
+    // ---- spares (what to order for the jobs on a machinery item) ----
+
+    public async Task<List<Item>> SearchItemsAsync(Guid companyId, string term, int take = 12)
+    {
+        var t = (term ?? "").Trim();
+        if (t.Length < 2) return [];
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.Items.AsNoTracking().Where(i => i.CompanyId == companyId && i.IsActive && (EF.Functions.ILike(i.Code, $"%{t}%") || EF.Functions.ILike(i.Name, $"%{t}%")))
+            .OrderBy(i => i.Code).Take(take).ToListAsync();
+    }
+
+    public async Task<List<SpareRow>> ListSparesAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var spares = await db.MachinerySpares.AsNoTracking().Where(s => s.CompanyId == companyId && s.VesselId == vesselId).OrderBy(s => s.CreatedAt).ToListAsync();
+        var ids = spares.Select(s => s.ItemId).Distinct().ToList();
+        var items = await db.Items.AsNoTracking().Where(i => ids.Contains(i.Id)).ToDictionaryAsync(i => i.Id);
+        return spares.Select(s => new SpareRow(s, items.GetValueOrDefault(s.ItemId)?.Code ?? "", items.GetValueOrDefault(s.ItemId)?.Name ?? "(item removed)", items.GetValueOrDefault(s.ItemId)?.UnitOfMeasure ?? "")).ToList();
+    }
+
+    public async Task<MachinerySpare> AddSpareAsync(Guid companyId, Guid machineryItemId, Guid itemId, decimal quantity, string note, Actor actor)
+    {
+        if (quantity <= 0) throw new InvalidOperationException("The quantity must be more than zero.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var machinery = await db.MachineryItems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == machineryItemId && m.CompanyId == companyId) ?? throw new InvalidOperationException("That machinery is not on the plan.");
+        await RequireEnabledAsync(db, companyId, machinery.VesselId);
+        if (!await db.Items.AnyAsync(i => i.Id == itemId && i.CompanyId == companyId && i.IsActive)) throw new InvalidOperationException("That item is not in the catalog.");
+        if (await db.MachinerySpares.AnyAsync(s => s.MachineryItemId == machineryItemId && s.ItemId == itemId)) throw new InvalidOperationException("That item is already on this machinery's spares list.");
+
+        var spare = new MachinerySpare
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = machinery.VesselId, MachineryItemId = machineryItemId, ItemId = itemId, Quantity = quantity,
+            Note = (note ?? "").Trim(), CreatedByName = actor.Name, CreatedAt = DateTime.UtcNow,
+        };
+        db.MachinerySpares.Add(spare);
+        await db.SaveChangesAsync();
+        return spare;
+    }
+
+    /// <summary>Changes the quantity, or removes the spare when it is zero. Only the side that added it may.</summary>
+    public async Task SetSpareQuantityAsync(Guid companyId, Guid spareId, decimal quantity)
+    {
+        if (quantity < 0) throw new InvalidOperationException("The quantity cannot be negative.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var spare = await db.MachinerySpares.FirstOrDefaultAsync(s => s.Id == spareId && s.CompanyId == companyId) ?? throw new InvalidOperationException("Spare not found.");
+        if (quantity == 0) db.MachinerySpares.Remove(spare);
+        else spare.Quantity = quantity;
+        await db.SaveChangesAsync();
     }
 
     // ---- rules ----

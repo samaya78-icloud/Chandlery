@@ -40,6 +40,7 @@ public static class Aggregates
         new(nameof(JobDeferralDecision), typeof(JobDeferralDecision)),
         new(nameof(PlanChangeRequest), typeof(PlanChangeRequest)),
         new(nameof(PlanChangeDecision), typeof(PlanChangeDecision)),
+        new(nameof(MachinerySpare), typeof(MachinerySpare)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
@@ -92,6 +93,7 @@ public static class Aggregates
         JobDeferralDecision dd => dd.OwnerStage,
         PlanChangeRequest pq => pq.OwnerStage,
         PlanChangeDecision pd => pd.OwnerStage,
+        MachinerySpare ms => ms.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -112,6 +114,7 @@ public static class Aggregates
         else if (root is JobDeferralDecision deferralDecision) deferralDecision.OwnerStage = stage;
         else if (root is PlanChangeRequest changeRequest) changeRequest.OwnerStage = stage;
         else if (root is PlanChangeDecision changeDecision) changeDecision.OwnerStage = stage;
+        else if (root is MachinerySpare spare) spare.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

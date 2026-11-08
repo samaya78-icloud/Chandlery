@@ -6,6 +6,7 @@
 @inject RequisitionService Requisitions
 @inject NavigationManager Navigation
 @inject WorklistService Worklist
+@inject PmsIntegrationService PmsLinks
 
 <PageTitle>New Requisition · Chandlery</PageTitle>
 
@@ -14,6 +15,15 @@
 @if (_companyId != Guid.Empty)
 {
 <div class="max-w-5xl space-y-6">
+
+    @if (_spareHint.Count > 0)
+    {
+        <div class="rounded-xl border border-sky-300/60 bg-sky-50/70 px-4 py-3 text-sm text-sky-900 dark:bg-sky-500/10 dark:text-sky-100">
+            <p class="font-medium">Spares kept for this job's machinery</p>
+            <p class="mt-0.5 text-xs">The job has no department, so choose one below, then add these from the catalog:</p>
+            <ul class="mt-1 list-disc pl-5 text-xs">@foreach (var line in _spareHint) { <li>@line</li> }</ul>
+        </div>
+    }
 
     <div class="card p-6">
         <h2 class="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-400">Requisition details</h2>
@@ -109,6 +119,10 @@
     /// <summary>Set when the page is opened from a worklist task ("purchase needed"): fills in the vessel, department, urgency and a note.</summary>
     [SupplyParameterFromQuery(Name = "task")] public Guid? TaskId { get; set; }
     private WorklistTask? _fromTask;
+    private List<string> _spareHint = [];
+
+    /// <summary>Set when the page is opened from a maintenance job ("order the spares"): fills in the vessel, department, urgency, a note and a line for each spare.</summary>
+    [SupplyParameterFromQuery(Name = "pmsjob")] public Guid? PmsJobId { get; set; }
 
     private Guid _companyId;
     private Guid _departmentId;
@@ -150,6 +164,17 @@
             if (task.DepartmentId is { } dept && _departments.Any(d => d.Id == dept)) _departmentId = dept;
             _reqn.Urgency = task.Priority == WorklistPriority.Urgent ? Urgency.Urgent : Urgency.Normal;
             _reqn.Remarks = $"For worklist task {task.Code}: {task.Title}";
+        }
+
+        if (PmsJobId is { } pmsJobId && await PmsLinks.RequisitionDraftAsync(companyId, pmsJobId) is { } draft && _vessels.Any(v => v.Id == draft.Requisition.VesselId))
+        {
+            var d = draft.Requisition;
+            (_reqn.Type, _reqn.VesselId, _reqn.Urgency, _reqn.Remarks) = (d.Type, d.VesselId, d.Urgency, d.Remarks);
+            if (d.DepartmentId is { } dept && _departments.Any(x => x.Id == dept)) _departmentId = dept;
+            // The line picker only keeps items the chosen department may use, so the spares go in as lines only when the job's department is known;
+            // otherwise they are listed here to be added once a department is chosen.
+            if (_departmentId != Guid.Empty || _departments.Count == 0) _reqn.Lines = d.Lines;
+            else _spareHint = draft.SpareSummary;
         }
 
         _companyId = companyId; // the form is only rendered once everything above is loaded
