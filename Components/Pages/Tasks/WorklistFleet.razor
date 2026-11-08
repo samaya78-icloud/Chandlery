@@ -1,0 +1,136 @@
+@page "/worklist/fleet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject WorklistReportService Reports
+
+<PageTitle>Fleet worklist · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Fleet worklist" Subtitle="Where every vessel stands, what needs verifying, what the vessels have raised lately and what has been overdue too long.">
+    <Actions>
+        <a href="/worklist" class="btn btn-secondary">All tasks</a>
+        <a href="/worklist/reports" class="btn btn-secondary">Reports</a>
+    </Actions>
+</PageHeader>
+
+@if (_snap is null)
+{
+    <Skeleton Rows="4" />
+}
+else if (_all!.Vessels.Count == 0)
+{
+    <EmptyState Title="The worklist is switched off" Message="Switch the Worklist module on for a vessel or a vessel group first." />
+}
+else
+{
+    var today = DateTime.UtcNow.Date;
+    var rows = WorklistReports.PerVessel(_snap.Tasks, _snap.Vessels, today);
+    var verify = _snap.Tasks.Where(t => t.AwaitingVerification).OrderBy(t => t.CompletedAt).ToList();
+    var fresh = _snap.Tasks.Where(t => WorklistReports.IsNewFromVessel(t, today)).OrderByDescending(t => t.CreatedAt).ToList();
+    var escalated = WorklistReports.Escalations(_snap.Tasks, today, _days);
+
+    @if (_all.Groups.Count > 0)
+    {
+        <div class="card mb-5 flex flex-wrap items-end gap-3 p-4 text-sm">
+            <label>Vessel group
+                <select class="select mt-1" @bind="_group" @bind:after="ApplyGroup">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var g in _all.Groups) { <option value="@g.Id">@(new string('–', g.Level - 1) + " " + g.Name)</option> }
+                </select>
+            </label>
+        </div>
+    }
+
+    <div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard Label="Overdue" Value="@rows.Sum(r => r.Overdue).ToString()" Tone="danger" />
+        <StatCard Label="Awaiting verification" Value="@verify.Count.ToString()" Tone="warning" />
+        <StatCard Label="New from vessels" Value="@fresh.Count.ToString()" Hint="@($"last {WorklistReports.NewDays} days")" Tone="info" />
+        <StatCard Label="Open in all" Value="@rows.Sum(r => r.Open).ToString()" />
+    </div>
+
+    <h2 class="mb-2 font-display text-base font-extrabold text-ink">By vessel</h2>
+    <div class="card mb-8 overflow-x-auto">
+        <table class="w-full text-left text-sm">
+            <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                <th class="px-4 py-3 font-medium">Vessel</th><th class="px-4 py-3 text-right font-medium">Open</th><th class="px-4 py-3 text-right font-medium">Overdue</th>
+                <th class="px-4 py-3 text-right font-medium">Due in 7 days</th><th class="px-4 py-3 text-right font-medium">Urgent</th>
+                <th class="px-4 py-3 text-right font-medium">To verify</th><th class="px-4 py-3 text-right font-medium">New</th>
+            </tr></thead>
+            <tbody>
+            @foreach (var r in rows)
+            {
+                <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                    <td class="px-4 py-3 font-medium">@r.Vessel</td>
+                    <td class="px-4 py-3 text-right">@r.Open</td>
+                    <td class="px-4 py-3 text-right @(r.Overdue > 0 ? "font-semibold text-rose-600" : "")">@r.Overdue</td>
+                    <td class="px-4 py-3 text-right">@r.DueThisWeek</td>
+                    <td class="px-4 py-3 text-right">@r.Urgent</td>
+                    <td class="px-4 py-3 text-right">@r.AwaitingVerification</td>
+                    <td class="px-4 py-3 text-right">@r.NewFromVessel</td>
+                </tr>
+            }
+            @if (rows.Count == 0) { <tr><td colspan="7" class="px-4 py-6 text-center text-muted">No vessels in this group have the worklist on.</td></tr> }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+        @TaskList("Awaiting your verification", verify, "Completed by the vessel; verify to close them.")
+        @TaskList("New from vessels", fresh, $"Raised by a vessel in the last {WorklistReports.NewDays} days.")
+        <div class="lg:col-span-2">
+            <div class="mb-2 flex flex-wrap items-center gap-3">
+                <h2 class="font-display text-base font-extrabold text-ink">Escalation: overdue by more than</h2>
+                <input type="number" min="0" class="input w-24" @bind="_days" @bind:event="oninput" />
+                <span class="text-sm text-muted">days (@escalated.Count)</span>
+            </div>
+            @TaskList("", escalated, null, showOverdue: true)
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _group;
+    private int _days = 14;
+    private WorklistSnapshot? _all, _snap;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        _all = await Reports.SnapshotAsync(companyId);
+        _snap = _all;
+    }
+
+    private void ApplyGroup() => _snap = WorklistReportService.InGroup(_all!, _group == Guid.Empty ? null : _group);
+
+    private string VesselName(Guid id) => _all!.Vessels.FirstOrDefault(v => v.Id == id).Name ?? "";
+
+    private RenderFragment TaskList(string title, List<WorklistTask> tasks, string? help, bool showOverdue = false) => __builder =>
+    {
+        var today = DateTime.UtcNow.Date;
+        <section>
+            @if (title != "")
+            {
+                <h2 class="font-display text-base font-extrabold text-ink">@title <span class="chip" data-tone="neutral">@tasks.Count</span></h2>
+                @if (help is not null) { <p class="mb-2 text-xs text-muted">@help</p> }
+            }
+            <div class="card overflow-x-auto">
+                <table class="w-full text-left text-sm"><tbody>
+                @foreach (var t in tasks.Take(25))
+                {
+                    <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                        <td class="px-4 py-2.5 font-mono font-semibold whitespace-nowrap"><a href="/worklist/@t.Id" class="link">@t.Code</a></td>
+                        <td class="px-4 py-2.5"><a href="/worklist/@t.Id" class="hover:underline">@t.Title</a><div class="text-xs text-muted">@VesselName(t.VesselId)@(string.IsNullOrEmpty(t.AssigneeName) ? "" : " · " + t.AssigneeName)</div></td>
+                        <td class="px-4 py-2.5 text-right whitespace-nowrap text-xs">
+                            @if (showOverdue) { <span class="font-semibold text-rose-600">@WorklistReports.DaysOverdue(t, today) days overdue</span> }
+                            else { @(t.TargetDate?.ToString("dd MMM yyyy") ?? "") }
+                        </td>
+                    </tr>
+                }
+                @if (tasks.Count == 0) { <tr><td class="px-4 py-5 text-center text-muted">Nothing here.</td></tr> }
+                @if (tasks.Count > 25) { <tr><td colspan="3" class="px-4 py-2 text-center text-xs text-muted">Showing the first 25 of @tasks.Count.</td></tr> }
+                </tbody></table>
+            </div>
+        </section>
+    };
+}

@@ -23,6 +23,8 @@ else if (_company is { } c)
         </Actions>
     </PageHeader>
 
+    <WorklistTiles />
+
     <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard Label="Open requisitions" Value="@c.OpenRequisitions.ToString("N0")" Hint="@($"{c.RequisitionsWithoutRfq.Count} not yet sent out")" Href="/company/requisitions?f.status=Open">
             <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="m9 13 2 2 4-4"/></svg></Icon>

@@ -1,6 +1,6 @@
 # 05a. Worklist: plan (implements spec 05 in stages)
 
-Status: **approved 2026-11-07. W1 (foundation) and W2 (screens: board, task page with timeline and actions, office verify, lists admin, nav gated by the module switch) built 2026-11-08**; W3 to W5 to do. Builds on the sync engine, vessel groups and policy (module switches), crew logins, and the ownership patterns proven in procurement sync.
+Status: **approved 2026-11-07. W1 (foundation) and W2 (screens: board, task page with timeline and actions, office verify, lists admin, nav gated by the module switch) built 2026-11-08**; W3 (fleet worklist with group filter, reports with CSV, tiles on both homes, escalation list) built 2026-11-08; W4 and W5 to do. Builds on the sync engine, vessel groups and policy (module switches), crew logins, and the ownership patterns proven in procurement sync.
 
 ## 1. The core idea: history is the only thing that changes
 Spec 05 says nobody overwrites anyone else's work and history cannot be edited. The simplest design that guarantees it:

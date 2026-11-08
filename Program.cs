@@ -38,6 +38,7 @@ builder.Services.AddScoped<InvoiceService>();
 builder.Services.AddScoped<OrdersService>();
 builder.Services.AddScoped<VesselHomeService>();
 builder.Services.AddScoped<WorklistService>();
+builder.Services.AddScoped<WorklistReportService>();
 builder.Services.AddSingleton<SyncStatusService>();
 builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();
@@ -308,6 +309,24 @@ app.MapGet("/supplier/rfqs/{rfqId:guid}/worksheet", async (Guid rfqId, string? f
     return Results.File(QuoteSheet.BuildXlsx(rfq, items, quote),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName + ".xlsx");
 }).RequireAuthorization(policy => policy.RequireRole("SupplierAdmin", "SupplierUser"));
+
+// Worklist reports as CSV (office only): overdue, ageing, completion.
+app.MapGet("/worklist/reports/{kind}.csv", async (string kind, HttpContext http, WorklistReportService reports) =>
+{
+    if (NodeContext.Current.IsVessel || !Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var snap = await reports.SnapshotAsync(companyId);
+    var today = DateTime.UtcNow.Date;
+    var csv = kind switch
+    {
+        "overdue" => WorklistReports.TasksCsv(snap.Tasks.Where(t => !t.IsClosed && t.IsOverdue(today)).OrderByDescending(t => WorklistReports.DaysOverdue(t, today)), snap, today),
+        "ageing" => WorklistReports.AgeingCsv(WorklistReports.Ageing(snap.Tasks, today)),
+        "completion" => WorklistReports.CompletionCsv(WorklistReports.CompletionBySource(snap.Tasks, snap.Sources, today)),
+        _ => null,
+    };
+    if (csv is null) return Results.NotFound();
+    var utf8 = new System.Text.UTF8Encoding(true);
+    return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"worklist-{kind}-{today:yyyy-MM-dd}.csv");
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 // The formal purchase order as a PDF file: buyers get any of their POs (marked draft until approved), suppliers only their approved ones.
 app.MapGet("/company/purchase-orders/{poId:guid}/pdf", async (Guid poId, HttpContext http, PoDocumentService documents) =>

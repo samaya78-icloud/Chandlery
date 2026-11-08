@@ -1,0 +1,80 @@
+@page "/worklist/reports"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject WorklistReportService Reports
+
+<PageTitle>Worklist reports · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Worklist reports" Subtitle="Overdue items, how old the open ones are, and how much gets completed from each source. Each can be downloaded as a CSV file.">
+    <Actions>
+        <a href="/worklist/fleet" class="btn btn-secondary">Fleet worklist</a>
+    </Actions>
+</PageHeader>
+
+@if (_snap is null)
+{
+    <Skeleton Rows="4" />
+}
+else
+{
+    var today = DateTime.UtcNow.Date;
+    var overdue = _snap.Tasks.Where(t => !t.IsClosed && t.IsOverdue(today)).OrderByDescending(t => WorklistReports.DaysOverdue(t, today)).ToList();
+    var ageing = WorklistReports.Ageing(_snap.Tasks, today);
+    var rates = WorklistReports.CompletionBySource(_snap.Tasks, _snap.Sources, today);
+    var max = Math.Max(1, ageing.Max(a => a.Count));
+
+    <div class="grid gap-6 lg:grid-cols-2">
+        <div class="card p-5">
+            <div class="mb-3 flex items-center justify-between"><h2 class="font-display text-lg font-extrabold text-ink">Age of open tasks</h2><a href="/worklist/reports/ageing.csv" download class="btn btn-secondary btn-sm">CSV</a></div>
+            <ul class="space-y-2 text-sm">
+                @foreach (var a in ageing)
+                {
+                    <li>
+                        <div class="flex justify-between"><span>@a.Label</span><span class="font-medium">@a.Count</span></div>
+                        <div class="mt-1 h-2 rounded-full bg-surface-2"><div class="h-2 rounded-full bg-accent-500" style="width:@(100 * a.Count / max)%"></div></div>
+                    </li>
+                }
+            </ul>
+        </div>
+
+        <div class="card overflow-x-auto p-5">
+            <div class="mb-3 flex items-center justify-between"><h2 class="font-display text-lg font-extrabold text-ink">Completion by source</h2><a href="/worklist/reports/completion.csv" download class="btn btn-secondary btn-sm">CSV</a></div>
+            <table class="w-full text-left text-sm">
+                <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted"><th class="py-2 font-medium">Source</th><th class="py-2 text-right font-medium">Tasks</th><th class="py-2 text-right font-medium">Done</th><th class="py-2 text-right font-medium">Overdue</th><th class="py-2 text-right font-medium">Rate</th></tr></thead>
+                <tbody>
+                @foreach (var r in rates)
+                {
+                    <tr class="border-b border-line/60"><td class="py-2">@r.Source</td><td class="py-2 text-right">@r.Total</td><td class="py-2 text-right">@r.Completed</td><td class="py-2 text-right @(r.Overdue > 0 ? "text-rose-600" : "")">@r.Overdue</td><td class="py-2 text-right font-medium">@r.RatePercent%</td></tr>
+                }
+                @if (rates.Count == 0) { <tr><td colspan="5" class="py-5 text-center text-muted">No tasks yet.</td></tr> }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card overflow-x-auto p-5 lg:col-span-2">
+            <div class="mb-3 flex items-center justify-between"><h2 class="font-display text-lg font-extrabold text-ink">Overdue tasks (@overdue.Count)</h2><a href="/worklist/reports/overdue.csv" download class="btn btn-secondary btn-sm">CSV</a></div>
+            <table class="w-full text-left text-sm"><tbody>
+            @foreach (var t in overdue)
+            {
+                <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                    <td class="py-2 pr-3 font-mono font-semibold whitespace-nowrap"><a href="/worklist/@t.Id" class="link">@t.Code</a></td>
+                    <td class="py-2 pr-3">@t.Title<div class="text-xs text-muted">@(_snap.Vessels.FirstOrDefault(v => v.Id == t.VesselId).Name)@(t.AssigneeName == "" ? "" : " · " + t.AssigneeName)</div></td>
+                    <td class="py-2 text-right whitespace-nowrap font-semibold text-rose-600">@WorklistReports.DaysOverdue(t, today) days</td>
+                </tr>
+            }
+            @if (overdue.Count == 0) { <tr><td class="py-5 text-center text-muted">Nothing is overdue.</td></tr> }
+            </tbody></table>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private WorklistSnapshot? _snap;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        _snap = await Reports.SnapshotAsync(companyId);
+    }
+}

@@ -59,6 +59,7 @@
                 var item = new NavItem("/worklist", "Worklist", WorklistIcon);
                 _workItems.Insert(1, item);
                 _vesselItems.Insert(1, item);
+                _workItems.Insert(2, new NavItem("/worklist/fleet", "Fleet worklist", WorklistIcon));
                 _adminItems.Add(new NavItem("/company/worklist-lists", "Worklist lists", WorklistIcon));
             }
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
@@ -72,7 +73,7 @@
         foreach (var item in items)
         {
             var badge = item.Href == "/company/approvals" ? _pendingApprovals : item.Badge;
-            <NavLink href="@item.Href" Match="@(item.Href == "/" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
+            <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
                 <span class="nav-icon">@item.Icon</span>
                 <span class="nav-label">@item.Label</span>
                 @if (badge > 0)
