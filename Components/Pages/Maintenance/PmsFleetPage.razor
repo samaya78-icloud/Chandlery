@@ -1,0 +1,115 @@
+@page "/pms/fleet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject PmsReportService Reports
+
+<PageTitle>Fleet maintenance · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Fleet maintenance" Subtitle="How every vessel stands on its planned maintenance: what is overdue, what is critical and whose running hours are out of date.">
+    <Actions>
+        <a href="/pms/reports" class="btn btn-secondary">Reports</a>
+        <a href="/pms/apply" class="btn btn-secondary">Apply library</a>
+        <a href="/pms/reports/fleet.csv" download class="btn btn-secondary">CSV</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vesselCount == 0)
+{
+    <EmptyState Title="Planned maintenance is switched off" Message="Switch the PMS module on for a vessel or a vessel group first." />
+}
+else
+{
+    @if (_groups.Count > 0)
+    {
+        <div class="card mb-5 flex flex-wrap items-end gap-3 p-4 text-sm">
+            <label>Vessel group
+                <select class="select mt-1" @bind="_group" @bind:after="LoadAsync">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var g in _groups) { <option value="@g.Id">@(new string('–', g.Level - 1) + " " + g.Name)</option> }
+                </select>
+            </label>
+        </div>
+    }
+
+    <div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard Label="Overdue" Value="@_rows.Sum(r => r.Overdue).ToString()" Tone="@(_rows.Sum(r => r.Overdue) > 0 ? "danger" : "success")" />
+        <StatCard Label="Critical overdue" Value="@_rows.Sum(r => r.CriticalOverdue).ToString()" Tone="danger" />
+        <StatCard Label="Due in 7 days" Value="@_rows.Sum(r => r.DueThisWeek).ToString()" Tone="warning" />
+        <StatCard Label="Hours out of date" Value="@_rows.Sum(r => r.HoursOutOfDate).ToString()" Tone="info" Hint="No reading for over a week" />
+    </div>
+
+    <h2 class="mb-2 font-display text-base font-extrabold text-ink">By vessel</h2>
+    <div class="card mb-8 overflow-x-auto">
+        <table class="w-full text-left text-sm">
+            <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                <th class="px-4 py-3 font-medium">Vessel</th><th class="px-4 py-3 text-right font-medium">Jobs</th><th class="px-4 py-3 text-right font-medium">On schedule</th>
+                <th class="px-4 py-3 text-right font-medium">Overdue</th><th class="px-4 py-3 text-right font-medium">Critical</th><th class="px-4 py-3 text-right font-medium">Due in 7 days</th>
+                <th class="px-4 py-3 text-right font-medium">Hours out of date</th>
+            </tr></thead>
+            <tbody>
+            @foreach (var r in _rows)
+            {
+                <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                    <td class="px-4 py-3 font-medium">@r.Vessel</td>
+                    <td class="px-4 py-3 text-right">@r.Jobs</td>
+                    <td class="px-4 py-3 text-right"><span class="chip chip-plain" data-tone="@(r.OnSchedulePercent >= 95 ? "success" : r.OnSchedulePercent >= 80 ? "warning" : "danger")">@r.OnSchedulePercent%</span></td>
+                    <td class="px-4 py-3 text-right @(r.Overdue > 0 ? "font-semibold text-rose-600" : "")">@r.Overdue</td>
+                    <td class="px-4 py-3 text-right @(r.CriticalOverdue > 0 ? "font-semibold text-rose-600" : "")">@r.CriticalOverdue</td>
+                    <td class="px-4 py-3 text-right">@r.DueThisWeek</td>
+                    <td class="px-4 py-3 text-right">@r.HoursOutOfDate</td>
+                </tr>
+            }
+            @if (_rows.Count == 0) { <tr><td colspan="7" class="px-4 py-6 text-center text-muted">No vessels in this group have planned maintenance on.</td></tr> }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="mb-2 flex items-center justify-between">
+        <h2 class="font-display text-base font-extrabold text-ink">Overdue now (@_overdue.Count@(_overdue.Count == 100 ? "+" : ""))</h2>
+        <a href="/pms/reports/overdue.csv" download class="btn btn-secondary btn-sm">CSV</a>
+    </div>
+    <div class="card overflow-x-auto">
+        <table class="w-full text-left text-sm"><tbody>
+        @foreach (var o in _overdue)
+        {
+            <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                <td class="px-4 py-2.5 font-medium whitespace-nowrap">@o.Vessel</td>
+                <td class="px-4 py-2.5">@o.Job.Title @if (o.Job.IsCritical) { <span class="chip" data-tone="danger">critical</span> }<div class="text-xs text-muted">@o.Machinery · @o.Job.Code</div></td>
+                <td class="px-4 py-2.5 text-right whitespace-nowrap text-xs font-semibold text-rose-600">@o.DaysOverdue days past due</td>
+            </tr>
+        }
+        @if (_overdue.Count == 0) { <tr><td class="px-4 py-6 text-center text-muted">Nothing is overdue.</td></tr> }
+        </tbody></table>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _group;
+    private bool _loaded;
+    private int _vesselCount;
+    private List<PmsFleetRow> _rows = [];
+    private List<PmsJobRow> _overdue = [];
+    private List<VesselGroup> _groups = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        var (vessels, groups) = await Reports.VesselsAsync(_companyId);
+        (_vesselCount, _groups) = (vessels.Count, groups);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _rows = await Reports.FleetAsync(_companyId, _group == Guid.Empty ? null : _group);
+        var inScope = _rows.Select(r => r.VesselId).ToHashSet();
+        _overdue = (await Reports.OverdueAsync(_companyId, take: 400)).Where(o => inScope.Contains(o.Job.VesselId)).Take(100).ToList();
+    }
+}

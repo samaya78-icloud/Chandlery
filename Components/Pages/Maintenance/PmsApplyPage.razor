@@ -1,0 +1,158 @@
+@page "/pms/apply"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject PmsService Svc
+
+<PageTitle>Apply the library · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Apply the library to a vessel"
+            Subtitle="Map the vessel's machinery to library classes, then choose the standard jobs to add. Jobs already on the plan from the same template are left alone.">
+    <Actions>
+        <a href="/company/pms-library" class="btn btn-secondary">Library</a>
+        <a href="/pms/machinery" class="btn btn-secondary">Machinery</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Planned maintenance is switched off" Message="Switch the PMS module on for a vessel or a vessel group first." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @if (_notice is not null) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div> }
+
+    <div class="card mb-5 p-4 text-sm">
+        <label>Vessel
+            <select class="select mt-1" @bind="_vesselId" @bind:after="LoadVesselAsync">
+                @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+            </select>
+        </label>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+        <div class="card p-5 text-sm">
+            <h2 class="font-display text-lg font-extrabold text-ink">1. Machinery and its class</h2>
+            <p class="mb-3 text-xs text-muted">Only machinery the office made can be mapped here. For machinery the vessel made, the vessel (or a plan change request) sets the class.</p>
+            @if (_items.Count == 0) { <p class="text-muted">No machinery on this vessel's plan yet.</p> }
+            <ul class="divide-y divide-line/60">
+                @foreach (var m in _items.OrderBy(i => i.Name))
+                {
+                    var own = m.OwnerStage == SyncStages.Office;
+                    <li class="flex items-center gap-3 py-2">
+                        <span class="min-w-0 flex-1 truncate">@m.Name @if (m.HasHourMeter) { <span class="chip chip-plain" data-tone="info">hour meter</span> }</span>
+                        @if (own)
+                        {
+                            <select class="select w-52" value="@(m.MachineryClassId ?? Guid.Empty)" @onchange="e => MapAsync(m.Id, e.Value)">
+                                <option value="@Guid.Empty">Not mapped</option>
+                                @foreach (var c in _classes) { <option value="@c.Id">@c.Name</option> }
+                            </select>
+                        }
+                        else
+                        {
+                            <span class="text-xs text-muted">@(_classes.FirstOrDefault(c => c.Id == m.MachineryClassId)?.Name ?? "not mapped") (vessel's own)</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </div>
+
+        <div class="card p-5 text-sm">
+            <h2 class="font-display text-lg font-extrabold text-ink">2. Jobs to add</h2>
+            @if (_suggestions.Count == 0)
+            {
+                <p class="mt-2 text-muted">Nothing to suggest yet: map machinery to a class that has templates.</p>
+            }
+            else
+            {
+                <p class="mb-3 text-xs text-muted">@_suggestions.Count(s => !s.AlreadyPlanned) new, @_suggestions.Count(s => s.AlreadyPlanned) already on the plan.</p>
+                <ul class="max-h-[28rem] divide-y divide-line/60 overflow-y-auto">
+                    @foreach (var s in _suggestions)
+                    {
+                        var key = (s.Item.Id, s.Template.Id);
+                        <li class="flex items-start gap-2 py-2 @(s.AlreadyPlanned ? "opacity-50" : "")">
+                            <input type="checkbox" class="mt-1" disabled="@(s.AlreadyPlanned || s.NeedsHourMeter)" checked="@_chosen.Contains(key)" @onchange="e => Toggle(key, (bool)(e.Value ?? false))" />
+                            <div>
+                                <div><span class="font-mono text-xs font-semibold">@s.Template.Code</span> @s.Template.Title</div>
+                                <div class="text-xs text-muted">@s.Item.Name@(s.AlreadyPlanned ? " · already planned" : "")@(s.NeedsHourMeter ? " · needs an hour meter on the machinery" : "")</div>
+                            </div>
+                        </li>
+                    }
+                </ul>
+                <div class="mt-4 flex items-center gap-3">
+                    <button class="btn btn-primary" disabled="@(_chosen.Count == 0)" @onclick="ApplyAsync">Add @_chosen.Count job(s)</button>
+                    <button class="btn btn-ghost btn-sm" @onclick="SelectAll">Select all new</button>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private string? _error, _notice;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<MachineryItem> _items = [];
+    private List<MachineryClass> _classes = [];
+    private List<LibrarySuggestion> _suggestions = [];
+    private readonly HashSet<(Guid, Guid)> _chosen = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _vessels[0].Id;
+        _classes = await Svc.ListClassesAsync(_companyId);
+        await LoadVesselAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadVesselAsync()
+    {
+        if (_vesselId == Guid.Empty) return;
+        _chosen.Clear();
+        _items = await Svc.ListMachineryAsync(_companyId, _vesselId);
+        _suggestions = await Svc.PreviewLibraryAsync(_companyId, _vesselId);
+    }
+
+    private async Task MapAsync(Guid itemId, object? value)
+    {
+        _error = _notice = null;
+        try
+        {
+            Guid? cls = Guid.TryParse(value?.ToString(), out var g) && g != Guid.Empty ? g : null;
+            await Svc.SetMachineryClassAsync(_companyId, itemId, cls);
+            await LoadVesselAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private void Toggle((Guid, Guid) key, bool on) { if (on) _chosen.Add(key); else _chosen.Remove(key); }
+
+    private void SelectAll()
+    {
+        foreach (var s in _suggestions.Where(s => !s.AlreadyPlanned && !s.NeedsHourMeter)) _chosen.Add((s.Item.Id, s.Template.Id));
+    }
+
+    private async Task ApplyAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var created = await Svc.ApplyLibraryAsync(_companyId, _vesselId, _chosen.Select(c => (c.Item1, c.Item2)), _actor);
+            _notice = $"Added {created.Count} job(s) to the plan. They reach the vessel with the next sync.";
+            await LoadVesselAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

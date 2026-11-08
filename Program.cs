@@ -40,6 +40,7 @@ builder.Services.AddScoped<VesselHomeService>();
 builder.Services.AddScoped<WorklistService>();
 builder.Services.AddScoped<WorklistReportService>();
 builder.Services.AddScoped<PmsService>();
+builder.Services.AddScoped<PmsReportService>();
 builder.Services.AddSingleton<SyncStatusService>();
 builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();
@@ -340,6 +341,25 @@ app.MapGet("/worklist/reports/{kind}.csv", async (string kind, HttpContext http,
     if (csv is null) return Results.NotFound();
     var utf8 = new System.Text.UTF8Encoding(true);
     return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"worklist-{kind}-{today:yyyy-MM-dd}.csv");
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// Maintenance reports as CSV (office only): overdue, due (?days=30), done (?from=&to=), hours, fleet.
+app.MapGet("/pms/reports/{kind}.csv", async (string kind, int? days, DateTime? from, DateTime? to, HttpContext http, PmsReportService reports) =>
+{
+    if (NodeContext.Current.IsVessel || !Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var today = DateTime.UtcNow.Date;
+    var csv = kind switch
+    {
+        "overdue" => PmsReports.JobsCsv(await reports.OverdueAsync(companyId)),
+        "due" => PmsReports.JobsCsv(await reports.DueWithinAsync(companyId, days ?? 30)),
+        "done" => PmsReports.DoneCsv(await reports.DoneAsync(companyId, from ?? today.AddDays(-90), to ?? today)),
+        "hours" => PmsReports.HoursCsv(await reports.HoursSummaryAsync(companyId)),
+        "fleet" => PmsReports.FleetCsv(await reports.FleetAsync(companyId)),
+        _ => null,
+    };
+    if (csv is null) return Results.NotFound();
+    var utf8 = new System.Text.UTF8Encoding(true);
+    return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"maintenance-{kind}-{today:yyyy-MM-dd}.csv");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 // The formal purchase order as a PDF file: buyers get any of their POs (marked draft until approved), suppliers only their approved ones.

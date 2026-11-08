@@ -13,6 +13,7 @@
             Subtitle="The equipment on the plan, as a tree: location, system, item. Each item can carry jobs, and an hour meter for jobs driven by running hours.">
     <Actions>
         <button class="btn btn-primary" @onclick="() => { _addingItem = !_addingItem; _error = null; }">+ Add machinery</button>
+        @if (!NodeContext.Current.IsVessel) { <a href="/pms/apply" class="btn btn-secondary">Apply library</a> }
         <a href="/pms" class="btn btn-secondary">Back to the plan</a>
     </Actions>
 </PageHeader>

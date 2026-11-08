@@ -1,0 +1,112 @@
+@page "/pms/reports"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject PmsReportService Reports
+
+<PageTitle>Maintenance reports · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Maintenance reports" Subtitle="Jobs overdue, jobs coming up, jobs done and running hours. Each can be downloaded as a CSV file; the tables show the first rows.">
+    <Actions>
+        <a href="/pms/fleet" class="btn btn-secondary">Fleet maintenance</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else
+{
+    <div class="space-y-6">
+        <section class="card overflow-x-auto p-5">
+            <div class="mb-3 flex items-center justify-between"><h2 class="font-display text-lg font-extrabold text-ink">Overdue jobs (@_overdue.Count)</h2><a href="/pms/reports/overdue.csv" download class="btn btn-secondary btn-sm">CSV</a></div>
+            @JobTable(_overdue, overdue: true)
+        </section>
+
+        <section class="card overflow-x-auto p-5">
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+                <h2 class="font-display text-lg font-extrabold text-ink">Jobs to be done in the next</h2>
+                <input type="number" min="1" max="365" class="input w-24" @bind="_days" @bind:after="LoadDueAsync" />
+                <span class="text-sm text-muted">days (@_due.Count)</span>
+                <a href="/pms/reports/due.csv?days=@_days" download class="btn btn-secondary btn-sm ml-auto">CSV</a>
+            </div>
+            @JobTable(_due, overdue: false)
+        </section>
+
+        <section class="card overflow-x-auto p-5">
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+                <h2 class="font-display text-lg font-extrabold text-ink">Jobs done between</h2>
+                <input type="date" class="input w-44" @bind="_from" @bind:after="LoadDoneAsync" /><span class="text-sm text-muted">and</span>
+                <input type="date" class="input w-44" @bind="_to" @bind:after="LoadDoneAsync" />
+                <span class="text-sm text-muted">(@_done.Count)</span>
+                <a href="/pms/reports/done.csv?from=@_from.ToString("yyyy-MM-dd")&to=@_to.ToString("yyyy-MM-dd")" download class="btn btn-secondary btn-sm ml-auto">CSV</a>
+            </div>
+            <table class="w-full text-left text-sm"><tbody>
+            @foreach (var d in _done.Take(50))
+            {
+                <tr class="border-b border-line/60"><td class="py-2 pr-3 whitespace-nowrap text-xs">@d.Completion.DoneDate.ToString("dd MMM yyyy")</td><td class="py-2 pr-3 font-medium whitespace-nowrap">@d.Vessel</td>
+                    <td class="py-2 pr-3">@d.Job.Title<div class="text-xs text-muted">@d.Machinery · @d.Job.Code</div></td><td class="py-2 text-xs text-muted">@d.Completion.PerformedBy</td></tr>
+            }
+            @if (_done.Count == 0) { <tr><td class="py-5 text-center text-muted">No jobs recorded in this period.</td></tr> }
+            </tbody></table>
+        </section>
+
+        <section class="card overflow-x-auto p-5">
+            <div class="mb-3 flex items-center justify-between"><h2 class="font-display text-lg font-extrabold text-ink">Running hours</h2><a href="/pms/reports/hours.csv" download class="btn btn-secondary btn-sm">CSV</a></div>
+            <table class="w-full text-left text-sm">
+                <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted"><th class="py-2 font-medium">Vessel</th><th class="py-2 font-medium">Machinery</th><th class="py-2 text-right font-medium">Latest</th>
+                    <th class="py-2 text-right font-medium">Read</th><th class="py-2 text-right font-medium">Hours per day</th></tr></thead>
+                <tbody>
+                @foreach (var h in _hours)
+                {
+                    <tr class="border-b border-line/60"><td class="py-2">@h.Vessel</td><td class="py-2">@h.Machinery</td><td class="py-2 text-right">@(h.LatestHours?.ToString("N1") ?? "–")</td>
+                        <td class="py-2 text-right @(h.DaysSinceReading is null or > 7 ? "text-amber-700" : "")">@(h.DaysSinceReading is { } n ? (n == 0 ? "today" : n + " days ago") : "never")</td>
+                        <td class="py-2 text-right">@(h.AverageDaily?.ToString("N1") ?? "–")</td></tr>
+                }
+                @if (_hours.Count == 0) { <tr><td colspan="5" class="py-5 text-center text-muted">No hour meters on the plan.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private bool _loaded;
+    private int _days = 30;
+    private DateTime _from = DateTime.UtcNow.Date.AddDays(-90), _to = DateTime.UtcNow.Date;
+    private List<PmsJobRow> _overdue = [], _due = [];
+    private List<PmsDoneRow> _done = [];
+    private List<PmsHoursRow> _hours = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        _overdue = await Reports.OverdueAsync(_companyId, take: 200);
+        _hours = await Reports.HoursSummaryAsync(_companyId);
+        await LoadDueAsync();
+        await LoadDoneAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadDueAsync() => _due = await Reports.DueWithinAsync(_companyId, Math.Clamp(_days, 1, 365), take: 200);
+    private async Task LoadDoneAsync() => _done = await Reports.DoneAsync(_companyId, _from, _to, take: 200);
+
+    private RenderFragment JobTable(List<PmsJobRow> rows, bool overdue) => __builder =>
+    {
+        <table class="w-full text-left text-sm"><tbody>
+        @foreach (var r in rows.Take(50))
+        {
+            <tr class="border-b border-line/60">
+                <td class="py-2 pr-3 font-medium whitespace-nowrap">@r.Vessel</td>
+                <td class="py-2 pr-3">@r.Job.Title @if (r.Job.IsCritical) { <span class="chip" data-tone="danger">critical</span> }<div class="text-xs text-muted">@r.Machinery · @r.Job.Code</div></td>
+                <td class="py-2 text-right whitespace-nowrap text-xs @(overdue ? "font-semibold text-rose-600" : "")">@(overdue ? $"{r.DaysOverdue} days past due" : r.Job.NextDueDate?.ToString("dd MMM yyyy"))</td>
+            </tr>
+        }
+        @if (rows.Count == 0) { <tr><td class="py-5 text-center text-muted">Nothing here.</td></tr> }
+        @if (rows.Count > 50) { <tr><td colspan="3" class="py-2 text-center text-xs text-muted">Showing the first 50 of @rows.Count. The CSV has them all.</td></tr> }
+        </tbody></table>
+    };
+}

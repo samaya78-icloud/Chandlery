@@ -1,0 +1,229 @@
+@page "/company/pms-library"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@using Chandlery.Data
+@using Microsoft.EntityFrameworkCore
+@inject PmsService Svc
+@inject IDbContextFactory<ChandleryDbContext> Factory
+
+<PageTitle>Maintenance library · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Admin" Title="Maintenance library"
+            Subtitle="The standard jobs. Every vessel receives them read-only; a job on a vessel's plan keeps the version it was made from, so changing a template never changes a plan silently.">
+    <Actions>
+        <button class="btn btn-primary" @onclick="NewTemplate">+ New template</button>
+        <a href="/pms/apply" class="btn btn-secondary">Apply to a vessel</a>
+    </Actions>
+</PageHeader>
+
+@if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+<div class="grid gap-6 lg:grid-cols-3">
+    <div class="card p-5 text-sm lg:col-span-1">
+        <h2 class="font-display text-lg font-extrabold text-ink">Machinery classes</h2>
+        <p class="mb-3 text-xs text-muted">Kinds of equipment. A template for a class applies to machinery of that class and of the classes below it.</p>
+        <ul class="divide-y divide-line/60">
+            @foreach (var (c, depth) in FlatClasses())
+            {
+                <li class="flex items-center gap-2 py-1.5 @(c.IsActive ? "" : "opacity-50")" style="padding-left:@(depth * 1.25)rem">
+                    @if (_editClass == c.Id)
+                    {
+                        <input class="input" @bind="_className" />
+                        <button class="btn btn-primary btn-sm" @onclick="() => SaveClassAsync(c.Id, c.ParentId, c.IsActive)">Save</button>
+                        <button class="btn btn-ghost btn-sm" @onclick="() => _editClass = Guid.Empty">×</button>
+                    }
+                    else
+                    {
+                        <span class="min-w-0 flex-1 truncate">@c.Name</span>
+                        <button class="btn btn-ghost btn-sm" @onclick="() => { _editClass = c.Id; _className = c.Name; }">Rename</button>
+                        <button class="btn btn-ghost btn-sm" @onclick="() => SaveClassAsync(c.Id, c.ParentId, !c.IsActive, c.Name)">@(c.IsActive ? "Switch off" : "Switch on")</button>
+                    }
+                </li>
+            }
+        </ul>
+        <div class="mt-4 space-y-2 border-t border-line pt-3">
+            <select class="select" @bind="_newClassParent">
+                <option value="@Guid.Empty">New top-level class</option>
+                @foreach (var (c, depth) in FlatClasses().Where(x => x.Class.IsActive)) { <option value="@c.Id">Under @(new string('–', depth) + " " + c.Name)</option> }
+            </select>
+            <div class="flex gap-2">
+                <input class="input" placeholder="New class…" @bind="_newClassName" />
+                <button class="btn btn-primary" @onclick="AddClassAsync">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="space-y-6 lg:col-span-2">
+        @if (_editing)
+        {
+            <div class="card p-5 text-sm">
+                <h2 class="mb-3 font-display text-lg font-extrabold text-ink">@(_templateId is null ? "New template" : $"Edit {_code} (version {_version} becomes {_version + 1})")</h2>
+                <div class="grid gap-3 md:grid-cols-3">
+                    <label>Code <input class="input mt-1" @bind="_code" /></label>
+                    <label class="md:col-span-2">Title <input class="input mt-1" @bind="_title" /></label>
+                    <label>Machinery class
+                        <select class="select mt-1" @bind="_class">
+                            <option value="@Guid.Empty">None (not applied automatically)</option>
+                            @foreach (var (c, depth) in FlatClasses().Where(x => x.Class.IsActive)) { <option value="@c.Id">@(new string('–', depth) + " " + c.Name)</option> }
+                        </select>
+                    </label>
+                    <label>Type
+                        <select class="select mt-1" @bind="_type">
+                            @foreach (var t in Enum.GetValues<PmsJobType>()) { <option value="@t">@t</option> }
+                        </select>
+                    </label>
+                    <label>Department
+                        <select class="select mt-1" @bind="_department">
+                            <option value="@Guid.Empty">None</option>
+                            @foreach (var d in _departments) { <option value="@d.Id">@d.Name</option> }
+                        </select>
+                    </label>
+                    <label>Every <input type="number" min="1" class="input mt-1" @bind="_calendar" placeholder="blank for none" /></label>
+                    <label>Unit
+                        <select class="select mt-1" @bind="_unit">
+                            @foreach (var u in Enum.GetValues<PmsIntervalUnit>()) { <option value="@u">@u</option> }
+                        </select>
+                    </label>
+                    <label>Or every (running hours) <input type="number" min="1" class="input mt-1" @bind="_hours" placeholder="blank for none" /></label>
+                    <label>Grace (days) <input type="number" min="0" class="input mt-1" @bind="_grace" placeholder="default: a tenth of the interval" /></label>
+                    <label>Estimated minutes <input type="number" min="0" class="input mt-1" @bind="_minutes" /></label>
+                    <div class="flex flex-col justify-end gap-1">
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_fixed" /> Fixed dates (annual stays annual)</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_critical" /> Critical</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_verify" /> Needs a second sign-off</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_active" /> In use</label>
+                    </div>
+                    <label class="md:col-span-3">Checklist (one step per line) <textarea class="textarea mt-1" rows="4" @bind="_instructions"></textarea></label>
+                </div>
+                <div class="mt-4 flex gap-2">
+                    <button class="btn btn-primary" @onclick="SaveTemplateAsync">Save template</button>
+                    <button class="btn btn-ghost" @onclick="() => _editing = false">Cancel</button>
+                </div>
+            </div>
+        }
+
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                    <th class="px-4 py-3 font-medium">Code</th><th class="px-4 py-3 font-medium">Job</th><th class="px-4 py-3 font-medium">Class</th>
+                    <th class="px-4 py-3 font-medium">Every</th><th class="px-4 py-3 text-right font-medium">Version</th><th class="px-4 py-3"></th>
+                </tr></thead>
+                <tbody>
+                @foreach (var t in _templates)
+                {
+                    <tr class="border-b border-line/60 hover:bg-surface-2/50 @(t.IsActive ? "" : "opacity-50")">
+                        <td class="px-4 py-3 font-mono font-semibold">@t.Code</td>
+                        <td class="px-4 py-3">@t.Title @if (t.IsCritical) { <span class="chip" data-tone="danger">critical</span> }<div class="text-xs text-muted">@t.Type@(t.RequiresVerification ? " · second sign-off" : "")</div></td>
+                        <td class="px-4 py-3 text-muted">@(_classes.FirstOrDefault(c => c.Id == t.MachineryClassId)?.Name ?? "–")</td>
+                        <td class="px-4 py-3">@Every(t)</td>
+                        <td class="px-4 py-3 text-right">@t.Version</td>
+                        <td class="px-4 py-3 text-right"><button class="btn btn-ghost btn-sm" @onclick="() => Edit(t)">Edit</button></td>
+                    </tr>
+                }
+                @if (_templates.Count == 0) { <tr><td colspan="6" class="px-4 py-8 text-center text-muted">No templates yet. Add the standard jobs once; every vessel gets them.</td></tr> }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _editClass, _newClassParent, _class, _department;
+    private Guid? _templateId;
+    private int _version;
+    private bool _editing, _fixed, _critical, _verify, _active = true;
+    private string? _error;
+    private string _className = "", _newClassName = "", _code = "", _title = "", _instructions = "";
+    private PmsJobType _type;
+    private PmsIntervalUnit _unit = PmsIntervalUnit.Months;
+    private int? _calendar, _hours, _grace, _minutes;
+    private List<MachineryClass> _classes = [];
+    private List<JobTemplate> _templates = [];
+    private List<Department> _departments = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _classes = await Svc.ListClassesAsync(_companyId, includeInactive: true);
+        _templates = await Svc.ListTemplatesAsync(_companyId, includeInactive: true);
+        await using var db = await Factory.CreateDbContextAsync();
+        db.CurrentCompanyId = _companyId;
+        _departments = await db.Departments.AsNoTracking().Where(d => d.CompanyId == _companyId).OrderBy(d => d.Name).ToListAsync();
+    }
+
+    private List<(MachineryClass Class, int Depth)> FlatClasses()
+    {
+        var result = new List<(MachineryClass, int)>();
+        var ids = _classes.Select(c => c.Id).ToHashSet();
+        void Walk(Guid? parent, int depth, HashSet<Guid> seen)
+        {
+            foreach (var c in _classes.Where(c => c.ParentId == parent || (parent is null && c.ParentId is { } p && !ids.Contains(p))).OrderBy(c => c.Name))
+            {
+                if (!seen.Add(c.Id)) continue;
+                result.Add((c, depth));
+                Walk(c.Id, depth + 1, seen);
+            }
+        }
+        Walk(null, 0, []);
+        return result;
+    }
+
+    private async Task AddClassAsync()
+    {
+        _error = null;
+        try { await Svc.SaveMachineryClassAsync(_companyId, null, _newClassName, _newClassParent == Guid.Empty ? null : _newClassParent); _newClassName = ""; await LoadAsync(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task SaveClassAsync(Guid id, Guid? parent, bool active, string? name = null)
+    {
+        _error = null;
+        try { await Svc.SaveMachineryClassAsync(_companyId, id, name ?? _className, parent, active); _editClass = Guid.Empty; await LoadAsync(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private void NewTemplate()
+    {
+        _editing = true; _error = null; _templateId = null; _version = 0;
+        _code = _title = _instructions = ""; _class = _department = Guid.Empty; _type = PmsJobType.Check; _unit = PmsIntervalUnit.Months;
+        _calendar = _hours = _grace = _minutes = null; _fixed = _critical = _verify = false; _active = true;
+    }
+
+    private void Edit(JobTemplate t)
+    {
+        _editing = true; _error = null; _templateId = t.Id; _version = t.Version;
+        (_code, _title, _instructions) = (t.Code, t.Title, t.Instructions);
+        (_class, _department) = (t.MachineryClassId ?? Guid.Empty, t.DepartmentId ?? Guid.Empty);
+        (_type, _unit, _calendar, _hours, _grace, _minutes) = (t.Type, t.CalendarUnit, t.CalendarInterval, t.HoursInterval, t.GraceDays, t.EstimatedMinutes);
+        (_fixed, _critical, _verify, _active) = (t.Anchor == PmsAnchor.FixedCalendar, t.IsCritical, t.RequiresVerification, t.IsActive);
+    }
+
+    private async Task SaveTemplateAsync()
+    {
+        _error = null;
+        try
+        {
+            await Svc.SaveJobTemplateAsync(_companyId, _templateId, new TemplateInput(_code, _title, _instructions, _type, _calendar, _unit, _hours,
+                _fixed ? PmsAnchor.FixedCalendar : PmsAnchor.FromCompletion, _grace, _critical, _department == Guid.Empty ? null : _department, _minutes, _verify,
+                _class == Guid.Empty ? null : _class, _active));
+            _editing = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private static string Every(JobTemplate t)
+    {
+        var parts = new List<string>();
+        if (t.CalendarInterval is > 0 and var n) parts.Add($"{n} {t.CalendarUnit.ToString().ToLowerInvariant()}");
+        if (t.HoursInterval is > 0) parts.Add($"{t.HoursInterval:N0} h");
+        return string.Join(" / ", parts);
+    }
+}
