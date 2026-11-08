@@ -111,6 +111,11 @@ else
         </div>
     }
 
+    @if (!NodeContext.Current.IsVessel)
+    {
+        <TankReviewPanel CompanyId="_companyId" Detail="_detail" OnChanged="LoadAsync" />
+    }
+
     @if (_detail.Reviews.Count > 0)
     {
         <div class="card mb-5 p-5 text-sm">

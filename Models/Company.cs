@@ -16,4 +16,7 @@ public class Company
     public string ApprovalLevel1Name { get; set; } = "";
     public string ApprovalLevel2Name { get; set; } = "";
     public string ApprovalLevel3Name { get; set; } = "";
+
+    /// <summary>Words the office reviewer is shown highlighted in tank inspection comments, separated by commas. Blank uses the standard list. Set by the office; vessels receive it with the rest of the company record and cannot change it.</summary>
+    public string TankReviewKeywords { get; set; } = "";
 }

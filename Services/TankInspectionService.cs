@@ -207,6 +207,28 @@ public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory
         return new InspectionDetail(inspection, tank, reviews, TankStatus.Of(inspection.SubmissionCount, reviews));
     }
 
+    /// <summary>
+    /// What is waiting for the office: submitted inspections and those being reviewed, a Bad rating first, then the oldest submission. Only vessels the module is
+    /// on for. Returned and reviewed inspections are not waiting for the office.
+    /// </summary>
+    public async Task<List<ReviewQueueRow>> ReviewQueueAsync(Guid companyId, Guid? vesselId = null)
+    {
+        var rows = (await ListAsync(companyId, vesselId)).Where(r => r.Status is InspectionStatus.Submitted or InspectionStatus.InReview).ToList();
+        if (rows.Count == 0) return [];
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var enabled = (await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.TankInspection)).ToDictionary(v => v.Id, v => v.Name);
+        return rows.Where(r => enabled.ContainsKey(r.Inspection.VesselId))
+            .OrderByDescending(r => r.Inspection.HasBadRating).ThenBy(r => r.Inspection.SubmittedAt).ThenBy(r => r.Inspection.Code)
+            .Select(r => new ReviewQueueRow(r, enabled[r.Inspection.VesselId])).ToList();
+    }
+
+    public async Task<ReviewWaiting> ReviewWaitingAsync(Guid companyId)
+    {
+        var queue = await ReviewQueueAsync(companyId);
+        return new ReviewWaiting(queue.Count, queue.Count(r => r.Row.Inspection.HasBadRating));
+    }
+
     public async Task<List<InspectionRow>> ListAsync(Guid companyId, Guid? vesselId = null, Guid? tankId = null)
     {
         await using var db = await factory.CreateDbContextAsync();

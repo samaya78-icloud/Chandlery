@@ -70,3 +70,50 @@ public record TankPlanRow(Tank Tank, int InspectionCount, DateTime? LastInspecte
 }
 
 public record TankCopyResult(string Vessel, int Added, int Skipped, string? Problem = null);
+
+/// <summary>The words a reviewer should notice in a comment (rust, crack, leak...). The company can change the list; blank means the standard one.</summary>
+public static class TankKeywords
+{
+    public static List<string> Parse(string? text)
+        => (text ?? "").Split([',', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(k => k.Length >= 2).Distinct(StringComparer.OrdinalIgnoreCase).Take(50).ToList();
+
+    /// <summary>The company's list, or the standard one when it has none.</summary>
+    public static List<string> Effective(string? text) => Parse(text) is { Count: > 0 } own ? own : TankScales.ReviewKeywords.ToList();
+
+    public static bool Contains(string? text, IReadOnlyList<string> keywords) => Highlight(text, keywords).Any(s => s.Match);
+
+    /// <summary>
+    /// Cuts the text into pieces, marking those that are a keyword (any case, also inside a longer word, so "crack" finds "cracking"). The pieces always
+    /// join back into the original text.
+    /// </summary>
+    public static List<(string Text, bool Match)> Highlight(string? text, IReadOnlyList<string> keywords)
+    {
+        text ??= "";
+        var spans = new List<(int Start, int End)>();
+        foreach (var keyword in keywords.Where(k => k.Length > 0))
+            for (var at = text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase); at >= 0; at = text.IndexOf(keyword, at + keyword.Length, StringComparison.OrdinalIgnoreCase))
+                spans.Add((at, at + keyword.Length));
+        var merged = new List<(int Start, int End)>();
+        foreach (var span in spans.OrderBy(s => s.Start).ThenByDescending(s => s.End))
+        {
+            if (merged.Count > 0 && span.Start <= merged[^1].End) merged[^1] = (merged[^1].Start, Math.Max(merged[^1].End, span.End));
+            else merged.Add(span);
+        }
+        var pieces = new List<(string, bool)>();
+        var cursor = 0;
+        foreach (var (start, end) in merged)
+        {
+            if (start > cursor) pieces.Add((text[cursor..start], false));
+            pieces.Add((text[start..end], true));
+            cursor = end;
+        }
+        if (cursor < text.Length) pieces.Add((text[cursor..], false));
+        return pieces;
+    }
+}
+
+/// <summary>An inspection waiting for the office, with the vessel it is from.</summary>
+public record ReviewQueueRow(InspectionRow Row, string VesselName);
+
+public record ReviewWaiting(int Count, int WithBadRating);

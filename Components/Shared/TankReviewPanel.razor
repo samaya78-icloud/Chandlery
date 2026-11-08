@@ -1,0 +1,105 @@
+@inject TankInspectionService Svc
+@inject TankService Tanks
+@inject AuthenticationStateProvider Auth
+
+@if (Detail.Status != InspectionStatus.Draft)
+{
+    var insp = Detail.Inspection;
+    var flagged = insp.Results.Where(r => TankScales.IsException(r.Scale, r.ExceptionValues, r.Value) || TankKeywords.Contains(r.Comment, _keywords)).ToList();
+    var texts = new[] { ("Work done", insp.WorkDone), ("General comments", insp.GeneralComments) }.Where(t => TankKeywords.Contains(t.Item2, _keywords)).ToList();
+
+    <div class="card mb-5 p-5 text-sm">
+        <h2 class="mb-1 font-display text-lg font-extrabold text-ink">For the reviewer</h2>
+        <p class="mb-3 text-xs text-muted">Every exception, and any comment that mentions a word the company watches for (@string.Join(", ", _keywords)).</p>
+        @if (flagged.Count == 0 && texts.Count == 0) { <p class="text-muted">No exceptions and nothing flagged in the comments.</p> }
+        <ul class="divide-y divide-line/60">
+            @foreach (var r in flagged)
+            {
+                var isException = TankScales.IsException(r.Scale, r.ExceptionValues, r.Value);
+                <li class="py-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="chip" data-tone="@(isException ? (r.Scale == ScaleKind.Rating && r.Value == "Bad" ? "danger" : "warning") : "neutral")">@r.Value</span>
+                        <span class="font-medium">@r.CriterionName</span>
+                        <span class="text-xs text-muted">@TankLook.Label(r.Group)</span>
+                        @if (r.WorklistTaskId is { } taskId) { <a href="/worklist/@taskId" class="link text-xs">worklist task</a> }
+                    </div>
+                    @if (r.Comment != "") { <p class="mt-1 whitespace-pre-line text-ink-2">@Marked(r.Comment)</p> }
+                </li>
+            }
+            @foreach (var (label, text) in texts)
+            {
+                <li class="py-2"><div class="text-xs font-bold uppercase tracking-wider text-muted">@label</div><p class="mt-1 whitespace-pre-line text-ink-2">@Marked(text)</p></li>
+            }
+        </ul>
+    </div>
+
+    @if (Detail.Status is InspectionStatus.Submitted or InspectionStatus.InReview)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Your review</h2>
+            @if (_error is not null) { <div class="mb-3 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-rose-800">@_error</div> }
+            @if (Detail.Status == InspectionStatus.Submitted)
+            {
+                <p class="mb-3 text-muted">Nobody has started reviewing this yet. Starting lets the vessel see it is being looked at.</p>
+                <button class="btn btn-secondary" disabled="@_busy" @onclick="() => DecideAsync(ReviewDecision.Started)">Start the review</button>
+            }
+            else
+            {
+                <label class="block">Comment for the vessel <textarea class="textarea mt-1" rows="3" @bind="_comment" placeholder="Required when returning the inspection: say what needs correcting."></textarea></label>
+                <div class="mt-4 flex flex-wrap items-center gap-2">
+                    @if (!_confirmAccept)
+                    {
+                        <button class="btn btn-primary" disabled="@_busy" @onclick="() => _confirmAccept = true">Accept</button>
+                    }
+                    else
+                    {
+                        <span class="text-muted">Accepting locks the inspection for good. To correct it later the vessel has to record a new one.</span>
+                        <button class="btn btn-primary" disabled="@_busy" @onclick="() => DecideAsync(ReviewDecision.Accepted)">Yes, accept and lock</button>
+                        <button class="btn btn-ghost" @onclick="() => _confirmAccept = false">Not yet</button>
+                    }
+                    <button class="btn btn-secondary" disabled="@_busy" @onclick="() => DecideAsync(ReviewDecision.Returned)">Return to the vessel</button>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public InspectionDetail Detail { get; set; } = null!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private List<string> _keywords = [];
+    private Actor _actor = Actor.System;
+    private string _comment = "";
+    private string? _error;
+    private bool _busy, _confirmAccept;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _actor = Actor.From((await Auth.GetAuthenticationStateAsync()).User);
+        _keywords = (await Tanks.GetKeywordsAsync(CompanyId)).Effective;
+    }
+
+    private RenderFragment Marked(string text) => __builder =>
+    {
+        foreach (var (piece, match) in TankKeywords.Highlight(text, _keywords))
+        {
+            if (match) { <mark class="rounded bg-amber-200 px-0.5 text-slate-900">@piece</mark> }
+            else { @piece }
+        }
+    };
+
+    private async Task DecideAsync(ReviewDecision decision)
+    {
+        _error = null; _busy = true;
+        try
+        {
+            await Svc.ReviewAsync(CompanyId, Detail.Inspection.Id, decision, _comment, _actor);
+            _comment = ""; _confirmAccept = false;
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; _confirmAccept = false; }
+        finally { _busy = false; }
+    }
+}

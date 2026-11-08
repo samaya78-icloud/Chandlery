@@ -163,6 +163,26 @@ public class TankService(IDbContextFactory<ChandleryDbContext> factory)
         return results;
     }
 
+    // ---- the words a reviewer is shown highlighted (office) ----
+
+    /// <summary>The company's review keywords as typed (blank means the standard list) and the list that is in effect.</summary>
+    public async Task<(string Typed, List<string> Effective)> GetKeywordsAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var typed = await db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.TankReviewKeywords).FirstOrDefaultAsync() ?? "";
+        return (typed, TankKeywords.Effective(typed));
+    }
+
+    public async Task SaveKeywordsAsync(Guid companyId, string? text)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        var company = await db.Companies.FirstOrDefaultAsync(c => c.Id == companyId) ?? throw new InvalidOperationException("Company not found.");
+        company.TankReviewKeywords = string.Join(", ", TankKeywords.Parse(text));
+        await db.SaveChangesAsync();
+    }
+
     // ---- the checklist library (office) ----
 
     private static void RequireOffice(ChandleryDbContext db)
