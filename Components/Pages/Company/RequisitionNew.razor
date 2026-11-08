@@ -5,6 +5,7 @@
 @inject ProcurementService Procurement
 @inject RequisitionService Requisitions
 @inject NavigationManager Navigation
+@inject WorklistService Worklist
 
 <PageTitle>New Requisition · Chandlery</PageTitle>
 
@@ -105,6 +106,10 @@
 
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
+    /// <summary>Set when the page is opened from a worklist task ("purchase needed"): fills in the vessel, department, urgency and a note.</summary>
+    [SupplyParameterFromQuery(Name = "task")] public Guid? TaskId { get; set; }
+    private WorklistTask? _fromTask;
+
     private Guid _companyId;
     private Guid _departmentId;
     private Guid _portId;
@@ -138,6 +143,15 @@
             $"{r.ReqnNumber} · {r.Lines.Count} lines · {r.ReqnDate:dd-MMM-yyyy}",
             r.Lines.Select(l => new NewRfqLine { ItemId = l.ItemId, Quantity = l.Quantity, Description = l.Description ?? "", DrawingNo = l.DrawingNo ?? "" }).ToList())).ToList();
 
+        if (TaskId is { } taskId && (await Worklist.GetAsync(companyId, taskId))?.Task is { } task && _vessels.Any(v => v.Id == task.VesselId))
+        {
+            _fromTask = task;
+            _reqn.VesselId = task.VesselId;
+            if (task.DepartmentId is { } dept && _departments.Any(d => d.Id == dept)) _departmentId = dept;
+            _reqn.Urgency = task.Priority == WorklistPriority.Urgent ? Urgency.Urgent : Urgency.Normal;
+            _reqn.Remarks = $"For worklist task {task.Code}: {task.Title}";
+        }
+
         _companyId = companyId; // the form is only rendered once everything above is loaded
     }
 
@@ -151,6 +165,11 @@
         try
         {
             var created = await Requisitions.CreateAsync(_companyId, _reqn, _actor);
+            if (_fromTask is not null)
+            {
+                try { await Worklist.AddEntryAsync(_companyId, _fromTask.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Requisition, LinkTarget: created.Id, LinkLabel: $"Requisition {created.ReqnNumber}"), _actor); }
+                catch (InvalidOperationException) { /* the requisition is saved; a task that cannot take the link (cancelled, or the module switched off) is left as it was */ }
+            }
             Navigation.NavigateTo($"/company/requisitions/{created.Id}");
         }
         catch (InvalidOperationException ex)

@@ -32,6 +32,10 @@ else
     {
         <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div>
     }
+    @if (_notice is not null)
+    {
+        <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div>
+    }
 
     <div class="grid gap-6 lg:grid-cols-3">
         <div class="space-y-6 lg:col-span-2">
@@ -87,6 +91,19 @@ else
                 </dl>
             </div>
 
+            @if (_links.Count > 0)
+            {
+                <div class="card p-5 text-sm">
+                    <h2 class="mb-2 font-display text-base font-extrabold text-ink">Linked</h2>
+                    <ul class="space-y-1.5">
+                        @foreach (var l in _links)
+                        {
+                            <li><a href="@WorklistLinkTypes.Href(l.Type, l.Target, NodeContext.Current.IsVessel)" class="link">@(string.IsNullOrWhiteSpace(l.Label) ? l.Type : l.Label)</a></li>
+                        }
+                    </ul>
+                </div>
+            }
+
             @if (t.Status == WorklistStatus.Cancelled)
             {
                 <div class="card p-5 text-sm text-muted">This task was cancelled. Only comments can be added.</div>
@@ -97,6 +114,10 @@ else
                     @foreach (var (key, label) in Modes(t))
                     {
                         <button class="btn btn-sm @(_mode == key ? "btn-primary" : "btn-secondary")" @onclick="() => Pick(key, t)">@label</button>
+                    }
+                    @if (!t.IsClosed)
+                    {
+                        <a href="/company/requisitions/new?task=@t.Id" class="btn btn-sm btn-secondary" title="Opens a requisition for this vessel with the task's details filled in">Purchase needed</a>
                     }
                 </div>
 
@@ -139,9 +160,30 @@ else
                             <label class="block">Title <input class="input mt-1" @bind="_title" /></label>
                             <label class="block">Description <textarea class="textarea mt-1" rows="3" @bind="_description"></textarea></label>
                         }
-                        <label class="block">@NoteLabel()
-                            <textarea class="textarea mt-1" rows="3" @bind="_text"></textarea>
-                        </label>
+                        @if (_mode == "link")
+                        {
+                            <label class="block">Requisition or order of this vessel
+                                <select class="select mt-1" @bind="_linkChoice">
+                                    <option value="">Choose…</option>
+                                    @foreach (var c in _candidates) { <option value="@c.Type|@c.Id">@(c.Type == WorklistLinkTypes.Requisition ? "Requisition " : "Order ")@c.Label</option> }
+                                </select>
+                            </label>
+                        }
+                        @if (_mode == "transfer")
+                        {
+                            <p class="text-muted">Copies this task to the vessels you tick. Each copy links back here, with no assignee.</p>
+                            @foreach (var v in _otherVessels)
+                            {
+                                <label class="flex items-center gap-2"><input type="checkbox" checked="@_transferTo.Contains(v.Id)" @onchange="e => ToggleVessel(v.Id, (bool)(e.Value ?? false))" />@v.Name</label>
+                            }
+                            @if (_otherVessels.Count == 0) { <p class="text-muted">No other vessel has the worklist switched on.</p> }
+                        }
+                        @if (_mode is not ("link" or "transfer"))
+                        {
+                            <label class="block">@NoteLabel()
+                                <textarea class="textarea mt-1" rows="3" @bind="_text"></textarea>
+                            </label>
+                        }
                         <div class="flex gap-2">
                             <button class="btn btn-primary" @onclick="SubmitAsync">@SubmitLabel()</button>
                             <button class="btn btn-ghost" @onclick="Reset">Cancel</button>
@@ -160,11 +202,16 @@ else
     private Guid _companyId;
     private Actor _actor = Actor.System;
     private bool _loaded;
-    private string? _error;
+    private string? _error, _notice;
     private WorklistDetail? _detail;
     private string _vessel = "";
     private List<WorklistListItem> _lists = [];
     private List<Department> _departments = [];
+    private List<WorklistLink> _links = [];
+    private List<LinkCandidate> _candidates = [];
+    private List<(Guid Id, string Name)> _otherVessels = [];
+    private readonly HashSet<Guid> _transferTo = [];
+    private string _linkChoice = "";
 
     private string _mode = "", _text = "", _assignee = "", _title = "", _description = "";
     private int _percent;
@@ -185,6 +232,7 @@ else
     {
         _detail = await Svc.GetAsync(_companyId, TaskId);
         if (_detail is null) return;
+        _links = WorklistService.LinksOf(_detail.Entries);
         _lists = await Svc.GetListsAsync(_companyId, includeInactive: true);
         await using var db = await Factory.CreateDbContextAsync();
         db.CurrentCompanyId = _companyId;
@@ -216,18 +264,24 @@ else
             yield return ("details", "Edit wording");
             if (!t.IsClosed) yield return ("cancel", "Cancel task");
         }
+        yield return ("link", "Link");
+        if (!NodeContext.Current.IsVessel) yield return ("transfer", "Copy to vessels");
         if (!NodeContext.Current.IsVessel && t.AwaitingVerification) yield return ("verify", "Verify");
     }
 
-    private void Pick(string mode, WorklistTask t)
+    private async Task Pick(string mode, WorklistTask t)
     {
-        _mode = mode; _error = null; _text = "";
+        _mode = mode; _error = null; _text = ""; _linkChoice = ""; _transferTo.Clear();
+        if (mode == "link") _candidates = await Svc.LinkCandidatesAsync(_companyId, t.VesselId);
+        if (mode == "transfer") _otherVessels = (await Svc.EnabledVesselsAsync(_companyId)).Where(v => v.Id != t.VesselId).ToList();
         _percent = t.PercentComplete; _date = t.TargetDate; _priority = t.Priority; _assignee = t.AssigneeName;
         _title = t.Title; _description = t.Description;
         _status = t.Status is WorklistStatus.Open or WorklistStatus.InProgress or WorklistStatus.Waiting ? t.Status : WorklistStatus.InProgress;
     }
 
     private void Reset() { _mode = ""; _error = null; }
+
+    private void ToggleVessel(Guid id, bool on) { if (on) _transferTo.Add(id); else _transferTo.Remove(id); }
 
     private string NoteLabel() => _mode switch
     {
@@ -241,7 +295,7 @@ else
 
     private string SubmitLabel() => _mode switch
     {
-        "complete" => "Mark completed", "verify" => "Verify", "cancel" => "Cancel the task", "defer" => "Defer", _ => "Add",
+        "complete" => "Mark completed", "verify" => "Verify", "cancel" => "Cancel the task", "defer" => "Defer", "transfer" => "Copy", _ => "Add",
     };
 
     private async Task SubmitAsync()
@@ -249,8 +303,18 @@ else
         _error = null;
         try
         {
+            if (_mode == "transfer")
+            {
+                if (_transferTo.Count == 0) throw new InvalidOperationException("Tick at least one vessel.");
+                var result = await Svc.TransferAsync(_companyId, TaskId, _transferTo, _actor);
+                _notice = $"Copied to {result.Created.Count} vessel(s)." + (result.Skipped.Count > 0 ? $" The worklist is off for {string.Join(", ", result.Skipped)}." : "");
+                _mode = "";
+                await LoadAsync();
+                return;
+            }
             var input = _mode switch
             {
+                "link" => LinkInput(),
                 "comment" => new WorklistEntryInput(WorklistEntryType.Comment, _text),
                 "progress" => new WorklistEntryInput(WorklistEntryType.Percent, _text, Percent: _percent),
                 "status" => new WorklistEntryInput(WorklistEntryType.Status, _text, Status: _status),
@@ -269,6 +333,14 @@ else
             await LoadAsync();
         }
         catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private WorklistEntryInput LinkInput()
+    {
+        var parts = _linkChoice.Split('|');
+        if (parts.Length != 2 || !Guid.TryParse(parts[1], out var id)) throw new InvalidOperationException("Choose what to link.");
+        var c = _candidates.First(x => x.Id == id);
+        return new WorklistEntryInput(WorklistEntryType.Link, LinkType: parts[0], LinkTarget: id, LinkLabel: (c.Type == WorklistLinkTypes.Requisition ? "Requisition " : "Order ") + c.Label);
     }
 
     private static string Summary(WorklistEntry e)

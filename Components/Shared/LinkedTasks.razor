@@ -1,0 +1,28 @@
+@inject WorklistService Worklist
+
+@if (_tasks.Count > 0)
+{
+    <div class="card mb-6 p-4 text-sm">
+        <h2 class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Worklist tasks linked to this</h2>
+        <ul class="space-y-1">
+            @foreach (var t in _tasks)
+            {
+                <li class="flex flex-wrap items-center gap-2"><a href="/worklist/@t.Id" class="link font-mono font-semibold">@t.Code</a><span>@t.Title</span><StatusChip Value="@t.Status" /></li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public string LinkType { get; set; } = "";
+    [Parameter, EditorRequired] public Guid TargetId { get; set; }
+
+    private List<WorklistTask> _tasks = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!await Worklist.IsEnabledForCompanyAsync(CompanyId)) { _tasks = []; return; }
+        _tasks = await Worklist.TasksLinkedToAsync(CompanyId, LinkType, TargetId);
+    }
+}

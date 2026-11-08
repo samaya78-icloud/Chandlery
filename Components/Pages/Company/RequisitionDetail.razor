@@ -47,6 +47,7 @@ else if (_reqn is not null)
     </PageHeader>
 
     <RelatedDocuments CompanyId="_companyId" Kind="DocKind.Requisition" Id="_reqn.Id" Version="_auditVersion" />
+    <LinkedTasks CompanyId="_companyId" LinkType="requisition" TargetId="_reqn.Id" />
 
     <div class="mb-6 grid grid-cols-2 gap-4 card p-5 md:grid-cols-4">
         <div><p class="text-xs uppercase tracking-wide text-slate-400">Delivery port</p><p class="text-sm font-medium text-slate-800">@PortName</p></div>

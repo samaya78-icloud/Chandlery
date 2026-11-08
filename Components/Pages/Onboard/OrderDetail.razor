@@ -24,6 +24,8 @@ else
         </Actions>
     </PageHeader>
 
+    <LinkedTasks CompanyId="_companyId" LinkType="order" TargetId="po.Id" />
+
     <div class="mb-6 card p-5">
         <div class="flex flex-wrap items-center gap-3">
             <StatusChip Value="@po.Status" Label="@Orders.StatusLabel(po.Status, po.HandoverRequested)" />

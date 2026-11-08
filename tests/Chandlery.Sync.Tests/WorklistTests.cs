@@ -183,6 +183,64 @@ public class WorklistSyncTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ATaskCanBeLinkedToARequisition_AndTheLinkReachesTheOfficeAndWorksBackwards()
+    {
+        await SwitchOnAsync();
+        var task = await OnboardTaskAsync();
+        Guid reqnId;
+        await using (var db = await _s.VesselFactory.CreateDbContextAsync())
+            reqnId = await db.Requisitions.Select(r => r.Id).FirstOrDefaultAsync();
+        if (reqnId == Guid.Empty) reqnId = Guid.NewGuid();                                  // the link only records the target; it need not exist for the test
+
+        await _vessel.AddEntryAsync(_s.CompanyId, task.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Requisition, LinkTarget: reqnId, LinkLabel: "Requisition X"), _s.User);
+        await _vessel.AddEntryAsync(_s.CompanyId, task.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Requisition, LinkTarget: reqnId, LinkLabel: "Requisition X"), _s.User);
+        await _s.SettleUntilQuietAsync();
+
+        var atOffice = await _shore.GetAsync(_s.CompanyId, task.Id);
+        var links = WorklistService.LinksOf(atOffice!.Entries);
+        Assert.Equal([(WorklistLinkTypes.Requisition, reqnId, "Requisition X")], links.Select(l => (l.Type, l.Target, l.Label)));   // linking twice shows one link
+        Assert.Equal([task.Id], (await _shore.TasksLinkedToAsync(_s.CompanyId, WorklistLinkTypes.Requisition, reqnId)).Select(t => t.Id));
+        Assert.Equal([task.Id], (await _vessel.TasksLinkedToAsync(_s.CompanyId, WorklistLinkTypes.Requisition, reqnId)).Select(t => t.Id));
+        Assert.Empty(await _shore.TasksLinkedToAsync(_s.CompanyId, WorklistLinkTypes.Order, reqnId));
+        Assert.Contains("/vessel/orders/", WorklistLinkTypes.Href(WorklistLinkTypes.Order, reqnId, onVessel: true));
+    }
+
+    [Fact]
+    public async Task TheOfficeCopiesATaskToSisterVessels_WithLinksBothWays_AndTheVesselCannot()
+    {
+        await SwitchOnAsync();
+        var sister = Guid.NewGuid();
+        var offSister = Guid.NewGuid();
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            db.Vessels.Add(new Vessel { Id = sister, CompanyId = _s.CompanyId, Name = "MV Grey Heron", ShortCode = "GH" });
+            db.Vessels.Add(new Vessel { Id = offSister, CompanyId = _s.CompanyId, Name = "MV Quiet Wren", ShortCode = "QW" });
+            db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = sister, Module = PolicyModules.Worklist, Enabled = true });
+            await db.SaveChangesAsync();
+        }
+        var origin = await OnboardTaskAsync(_classSource);
+        await _s.SettleUntilQuietAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.TransferAsync(_s.CompanyId, origin.Id, [sister], _s.User));
+
+        var result = await _shore.TransferAsync(_s.CompanyId, origin.Id, [sister, offSister, _s.VesselId, sister], _s.User);
+        var copy = Assert.Single(result.Created);
+        Assert.Equal(["MV Quiet Wren"], result.Skipped);                                     // module off there; the origin's own vessel and duplicates are ignored
+        Assert.Equal(sister, copy.VesselId);
+        Assert.StartsWith("GH-WL-", copy.Code);
+        Assert.Equal((origin.Title, origin.Description, origin.SourceId, origin.TargetDate, true, ""), (copy.Title, copy.Description, copy.SourceId, copy.TargetDate, copy.RequiresVerification, copy.AssigneeName));
+
+        var copyLinks = WorklistService.LinksOf((await _shore.GetAsync(_s.CompanyId, copy.Id))!.Entries);
+        Assert.Equal([(WorklistLinkTypes.Task, origin.Id)], copyLinks.Select(l => (l.Type, l.Target)));
+        Assert.Contains("Copied from", copyLinks.Single().Label);
+
+        await _s.SettleUntilQuietAsync();
+        var originLinks = WorklistService.LinksOf((await _vessel.GetAsync(_s.CompanyId, origin.Id))!.Entries);    // the vessel sees where its task was copied
+        Assert.Equal([(WorklistLinkTypes.Task, copy.Id)], originLinks.Select(l => (l.Type, l.Target)));
+        Assert.Empty(await _s.ShoreSyncStore.GetQuarantineAsync());
+    }
+
+    [Fact]
     public async Task TheModuleIsOffUntilTheOfficeSwitchesItOn()
     {
         var off = await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.CreateTaskAsync(_s.CompanyId, NewTask(), _s.User));

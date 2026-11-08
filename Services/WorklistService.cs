@@ -13,6 +13,29 @@ public record WorklistEntryInput(WorklistEntryType Type, string Text = "", Workl
 
 public record WorklistDetail(WorklistTask Task, List<WorklistEntry> Entries);
 
+/// <summary>What a task is linked to: a requisition, an order, or another task (a copy or its origin).</summary>
+public record WorklistLink(string Type, Guid Target, string Label, DateTime At);
+
+public record LinkCandidate(string Type, Guid Id, string Label);
+
+public record TransferResult(List<WorklistTask> Created, List<string> Skipped);
+
+public static class WorklistLinkTypes
+{
+    public const string Requisition = "requisition";
+    public const string Order = "order";
+    public const string Task = "task";
+
+    /// <summary>Where the link opens, on the office or on a vessel.</summary>
+    public static string Href(string type, Guid target, bool onVessel) => type switch
+    {
+        Requisition => $"/company/requisitions/{target}",
+        Order => onVessel ? $"/vessel/orders/{target}" : $"/company/purchase-orders/{target}",
+        Task => $"/worklist/{target}",
+        _ => "#",
+    };
+}
+
 /// <summary>
 /// Tasks and their history. The only changes are new entries; a task is never edited. Each side may add progress; the office alone
 /// verifies, and changes priority, target date and assignee of a task the vessel raised (the vessel does so for its own tasks).
@@ -180,6 +203,83 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
         item.IsActive = isActive;
         item.RequiresVerification = item.Kind == WorklistListKind.Source && requiresVerification;
         await db.SaveChangesAsync();
+    }
+
+    // ---- links and copies ----
+
+    /// <summary>The links on a task, worked out from its link entries (oldest first).</summary>
+    public static List<WorklistLink> LinksOf(IEnumerable<WorklistEntry> entries)
+    {
+        var links = new List<WorklistLink>();
+        foreach (var e in entries.Where(e => e.Type == WorklistEntryType.Link).OrderBy(e => e.At).ThenBy(e => e.Id))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(e.Payload) ? "{}" : e.Payload);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("linkType", out var type) && root.TryGetProperty("target", out var target) && Guid.TryParse(target.ToString(), out var id)
+                    && !links.Any(l => l.Type == type.ToString() && l.Target == id))
+                    links.Add(new WorklistLink(type.ToString(), id, root.TryGetProperty("label", out var label) ? label.ToString() : "", e.At));
+            }
+            catch (System.Text.Json.JsonException) { /* an unreadable payload shows no link */ }
+        }
+        return links;
+    }
+
+    /// <summary>Requisitions and orders of a vessel a task can be linked to (the most recent ones).</summary>
+    public async Task<List<LinkCandidate>> LinkCandidatesAsync(Guid companyId, Guid vesselId, int take = 40)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var reqns = await db.Requisitions.AsNoTracking().Where(r => r.CompanyId == companyId && r.VesselId == vesselId)
+            .OrderByDescending(r => r.CreatedAt).Take(take).Select(r => new LinkCandidate(WorklistLinkTypes.Requisition, r.Id, r.ReqnNumber)).ToListAsync();
+        var orders = await db.PurchaseOrders.AsNoTracking().Where(p => p.CompanyId == companyId && p.VesselId == vesselId)
+            .OrderByDescending(p => p.CreatedDate).Take(take).Select(p => new LinkCandidate(WorklistLinkTypes.Order, p.Id, p.PoNumber)).ToListAsync();
+        return [.. reqns, .. orders];
+    }
+
+    /// <summary>Tasks that carry a link to the given requisition, order or task.</summary>
+    public async Task<List<WorklistTask>> TasksLinkedToAsync(Guid companyId, string linkType, Guid target)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var text = target.ToString();
+        var candidates = await db.WorklistEntries.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && e.Type == WorklistEntryType.Link && e.Payload.Contains(text)).ToListAsync();
+        var taskIds = candidates.Where(e => LinksOf([e]).Any(l => l.Type == linkType && l.Target == target)).Select(e => e.TaskId).Distinct().ToList();
+        return await db.WorklistTasks.AsNoTracking().Where(t => taskIds.Contains(t.Id)).OrderBy(t => t.Code).ToListAsync();
+    }
+
+    /// <summary>
+    /// Copies a task to other vessels (the office does this, for faults found on a sister ship). Each copy is a new task on its vessel with the
+    /// same wording, source, nature, category, department, priority and dates, and no assignee; the copy and the origin link to each other.
+    /// Vessels the worklist is off for are skipped and named in the result.
+    /// </summary>
+    public async Task<TransferResult> TransferAsync(Guid companyId, Guid taskId, IEnumerable<Guid> vesselIds, Actor actor)
+    {
+        await using (var check = await factory.CreateDbContextAsync())
+            if (check.Node.IsVessel) throw new InvalidOperationException("Only the office can copy a task to other vessels.");
+        var origin = (await GetAsync(companyId, taskId))?.Task ?? throw new InvalidOperationException("Task not found.");
+        if (origin.Status == WorklistStatus.Cancelled) throw new InvalidOperationException("A cancelled task cannot be copied.");
+
+        var enabled = (await EnabledVesselsAsync(companyId)).ToDictionary(v => v.Id, v => v.Name);
+        var result = new TransferResult([], []);
+        foreach (var vesselId in vesselIds.Distinct().Where(v => v != origin.VesselId))
+        {
+            if (!enabled.TryGetValue(vesselId, out _))
+            {
+                await using var db = await factory.CreateDbContextAsync();
+                db.CurrentCompanyId = companyId;
+                result.Skipped.Add((await db.Vessels.AsNoTracking().FirstOrDefaultAsync(v => v.Id == vesselId))?.Name ?? vesselId.ToString());
+                continue;
+            }
+            var copy = await CreateTaskAsync(companyId, new NewWorklistTask(vesselId, origin.Title, origin.Description, origin.SourceId, origin.NatureId, origin.CategoryId,
+                origin.DepartmentId, origin.Priority, origin.PlannedDate, origin.TargetDate), actor);
+            await AddEntryAsync(companyId, copy.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Task, LinkTarget: origin.Id, LinkLabel: $"Copied from {origin.Code}"), actor);
+            await AddEntryAsync(companyId, origin.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Task, LinkTarget: copy.Id, LinkLabel: $"Copied to {copy.Code} ({enabled[vesselId]})"), actor);
+            result.Created.Add(copy);
+        }
+        return result;
     }
 
     // ---- rules ----
