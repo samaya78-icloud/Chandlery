@@ -1,0 +1,149 @@
+@inject PmsService Svc
+@inject AuthenticationStateProvider Auth
+
+@if (_update is not null)
+{
+    <div class="card border-sky-300/60 p-5 text-sm">
+        <h2 class="mb-1 font-display text-base font-extrabold text-ink">A newer version of the library job</h2>
+        <p class="mb-3 text-xs text-muted">This job was made from version @Job.TemplateVersion; the library is now at version @_update.Template.Version. Nothing changes until it is accepted.</p>
+        <table class="mb-3 w-full text-left text-xs">
+            <thead><tr class="border-b border-line text-muted"><th class="py-1 font-medium">What</th><th class="py-1 font-medium">Now</th><th class="py-1 font-medium">Proposed</th></tr></thead>
+            <tbody>
+            @foreach (var c in _update.Changes) { <tr class="border-b border-line/50"><td class="py-1">@c.Field</td><td class="py-1 text-muted">@c.From</td><td class="py-1 font-medium">@c.To</td></tr> }
+            </tbody>
+        </table>
+        @if (_update.CanApplyHere) { <button class="btn btn-primary btn-sm" @onclick="AcceptAsync">Accept the new version</button> }
+        else { <p class="text-xs text-muted">The @(NodeContext.Current.IsVessel ? "office" : "vessel") made this job and decides when to take the new version.</p> }
+    </div>
+}
+
+<div class="card p-5 text-sm">
+    <h2 class="mb-3 font-display text-base font-extrabold text-ink">@(_mine ? "Edit this job" : "Ask for a change")</h2>
+    @if (_error is not null) { <p class="mb-2 text-rose-700">@_error</p> }
+    @if (_notice is not null) { <p class="mb-2 text-emerald-700">@_notice</p> }
+
+    @if (_mine)
+    {
+        <button class="btn btn-secondary btn-sm" @onclick="StartEdit">@(_editing ? "Close" : "Edit")</button>
+        @if (_editing)
+        {
+            <div class="mt-3 space-y-3">
+                <label class="block">Title <input class="input mt-1" @bind="_title" /></label>
+                <div class="grid grid-cols-3 gap-2">
+                    <label>Every <input type="number" min="1" class="input mt-1" @bind="_calendar" /></label>
+                    <label>Unit
+                        <select class="select mt-1" @bind="_unit">@foreach (var u in Enum.GetValues<PmsIntervalUnit>()) { <option value="@u">@u</option> }</select>
+                    </label>
+                    <label>Or hours <input type="number" min="1" class="input mt-1" @bind="_hours" /></label>
+                </div>
+                <label class="block">Grace (days) <input type="number" min="0" class="input mt-1" @bind="_grace" placeholder="default" /></label>
+                <label class="block">Checklist <textarea class="textarea mt-1" rows="3" @bind="_instructions"></textarea></label>
+                <div class="flex flex-col gap-1">
+                    <label class="flex items-center gap-2"><input type="checkbox" @bind="_fixed" /> Fixed dates</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" @bind="_critical" /> Critical</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" @bind="_verify" /> Needs a second sign-off</label>
+                    <label class="flex items-center gap-2"><input type="checkbox" @bind="_active" /> On the plan</label>
+                </div>
+                <button class="btn btn-primary" @onclick="SaveAsync">Save</button>
+            </div>
+        }
+    }
+    else if (NodeContext.Current.IsVessel)
+    {
+        <p class="mb-3 text-xs text-muted">The office made this job, so a change goes to the office for a decision.</p>
+        <div class="space-y-3">
+            <label class="block">What
+                <select class="select mt-1" @bind="_kind">
+                    <option value="@PlanChangeKind.JobInterval">Change how often it is done</option>
+                    <option value="@PlanChangeKind.JobDeactivate">Take it off the plan</option>
+                </select>
+            </label>
+            @if (_kind == PlanChangeKind.JobInterval)
+            {
+                <div class="grid grid-cols-3 gap-2">
+                    <label>Every <input type="number" min="1" class="input mt-1" @bind="_calendar" /></label>
+                    <label>Unit <select class="select mt-1" @bind="_unit">@foreach (var u in Enum.GetValues<PmsIntervalUnit>()) { <option value="@u">@u</option> }</select></label>
+                    <label>Or hours <input type="number" min="1" class="input mt-1" @bind="_hours" /></label>
+                </div>
+            }
+            <label class="block">Why <textarea class="textarea mt-1" rows="2" @bind="_reason"></textarea></label>
+            <button class="btn btn-secondary" @onclick="AskAsync">Send to the office</button>
+        </div>
+        @foreach (var r in _requests.Take(3))
+        {
+            <p class="mt-3 text-xs text-muted">
+                @r.Request.At.ToString("dd MMM"): @(r.Request.Kind == PlanChangeKind.JobDeactivate ? "take off the plan" : "change the interval") ·
+                @(r.Decision is null ? "waiting" : r.Decision.Approved ? "approved" : "refused: " + r.Decision.Comment)
+            </p>
+        }
+    }
+    else
+    {
+        <p class="text-xs text-muted">The vessel made this job and keeps it up to date itself.</p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public PlannedJob Job { get; set; } = null!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private Actor _actor = Actor.System;
+    private TemplateUpdate? _update;
+    private List<PlanChangeView> _requests = [];
+    private bool _mine, _editing, _fixed, _critical, _verify, _active;
+    private string? _error, _notice;
+    private string _title = "", _instructions = "", _reason = "";
+    private int? _calendar, _hours, _grace;
+    private PmsIntervalUnit _unit;
+    private PlanChangeKind _kind = PlanChangeKind.JobInterval;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _actor = Actor.From((await Auth.GetAuthenticationStateAsync()).User);
+        _mine = Job.OwnerStage == (NodeContext.Current.IsVessel ? SyncStages.Vessel : SyncStages.Office);
+        _update = Job.TemplateId is null ? null : (await Svc.TemplateUpdatesAsync(CompanyId, Job.VesselId)).FirstOrDefault(u => u.Job.Id == Job.Id);
+        _requests = NodeContext.Current.IsVessel && !_mine ? (await Svc.PlanChangesAsync(CompanyId, pendingOnly: false, Job.VesselId)).Where(r => r.Request.PlannedJobId == Job.Id).ToList() : [];
+        if (!_editing) { _calendar = Job.CalendarInterval; _unit = Job.CalendarUnit; _hours = Job.HoursInterval; }
+    }
+
+    private void StartEdit()
+    {
+        _editing = !_editing; _error = _notice = null;
+        (_title, _instructions, _calendar, _unit, _hours, _grace) = (Job.Title, Job.Instructions, Job.CalendarInterval, Job.CalendarUnit, Job.HoursInterval, Job.GraceDays);
+        (_fixed, _critical, _verify, _active) = (Job.Anchor == PmsAnchor.FixedCalendar, Job.IsCritical, Job.RequiresVerification, Job.IsActive);
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            await Svc.UpdateJobAsync(CompanyId, Job.Id, new JobEdit(_title, _instructions, Job.Type, _calendar, _unit, _hours, _fixed ? PmsAnchor.FixedCalendar : PmsAnchor.FromCompletion, _grace,
+                _critical, Job.DepartmentId, Job.EstimatedMinutes, _verify, _active), _actor);
+            _editing = false;
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task AskAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var proposal = _kind == PlanChangeKind.JobInterval ? new PlanChangeProposal(CalendarInterval: _calendar, CalendarUnit: _unit, HoursInterval: _hours) : new PlanChangeProposal();
+            await Svc.RequestPlanChangeAsync(CompanyId, new NewPlanChange(_kind, Job.Id, null, proposal, _reason), _actor);
+            _reason = ""; _notice = "Sent to the office.";
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task AcceptAsync()
+    {
+        _error = _notice = null;
+        try { await Svc.ApplyTemplateUpdatesAsync(CompanyId, [Job.Id], _actor); await OnChanged.InvokeAsync(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

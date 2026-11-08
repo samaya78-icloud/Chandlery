@@ -1,0 +1,145 @@
+@page "/pms/approvals"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject PmsService Svc
+
+<PageTitle>Maintenance approvals · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Maintenance approvals"
+            Subtitle="Requests to put a job off, and (for the office) requests from vessels to change the plan. Nothing changes until it is approved.">
+    <Actions>
+        <a href="/pms" class="btn btn-secondary">Back to the plan</a>
+        @if (!NodeContext.Current.IsVessel) { <a href="/pms/template-updates" class="btn btn-secondary">Template updates</a> }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    <h2 class="mb-2 font-display text-base font-extrabold text-ink">Deferral requests (@_deferrals.Count)</h2>
+    @if (_deferrals.Count == 0) { <div class="card mb-8 p-6 text-center text-sm text-muted">Nothing is waiting.</div> }
+    <div class="mb-8 space-y-3">
+        @foreach (var d in _deferrals)
+        {
+            var r = d.Request;
+            var mayApprove = !NodeContext.Current.IsVessel || d.MasterMayApprove;
+            <div class="card p-4 text-sm">
+                <div class="flex flex-wrap items-center gap-2">
+                    <a href="/pms/jobs/@d.Job.Id" class="link font-mono font-semibold">@d.Job.Code</a><span class="font-medium">@d.Job.Title</span>
+                    @if (r.IsCritical) { <span class="chip" data-tone="danger">critical</span> }
+                    <span class="text-xs text-muted">@d.Vessel · @d.Machinery</span>
+                </div>
+                <p class="mt-1 text-xs text-muted">Due @r.CurrentDueDate.ToString("dd MMM yyyy"), asked to put off to <span class="font-semibold text-ink">@r.RequestedDueDate.ToString("dd MMM yyyy")</span> (@((r.RequestedDueDate - r.CurrentDueDate).Days) days) by @r.RequestedByName</p>
+                <p class="mt-1 text-ink-2">@r.Reason</p>
+                @if (_mayDecide.GetValueOrDefault(r.VesselId))
+                {
+                    <div class="mt-3 flex flex-wrap items-end gap-2">
+                        <label class="text-xs">Grant until <input type="date" class="input mt-1" value="@r.RequestedDueDate.ToString("yyyy-MM-dd")" @onchange="e => _grant[r.Id] = e.Value?.ToString() ?? string.Empty" /></label>
+                        <input class="input max-w-xs" placeholder="Comment (needed to refuse)" @onchange="e => _comment[r.Id] = e.Value?.ToString() ?? string.Empty" />
+                        <button class="btn btn-primary btn-sm" disabled="@(!mayApprove)" @onclick="() => DecideAsync(r, true)">Approve</button>
+                        <button class="btn btn-secondary btn-sm" @onclick="() => DecideAsync(r, false)">Refuse</button>
+                    </div>
+                    @if (!mayApprove) { <p class="mt-1 text-xs text-amber-700">@(r.IsCritical ? "A critical job: the office decides." : $"More than {PmsDeferralRules.MasterMaxDays} days: the office decides.") You can refuse it.</p> }
+                }
+                else { <p class="mt-2 text-xs text-muted">Only the Master can decide this onboard.</p> }
+            </div>
+        }
+    </div>
+
+    @if (!NodeContext.Current.IsVessel)
+    {
+        <h2 class="mb-2 font-display text-base font-extrabold text-ink">Plan change requests (@_changes.Count)</h2>
+        @if (_changes.Count == 0) { <div class="card p-6 text-center text-sm text-muted">Nothing is waiting.</div> }
+        <div class="space-y-3">
+            @foreach (var c in _changes)
+            {
+                var r = c.Request;
+                <div class="card p-4 text-sm">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="chip" data-tone="info">@Describe(r.Kind)</span><span class="font-medium">@c.Target</span><span class="text-xs text-muted">@c.Vessel</span>
+                    </div>
+                    <p class="mt-1 text-xs text-muted">@ProposalText(r) · asked by @r.RequestedByName on @r.At.ToString("dd MMM")</p>
+                    <p class="mt-1 text-ink-2">@r.Reason</p>
+                    <div class="mt-3 flex flex-wrap items-end gap-2">
+                        <input class="input max-w-xs" placeholder="Comment (needed to refuse)" @onchange="e => _changeComment[r.Id] = e.Value?.ToString() ?? string.Empty" />
+                        <button class="btn btn-primary btn-sm" @onclick="() => DecideChangeAsync(r, true)">Approve and change the plan</button>
+                        <button class="btn btn-secondary btn-sm" @onclick="() => DecideChangeAsync(r, false)">Refuse</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private string? _error;
+    private List<PendingDeferral> _deferrals = [];
+    private List<PlanChangeView> _changes = [];
+    private readonly Dictionary<Guid, bool> _mayDecide = [];
+    private readonly Dictionary<Guid, string> _grant = [], _comment = [], _changeComment = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _deferrals = await Svc.PendingDeferralsAsync(_companyId);
+        foreach (var vessel in _deferrals.Select(d => d.Request.VesselId).Distinct())
+            _mayDecide[vessel] = await Svc.MayDecideDeferralsAsync(_companyId, vessel, _actor);
+        _changes = NodeContext.Current.IsVessel ? [] : await Svc.PlanChangesAsync(_companyId, pendingOnly: true);
+    }
+
+    private async Task DecideAsync(JobDeferralRequest request, bool approve)
+    {
+        _error = null;
+        try
+        {
+            DateTime? granted = approve && _grant.TryGetValue(request.Id, out var g) && DateTime.TryParse(g, out var parsed) ? parsed : null;
+            await Svc.DecideDeferralAsync(_companyId, request.Id, approve, granted, _comment.GetValueOrDefault(request.Id, ""), _actor);
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        catch (UnauthorizedAccessException ex) { _error = ex.Message; }
+    }
+
+    private async Task DecideChangeAsync(PlanChangeRequest request, bool approve)
+    {
+        _error = null;
+        try { await Svc.DecidePlanChangeAsync(_companyId, request.Id, approve, _changeComment.GetValueOrDefault(request.Id, ""), _actor); await LoadAsync(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private static string Describe(PlanChangeKind kind) => kind switch
+    {
+        PlanChangeKind.JobInterval => "Interval change", PlanChangeKind.JobDeactivate => "Take off the plan", _ => "Machinery change",
+    };
+
+    private static string ProposalText(PlanChangeRequest r)
+    {
+        var p = System.Text.Json.JsonSerializer.Deserialize<PlanChangeProposal>(r.Proposed) ?? new PlanChangeProposal();
+        var parts = new List<string>();
+        if (p.CalendarInterval is > 0) parts.Add($"every {p.CalendarInterval} {(p.CalendarUnit ?? PmsIntervalUnit.Months).ToString().ToLowerInvariant()}");
+        if (p.HoursInterval is > 0) parts.Add($"every {p.HoursInterval:N0} running hours");
+        if (p.Name is { Length: > 0 }) parts.Add($"rename to {p.Name}");
+        if (p.IsCritical is { } c) parts.Add(c ? "mark critical" : "not critical");
+        if (p.HasHourMeter is { } m) parts.Add(m ? "has an hour meter" : "no hour meter");
+        return parts.Count == 0 ? (r.Kind == PlanChangeKind.JobDeactivate ? "Remove it from the plan" : "") : "Proposed: " + string.Join(", ", parts);
+    }
+}

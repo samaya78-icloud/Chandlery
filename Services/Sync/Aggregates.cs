@@ -36,11 +36,16 @@ public static class Aggregates
         new(nameof(RunningHoursReading), typeof(RunningHoursReading)),
         new(nameof(JobCompletion), typeof(JobCompletion)),
         new(nameof(JobVerification), typeof(JobVerification)),
+        new(nameof(JobDeferralRequest), typeof(JobDeferralRequest)),
+        new(nameof(JobDeferralDecision), typeof(JobDeferralDecision)),
+        new(nameof(PlanChangeRequest), typeof(PlanChangeRequest)),
+        new(nameof(PlanChangeDecision), typeof(PlanChangeDecision)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
     public static bool IsAppendOnly(Type clr) => clr == typeof(WorklistTask) || clr == typeof(WorklistEntry)
-        || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification);
+        || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
+        || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
     private static readonly Dictionary<Type, AggregateType> ByClr = Types.ToDictionary(t => t.Clr);
@@ -56,7 +61,7 @@ public static class Aggregates
         [typeof(PlannedJob)] =
         [
             nameof(PlannedJob.LastDoneDate), nameof(PlannedJob.LastDoneHours), nameof(PlannedJob.NextDueDate), nameof(PlannedJob.DueBasis), nameof(PlannedJob.HoursEstimated),
-            nameof(PlannedJob.HoursUnknown), nameof(PlannedJob.LastReadingDate), nameof(PlannedJob.GraceUntil),
+            nameof(PlannedJob.HoursUnknown), nameof(PlannedJob.LastReadingDate), nameof(PlannedJob.GraceUntil), nameof(PlannedJob.DeferredUntil),
         ],
         [typeof(WorklistTask)] =
         [
@@ -83,6 +88,10 @@ public static class Aggregates
         RunningHoursReading rr => rr.OwnerStage,
         JobCompletion jc => jc.OwnerStage,
         JobVerification jv => jv.OwnerStage,
+        JobDeferralRequest dq => dq.OwnerStage,
+        JobDeferralDecision dd => dd.OwnerStage,
+        PlanChangeRequest pq => pq.OwnerStage,
+        PlanChangeDecision pd => pd.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -99,6 +108,10 @@ public static class Aggregates
         else if (root is RunningHoursReading reading) reading.OwnerStage = stage;
         else if (root is JobCompletion completion) completion.OwnerStage = stage;
         else if (root is JobVerification verification) verification.OwnerStage = stage;
+        else if (root is JobDeferralRequest deferralRequest) deferralRequest.OwnerStage = stage;
+        else if (root is JobDeferralDecision deferralDecision) deferralDecision.OwnerStage = stage;
+        else if (root is PlanChangeRequest changeRequest) changeRequest.OwnerStage = stage;
+        else if (root is PlanChangeDecision changeDecision) changeDecision.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

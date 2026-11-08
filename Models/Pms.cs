@@ -133,6 +133,9 @@ public class PlannedJob
     public bool HoursUnknown { get; set; }
     public DateTime? LastReadingDate { get; set; }
     public DateTime? GraceUntil { get; set; }
+
+    /// <summary>Set when an approved deferral is what gives the next due date.</summary>
+    public DateTime? DeferredUntil { get; set; }
 }
 
 // ---- things that happened: written once, never changed ----
@@ -189,6 +192,89 @@ public class JobVerification
     public Guid CompletionId { get; set; }
     public string VerifiedBy { get; set; } = "";
     public string Note { get; set; } = "";
+    public Guid? AuthorUserId { get; set; }
+    public DateTime At { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Office;
+}
+
+// ---- deferrals and plan changes: requests and decisions, written once ----
+
+/// <summary>A request to put a job off. It counts only for the cycle it was asked in: once the job is done again, it no longer applies.</summary>
+public class JobDeferralRequest
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid PlannedJobId { get; set; }
+
+    /// <summary>The due date when the request was made.</summary>
+    public DateTime CurrentDueDate { get; set; }
+    public DateTime RequestedDueDate { get; set; }
+
+    /// <summary>When the job was last done at the time (empty if never): the cycle this request belongs to.</summary>
+    public DateTime? LastDoneAtRequest { get; set; }
+    public string Reason { get; set; } = "";
+
+    /// <summary>The job was critical when asked, so the request travels on the urgent lane.</summary>
+    public bool IsCritical { get; set; }
+    public string RequestedByName { get; set; } = "";
+    public Guid? AuthorUserId { get; set; }
+    public DateTime At { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Office;
+}
+
+/// <summary>The answer to a deferral request. The latest decision on a request is the one that counts; earlier ones stay in the history.</summary>
+public class JobDeferralDecision
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid RequestId { get; set; }
+    public bool Approved { get; set; }
+
+    /// <summary>The new due date that was granted (it can differ from the one asked for).</summary>
+    public DateTime? ApprovedDueDate { get; set; }
+    public string Comment { get; set; } = "";
+    public string DecidedByName { get; set; } = "";
+
+    /// <summary>"office", or "master" for a Master approving onboard within the limit.</summary>
+    public string DecidedByRole { get; set; } = "office";
+    public bool IsCritical { get; set; }
+    public Guid? AuthorUserId { get; set; }
+    public DateTime At { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Office;
+}
+
+public enum PlanChangeKind { JobInterval, JobDeactivate, MachineryChange }
+
+/// <summary>A vessel asking the office to change what the office owns (a job's interval, taking a job off the plan, a machinery item's details).</summary>
+public class PlanChangeRequest
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public PlanChangeKind Kind { get; set; }
+    public Guid? PlannedJobId { get; set; }
+    public Guid? MachineryItemId { get; set; }
+
+    /// <summary>The proposed values, as JSON (which values depend on <see cref="Kind"/>).</summary>
+    public string Proposed { get; set; } = "{}";
+    public string Reason { get; set; } = "";
+    public string RequestedByName { get; set; } = "";
+    public Guid? AuthorUserId { get; set; }
+    public DateTime At { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Office;
+}
+
+public class PlanChangeDecision
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid RequestId { get; set; }
+    public bool Approved { get; set; }
+    public string Comment { get; set; } = "";
+    public string DecidedByName { get; set; } = "";
     public Guid? AuthorUserId { get; set; }
     public DateTime At { get; set; }
     public string OwnerStage { get; set; } = SyncStages.Office;

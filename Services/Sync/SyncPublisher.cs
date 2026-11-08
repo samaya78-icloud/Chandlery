@@ -150,6 +150,8 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
     {
         PurchaseOrder { IsEmergency: true } => Lane.Urgent,
         WorklistTask { Priority: WorklistPriority.Urgent } => Lane.Urgent,
+        JobDeferralRequest { IsCritical: true } => Lane.Urgent,
+        JobDeferralDecision { IsCritical: true } => Lane.Urgent,
         WorklistEntry { Type: WorklistEntryType.Created or WorklistEntryType.Priority } entry when SaysUrgent(entry.Payload) => Lane.Urgent,
         _ => Lane.Transaction,
     };
@@ -169,7 +171,8 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         if (aggregate.Clr == typeof(PurchaseOrder)) return MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId));
         if (aggregate.Clr == typeof(Rfq)) return MasterData.ReadGuid(payload, nameof(Rfq.VesselId));
         if (aggregate.Clr == typeof(WorklistTask)) return MasterData.ReadGuid(payload, nameof(WorklistTask.VesselId));
-        if (aggregate.Clr == typeof(MachineryItem) || aggregate.Clr == typeof(PlannedJob) || aggregate.Clr == typeof(RunningHoursReading) || aggregate.Clr == typeof(JobCompletion))
+        if (aggregate.Clr == typeof(MachineryItem) || aggregate.Clr == typeof(PlannedJob) || aggregate.Clr == typeof(RunningHoursReading) || aggregate.Clr == typeof(JobCompletion)
+            || aggregate.Clr == typeof(JobDeferralRequest) || aggregate.Clr == typeof(JobDeferralDecision) || aggregate.Clr == typeof(PlanChangeRequest) || aggregate.Clr == typeof(PlanChangeDecision))
             return MasterData.ReadGuid(payload, nameof(PlannedJob.VesselId));
         if (aggregate.Clr == typeof(JobVerification))
         {

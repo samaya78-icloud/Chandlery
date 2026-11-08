@@ -6,6 +6,7 @@
     <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard Label="Maintenance: overdue" Value="@_counts.Overdue.ToString("N0")" Hint="@($"{_counts.CriticalOverdue} critical")" Href="@(NodeContext.Current.IsVessel ? "/pms" : "/pms/fleet")" Tone="@(_counts.Overdue > 0 ? "danger" : "success")" />
         <StatCard Label="Maintenance: due in 7 days" Value="@_counts.DueThisWeek.ToString("N0")" Href="@(NodeContext.Current.IsVessel ? "/pms" : "/pms/fleet")" Tone="warning" />
+        <StatCard Label="Maintenance: awaiting a decision" Value="@_counts.PendingDecisions.ToString("N0")" Hint="Deferral requests" Href="/pms/approvals" Tone="@(_counts.PendingDecisions > 0 ? "warning" : "success")" />
         <StatCard Label="Hours out of date" Value="@_counts.HoursOutOfDate.ToString("N0")" Hint="No reading for over a week" Href="@(NodeContext.Current.IsVessel ? "/pms/hours" : "/pms/reports")" Tone="info" />
     </div>
 }

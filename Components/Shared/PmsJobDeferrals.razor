@@ -1,0 +1,101 @@
+@inject PmsService Svc
+@inject AuthenticationStateProvider Auth
+
+<div class="card p-5 text-sm">
+    <h2 class="mb-3 font-display text-base font-extrabold text-ink">Putting the job off</h2>
+
+    @if (Job.DeferredUntil is { } deferred)
+    {
+        <p class="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-900">Put off to @deferred.ToString("dd MMM yyyy"). It is overdue the day after, unless it is done or put off again.</p>
+    }
+    @if (_error is not null) { <p class="mb-2 text-rose-700">@_error</p> }
+
+    @foreach (var v in _views.Take(5))
+    {
+        var current = v.Request.LastDoneAtRequest == Job.LastDoneDate;
+        <div class="mb-3 rounded-lg border border-line/70 p-3">
+            <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span class="font-semibold text-ink">To @v.Request.RequestedDueDate.ToString("dd MMM yyyy")</span>
+                <span>asked by @v.Request.RequestedByName</span>
+                @if (v.Decision is null && current) { <span class="chip" data-tone="warning">waiting for a decision</span> }
+                else if (v.Decision is null) { <span class="chip chip-plain" data-tone="neutral">not needed: the job was done</span> }
+                else if (v.Decision.Approved) { <span class="chip" data-tone="success">approved to @(v.Decision.ApprovedDueDate?.ToString("dd MMM yyyy")) by @v.Decision.DecidedByName (@v.Decision.DecidedByRole)</span> }
+                else { <span class="chip" data-tone="danger">refused by @v.Decision.DecidedByName</span> }
+            </div>
+            <p class="mt-1 text-ink-2">@v.Request.Reason</p>
+            @if (v.Decision is { Comment: { Length: > 0 } c }) { <p class="mt-1 text-xs text-muted">“@c”</p> }
+            @if (v.Decision is null && current && _mayDecide)
+            {
+                <div class="mt-2 flex flex-wrap items-end gap-2">
+                    <label class="text-xs">Grant until <input type="date" class="input mt-1" value="@v.Request.RequestedDueDate.ToString("yyyy-MM-dd")" @onchange="e => _grant[v.Request.Id] = e.Value?.ToString() ?? string.Empty" /></label>
+                    <input class="input max-w-xs" placeholder="Comment (needed to refuse)" @onchange="e => _comment[v.Request.Id] = e.Value?.ToString() ?? string.Empty" />
+                    <button class="btn btn-primary btn-sm" @onclick="() => DecideAsync(v.Request, true)">Approve</button>
+                    <button class="btn btn-secondary btn-sm" @onclick="() => DecideAsync(v.Request, false)">Refuse</button>
+                </div>
+                @if (NodeContext.Current.IsVessel && !PmsDeferralRules.MasterMayApprove(v.Request.IsCritical, v.Request.CurrentDueDate, v.Request.RequestedDueDate))
+                {
+                    <p class="mt-1 text-xs text-amber-700">@(v.Request.IsCritical ? "A critical job: the office decides, you can only refuse." : $"More than {PmsDeferralRules.MasterMaxDays} days: the office decides, you can only refuse.")</p>
+                }
+            }
+        </div>
+    }
+
+    @if (Job.NextDueDate is not null && !_waiting)
+    {
+        <div class="space-y-2">
+            <label class="block">Put off until <input type="date" class="input mt-1" @bind="_date" /></label>
+            <label class="block">Why <textarea class="textarea mt-1" rows="2" @bind="_reason"></textarea></label>
+            <button class="btn btn-secondary" @onclick="RequestAsync">Ask to put it off</button>
+        </div>
+    }
+    else if (_waiting) { <p class="text-xs text-muted">A request is waiting for a decision.</p> }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public PlannedJob Job { get; set; } = null!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private Actor _actor = Actor.System;
+    private List<DeferralView> _views = [];
+    private bool _mayDecide, _waiting;
+    private string? _error;
+    private DateTime? _date;
+    private string _reason = "";
+    private readonly Dictionary<Guid, string> _grant = [], _comment = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _actor = Actor.From((await Auth.GetAuthenticationStateAsync()).User);
+        _views = await Svc.DeferralsOfJobAsync(CompanyId, Job.Id);
+        _mayDecide = await Svc.MayDecideDeferralsAsync(CompanyId, Job.VesselId, _actor);
+        _waiting = _views.Any(v => v.Decision is null && v.Request.LastDoneAtRequest == Job.LastDoneDate);
+        _date ??= (Job.NextDueDate ?? DateTime.UtcNow.Date).AddDays(7);
+    }
+
+    private async Task RequestAsync()
+    {
+        _error = null;
+        try
+        {
+            if (_date is null) throw new InvalidOperationException("Choose the date to put the job off to.");
+            await Svc.RequestDeferralAsync(CompanyId, Job.Id, _date.Value, _reason, _actor);
+            _reason = "";
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task DecideAsync(JobDeferralRequest request, bool approve)
+    {
+        _error = null;
+        try
+        {
+            DateTime? granted = approve && _grant.TryGetValue(request.Id, out var g) && DateTime.TryParse(g, out var parsed) ? parsed : null;
+            await Svc.DecideDeferralAsync(CompanyId, request.Id, approve, granted, _comment.GetValueOrDefault(request.Id, ""), _actor);
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        catch (UnauthorizedAccessException ex) { _error = ex.Message; }
+    }
+}

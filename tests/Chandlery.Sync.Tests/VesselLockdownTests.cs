@@ -52,6 +52,6 @@ public class VesselLockdownTests : IAsyncLifetime
             .ToList();
 
         // Adding a page to this list is a decision: it will be reachable from a ship.
-        Assert.Equal(["ChangePassword", "CrewAdmin", "Home", "Items", "OrderDetail", "Orders", "PmsBoard", "PmsHoursPage", "PmsJobPage", "PmsMachineryPage", "PurchaseOrderNewSpot", "RequisitionDetail", "RequisitionNew", "Requisitions", "VesselPortCalls", "VesselRfqDetail", "VesselRfqs", "WorklistBoard", "WorklistTaskPage"], allowed);
+        Assert.Equal(["ChangePassword", "CrewAdmin", "Home", "Items", "OrderDetail", "Orders", "PmsApprovalsPage", "PmsBoard", "PmsHoursPage", "PmsJobPage", "PmsMachineryPage", "PurchaseOrderNewSpot", "RequisitionDetail", "RequisitionNew", "Requisitions", "VesselPortCalls", "VesselRfqDetail", "VesselRfqs", "WorklistBoard", "WorklistTaskPage"], allowed);
     }
 }

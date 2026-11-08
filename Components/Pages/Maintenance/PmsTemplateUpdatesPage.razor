@@ -1,0 +1,92 @@
+@page "/pms/template-updates"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject PmsService Svc
+
+<PageTitle>Template updates · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Template updates"
+            Subtitle="Jobs made from a library template that has since changed. Each shows exactly what would change; nothing is updated until you choose it.">
+    <Actions>
+        <a href="/company/pms-library" class="btn btn-secondary">Library</a>
+        <a href="/pms/approvals" class="btn btn-secondary">Approvals</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @if (_notice is not null) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div> }
+
+    @if (_updates.Count == 0)
+    {
+        <EmptyState Title="Every job is up to date" Message="When a library template changes, the jobs made from it appear here with the differences." />
+    }
+    else
+    {
+        <div class="mb-3 flex items-center gap-3 text-sm">
+            <button class="btn btn-ghost btn-sm" @onclick="SelectAll">Select all I can update</button>
+            <button class="btn btn-primary" disabled="@(_chosen.Count == 0)" @onclick="ApplyAsync">Update @_chosen.Count job(s)</button>
+        </div>
+        <div class="space-y-3">
+            @foreach (var u in _updates)
+            {
+                <div class="card p-4 text-sm @(u.CanApplyHere ? "" : "opacity-70")">
+                    <div class="flex flex-wrap items-start gap-3">
+                        <input type="checkbox" class="mt-1" disabled="@(!u.CanApplyHere)" checked="@_chosen.Contains(u.Job.Id)" @onchange="e => Toggle(u.Job.Id, (bool)(e.Value ?? false))" />
+                        <div class="min-w-0 flex-1">
+                            <div class="flex flex-wrap items-center gap-2"><a href="/pms/jobs/@u.Job.Id" class="link font-mono font-semibold">@u.Job.Code</a><span class="font-medium">@u.Job.Title</span>
+                                <span class="text-xs text-muted">@u.Vessel · @u.Machinery · version @u.Job.TemplateVersion to @u.Template.Version</span>
+                                @if (!u.CanApplyHere) { <span class="chip chip-plain" data-tone="neutral">the vessel's own job</span> }</div>
+                            <ul class="mt-2 grid gap-x-6 gap-y-0.5 text-xs md:grid-cols-2">
+                                @foreach (var c in u.Changes) { <li><span class="text-muted">@c.Field:</span> @c.From <span class="text-muted">→</span> <span class="font-medium">@c.To</span></li> }
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private string? _error, _notice;
+    private List<TemplateUpdate> _updates = [];
+    private readonly HashSet<Guid> _chosen = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync() { _chosen.Clear(); _updates = await Svc.TemplateUpdatesAsync(_companyId); }
+
+    private void Toggle(Guid id, bool on) { if (on) _chosen.Add(id); else _chosen.Remove(id); }
+
+    private void SelectAll() { foreach (var u in _updates.Where(u => u.CanApplyHere)) _chosen.Add(u.Job.Id); }
+
+    private async Task ApplyAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var (updated, skipped) = await Svc.ApplyTemplateUpdatesAsync(_companyId, _chosen, _actor);
+            _notice = $"Updated {updated} job(s)." + (skipped > 0 ? $" {skipped} left alone." : "") + " The changes reach the vessels with the next sync.";
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

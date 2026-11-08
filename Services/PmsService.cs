@@ -22,6 +22,68 @@ public record TemplateInput(string Code, string Title, string Instructions = "",
 /// <summary>One job the library would add: this template on this machinery item.</summary>
 public record LibrarySuggestion(MachineryItem Item, JobTemplate Template, bool AlreadyPlanned, bool NeedsHourMeter);
 
+/// <summary>A deferral request with the decision that currently counts (the latest), if any.</summary>
+public record DeferralView(JobDeferralRequest Request, JobDeferralDecision? Decision, List<JobDeferralDecision> AllDecisions);
+
+public record PendingDeferral(JobDeferralRequest Request, PlannedJob Job, string Vessel, string Machinery, bool MasterMayApprove);
+
+/// <summary>What the Master may approve onboard without the office. Fixed for now; a policy setting (spec 07 section 9) will replace the constants.</summary>
+public static class PmsDeferralRules
+{
+    /// <summary>The longest a Master may put a job off beyond its due date.</summary>
+    public const int MasterMaxDays = 14;
+
+    public static bool MasterMayApprove(bool critical, DateTime currentDue, DateTime approvedDate) => !critical && (approvedDate.Date - currentDue.Date).Days <= MasterMaxDays;
+}
+
+/// <summary>The definition of a job as its owner edits it.</summary>
+public record JobEdit(string Title, string Instructions, PmsJobType Type, int? CalendarInterval, PmsIntervalUnit CalendarUnit, int? HoursInterval, PmsAnchor Anchor,
+    int? GraceDays, bool IsCritical, Guid? DepartmentId, int? EstimatedMinutes, bool RequiresVerification, bool IsActive = true);
+
+public record MachineryEdit(string Name, string Code, string Maker, string Model, string Serial, Guid? MachineryClassId, bool IsCritical, bool HasHourMeter, bool IsActive = true);
+
+/// <summary>What a vessel proposes to change. Only the values that are set are changed.</summary>
+public record PlanChangeProposal(
+    int? CalendarInterval = null, PmsIntervalUnit? CalendarUnit = null, int? HoursInterval = null, int? GraceDays = null,
+    string? Name = null, bool? IsCritical = null, bool? HasHourMeter = null, Guid? MachineryClassId = null);
+
+public record NewPlanChange(PlanChangeKind Kind, Guid? PlannedJobId, Guid? MachineryItemId, PlanChangeProposal Proposed, string Reason);
+
+public record PlanChangeView(PlanChangeRequest Request, PlanChangeDecision? Decision, string Vessel, string Target);
+
+public record TemplateChange(string Field, string From, string To);
+
+public record TemplateUpdate(PlannedJob Job, JobTemplate Template, string Vessel, string Machinery, List<TemplateChange> Changes, bool CanApplyHere);
+
+/// <summary>What would change on a planned job if it took on its template's current version. Pure.</summary>
+public static class PmsTemplateDiff
+{
+    public static List<TemplateChange> Of(PlannedJob job, JobTemplate t)
+    {
+        var changes = new List<TemplateChange>();
+        void Add<T>(string field, T from, T to, Func<T, string>? show = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(from, to)) return;
+            show ??= v => v?.ToString() ?? "none";
+            changes.Add(new TemplateChange(field, show(from), show(to)));
+        }
+        Add("Title", job.Title, t.Title);
+        Add("Checklist", job.Instructions, t.Instructions, v => v.Replace("\n", " / ").Trim() is { Length: > 0 } x ? (x.Length > 80 ? x[..80] + "…" : x) : "none");
+        Add("Type", job.Type, t.Type);
+        Add("Calendar interval", Interval(job.CalendarInterval, job.CalendarUnit), Interval(t.CalendarInterval, t.CalendarUnit));
+        Add("Running hours interval", job.HoursInterval, t.HoursInterval, v => v is { } h ? $"{h:N0} h" : "none");
+        Add("Counted", job.Anchor, t.Anchor, v => v == PmsAnchor.FixedCalendar ? "on fixed dates" : "from the last completion");
+        Add("Grace", job.GraceDays, t.GraceDays, v => v is { } g ? $"{g} days" : "default");
+        Add("Critical", job.IsCritical, t.IsCritical, v => v ? "yes" : "no");
+        Add("Department", job.DepartmentId, t.DepartmentId, v => v is null ? "none" : "changed");
+        Add("Estimated time", job.EstimatedMinutes, t.EstimatedMinutes, v => v is { } m ? $"{m} min" : "none");
+        Add("Second sign-off", job.RequiresVerification, t.RequiresVerification, v => v ? "required" : "not required");
+        return changes;
+    }
+
+    private static string Interval(int? n, PmsIntervalUnit unit) => n is > 0 ? $"{n} {unit.ToString().ToLowerInvariant()}" : "none";
+}
+
 public record PmsJobDetail(PlannedJob Job, MachineryItem Item, List<JobCompletion> Completions, HashSet<Guid> VerifiedCompletionIds);
 
 /// <summary>
@@ -379,6 +441,330 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         db.CurrentCompanyId = companyId;
         return (await db.RunningHoursReadings.AsNoTracking().Where(r => r.CompanyId == companyId && r.MachineryItemId == machineryItemId).ToListAsync())
             .OrderByDescending(r => r.ReadingDate).ThenByDescending(r => r.At).ToList();
+    }
+
+    // ---- deferrals ----
+
+    /// <summary>Asks to put a job off to a later date. It changes nothing until it is approved.</summary>
+    public async Task<JobDeferralRequest> RequestDeferralAsync(Guid companyId, Guid jobId, DateTime requestedDue, string reason, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var job = await db.PlannedJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId && j.CompanyId == companyId) ?? throw new InvalidOperationException("Job not found.");
+        await RequireEnabledAsync(db, companyId, job.VesselId);
+        if (!job.IsActive) throw new InvalidOperationException("This job is no longer on the plan.");
+        if (job.NextDueDate is not { } due) throw new InvalidOperationException("This job has no due date to put off.");
+        if (string.IsNullOrWhiteSpace(reason)) throw new InvalidOperationException("Say why the job needs to be put off.");
+        var requested = Day(requestedDue);
+        if (requested <= Day(due)) throw new InvalidOperationException($"The new date must be after the current due date ({due:dd MMM yyyy}).");
+        if (requested > Day(due).AddYears(1)) throw new InvalidOperationException("A job cannot be put off by more than a year.");
+
+        var sameCycle = await db.JobDeferralRequests.AsNoTracking().Where(r => r.PlannedJobId == jobId && r.LastDoneAtRequest == job.LastDoneDate).Select(r => r.Id).ToListAsync();
+        if (sameCycle.Count > 0 && await db.JobDeferralDecisions.AsNoTracking().CountAsync(d => sameCycle.Contains(d.RequestId)) < sameCycle.Count)
+            throw new InvalidOperationException("A request for this job is already waiting for a decision.");
+
+        var request = new JobDeferralRequest
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = job.VesselId, PlannedJobId = jobId, CurrentDueDate = Day(due), RequestedDueDate = requested,
+            LastDoneAtRequest = job.LastDoneDate, Reason = reason.Trim(), IsCritical = job.IsCritical, RequestedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
+        };
+        db.JobDeferralRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request;
+    }
+
+    /// <summary>
+    /// Decides a request. The office may decide any; onboard, only the Master may, and only to approve within <see cref="PmsDeferralRules"/>
+    /// (a critical job, or more than the limit, is the office's to approve). Anyone entitled may reject. The date granted cannot be later than the one asked for.
+    /// </summary>
+    public async Task<JobDeferralDecision> DecideDeferralAsync(Guid companyId, Guid requestId, bool approve, DateTime? approvedDate, string comment, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var request = await db.JobDeferralRequests.AsNoTracking().FirstOrDefaultAsync(r => r.Id == requestId && r.CompanyId == companyId) ?? throw new InvalidOperationException("Request not found.");
+        await RequireEnabledAsync(db, companyId, request.VesselId);
+        if (await db.JobDeferralDecisions.AnyAsync(d => d.RequestId == requestId)) throw new InvalidOperationException("This request has already been decided.");
+        var job = await db.PlannedJobs.AsNoTracking().FirstAsync(j => j.Id == request.PlannedJobId);
+        if (job.LastDoneDate != request.LastDoneAtRequest) throw new InvalidOperationException("The job has been done since this was asked, so there is nothing to decide.");
+
+        var granted = approve ? Day(approvedDate ?? request.RequestedDueDate) : (DateTime?)null;
+        if (granted is { } g)
+        {
+            if (g <= Day(request.CurrentDueDate)) throw new InvalidOperationException("The date granted must be after the current due date.");
+            if (g > Day(request.RequestedDueDate)) throw new InvalidOperationException("The date granted cannot be later than the one asked for.");
+        }
+
+        var role = "office";
+        if (db.Node.IsVessel)
+        {
+            role = "master";
+            if (actor.UserId is not { } uid || !await db.CrewMembers.AsNoTracking().AnyAsync(c => c.UserId == uid && c.IsMaster && c.IsActive && c.LoginEnabled && c.VesselId == request.VesselId))
+                throw new UnauthorizedAccessException("Only the Master can decide a deferral onboard.");
+            if (granted is { } date && !PmsDeferralRules.MasterMayApprove(request.IsCritical, request.CurrentDueDate, date))
+                throw new InvalidOperationException(request.IsCritical
+                    ? "This is a critical job: the office decides its deferral."
+                    : $"The Master may put a job off by up to {PmsDeferralRules.MasterMaxDays} days; beyond that the office decides.");
+        }
+        if (!approve && string.IsNullOrWhiteSpace(comment)) throw new InvalidOperationException("Say why the request is refused.");
+
+        var decision = new JobDeferralDecision
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = request.VesselId, RequestId = requestId, Approved = approve, ApprovedDueDate = granted, Comment = (comment ?? "").Trim(),
+            DecidedByName = actor.Name, DecidedByRole = role, IsCritical = request.IsCritical, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
+        };
+        db.JobDeferralDecisions.Add(decision);
+        await db.SaveChangesAsync();
+        await PmsProjection.RefreshJobAsync(db, job.Id);
+        return decision;
+    }
+
+    /// <summary>Can this person approve deferrals onboard (is the Master of the vessel)? The office always can.</summary>
+    public async Task<bool> MayDecideDeferralsAsync(Guid companyId, Guid vesselId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (!db.Node.IsVessel) return true;
+        return actor.UserId is { } uid && await db.CrewMembers.AsNoTracking().AnyAsync(c => c.UserId == uid && c.IsMaster && c.IsActive && c.LoginEnabled && c.VesselId == vesselId);
+    }
+
+    public async Task<List<DeferralView>> DeferralsOfJobAsync(Guid companyId, Guid jobId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var requests = (await db.JobDeferralRequests.AsNoTracking().Where(r => r.CompanyId == companyId && r.PlannedJobId == jobId).ToListAsync()).OrderByDescending(r => r.At).ToList();
+        var ids = requests.Select(r => r.Id).ToList();
+        var decisions = (await db.JobDeferralDecisions.AsNoTracking().Where(d => ids.Contains(d.RequestId)).ToListAsync()).ToLookup(d => d.RequestId);
+        return requests.Select(r =>
+        {
+            var all = decisions[r.Id].OrderBy(d => d.At).ThenBy(d => d.Id).ToList();
+            return new DeferralView(r, all.LastOrDefault(), all);
+        }).ToList();
+    }
+
+    /// <summary>Requests still waiting for a decision (not those for a cycle the job has since finished).</summary>
+    public async Task<List<PendingDeferral>> PendingDeferralsAsync(Guid companyId, Guid? vesselId = null)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var enabled = (await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.Pms)).ToDictionary(v => v.Id, v => v.Name);
+        var query = db.JobDeferralRequests.AsNoTracking().Where(r => r.CompanyId == companyId && !db.JobDeferralDecisions.Any(d => d.RequestId == r.Id));
+        if (vesselId is { } v) query = query.Where(r => r.VesselId == v);
+        var requests = (await query.ToListAsync()).Where(r => enabled.ContainsKey(r.VesselId)).OrderBy(r => r.At).ToList();
+        if (requests.Count == 0) return [];
+
+        var jobIds = requests.Select(r => r.PlannedJobId).Distinct().ToList();
+        var jobs = await db.PlannedJobs.AsNoTracking().Where(j => jobIds.Contains(j.Id)).ToDictionaryAsync(j => j.Id);
+        var itemIds = jobs.Values.Select(j => j.MachineryItemId).Distinct().ToList();
+        var items = await db.MachineryItems.AsNoTracking().Where(m => itemIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, m => m.Name);
+        return requests.Where(r => jobs.TryGetValue(r.PlannedJobId, out var j) && j.LastDoneDate == r.LastDoneAtRequest).Select(r =>
+        {
+            var j = jobs[r.PlannedJobId];
+            return new PendingDeferral(r, j, enabled[r.VesselId], items.GetValueOrDefault(j.MachineryItemId, ""),
+                PmsDeferralRules.MasterMayApprove(r.IsCritical, r.CurrentDueDate, r.RequestedDueDate));
+        }).ToList();
+    }
+
+    // ---- editing the plan (the side that made it) ----
+
+    /// <summary>Changes a job's definition. Only the side that made the job may; the other side asks with a plan change request.</summary>
+    public async Task UpdateJobAsync(Guid companyId, Guid jobId, JobEdit edit, Actor actor)
+    {
+        if (string.IsNullOrWhiteSpace(edit.Title)) throw new InvalidOperationException("A job needs a title.");
+        RequireInterval(edit.CalendarInterval, edit.HoursInterval);
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var job = await db.PlannedJobs.FirstOrDefaultAsync(j => j.Id == jobId && j.CompanyId == companyId) ?? throw new InvalidOperationException("Job not found.");
+        await RequireEnabledAsync(db, companyId, job.VesselId);
+        var item = await db.MachineryItems.AsNoTracking().FirstAsync(m => m.Id == job.MachineryItemId);
+        if (edit.HoursInterval is > 0 && !item.HasHourMeter) throw new InvalidOperationException($"Running hours need an hour meter on {item.Name}.");
+        if (edit.DepartmentId is { } dept && !await db.Departments.AnyAsync(d => d.Id == dept && d.CompanyId == companyId)) throw new InvalidOperationException("That department does not exist.");
+
+        (job.Title, job.Instructions, job.Type) = (edit.Title.Trim(), edit.Instructions.Trim(), edit.Type);
+        (job.CalendarInterval, job.CalendarUnit, job.HoursInterval, job.Anchor, job.GraceDays) = (edit.CalendarInterval, edit.CalendarUnit, edit.HoursInterval, edit.Anchor, edit.GraceDays);
+        (job.IsCritical, job.DepartmentId, job.EstimatedMinutes, job.RequiresVerification, job.IsActive) = (edit.IsCritical, edit.DepartmentId, edit.EstimatedMinutes, edit.RequiresVerification, edit.IsActive);
+        job.FixedAnchorDate = job.Anchor == PmsAnchor.FixedCalendar ? job.FixedAnchorDate ?? job.StartDate : null;
+        await db.SaveChangesAsync();
+        await PmsProjection.RefreshJobAsync(db, job.Id);
+    }
+
+    public async Task UpdateMachineryAsync(Guid companyId, Guid itemId, MachineryEdit edit)
+    {
+        if (string.IsNullOrWhiteSpace(edit.Name)) throw new InvalidOperationException("Give the machinery a name.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var item = await db.MachineryItems.FirstOrDefaultAsync(m => m.Id == itemId && m.CompanyId == companyId) ?? throw new InvalidOperationException("Machinery not found.");
+        await RequireEnabledAsync(db, companyId, item.VesselId);
+        if (!edit.HasHourMeter && item.HasHourMeter && await db.PlannedJobs.AnyAsync(j => j.MachineryItemId == itemId && j.IsActive && j.HoursInterval > 0))
+            throw new InvalidOperationException("Jobs on this machinery run on hours, so the hour meter has to stay.");
+        if (edit.MachineryClassId is { } cls && !await db.MachineryClasses.AnyAsync(c => c.Id == cls && c.CompanyId == companyId)) throw new InvalidOperationException("That machinery class does not exist.");
+        (item.Name, item.Code, item.Maker, item.Model, item.Serial) = (edit.Name.Trim(), edit.Code.Trim(), edit.Maker.Trim(), edit.Model.Trim(), edit.Serial.Trim());
+        (item.MachineryClassId, item.IsCritical, item.HasHourMeter, item.IsActive) = (edit.MachineryClassId, edit.IsCritical, edit.HasHourMeter, edit.IsActive);
+        await db.SaveChangesAsync();
+    }
+
+    // ---- plan change requests (a vessel asking the office to change what the office made) ----
+
+    public async Task<PlanChangeRequest> RequestPlanChangeAsync(Guid companyId, NewPlanChange input, Actor actor)
+    {
+        if (string.IsNullOrWhiteSpace(input.Reason)) throw new InvalidOperationException("Say why the change is needed.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (!db.Node.IsVessel) throw new InvalidOperationException("Plan change requests are made onboard; the office changes the plan directly.");
+
+        Guid vesselId;
+        string owner;
+        if (input.Kind == PlanChangeKind.MachineryChange)
+        {
+            var item = await db.MachineryItems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == input.MachineryItemId && m.CompanyId == companyId) ?? throw new InvalidOperationException("That machinery is not on the plan.");
+            (vesselId, owner) = (item.VesselId, item.OwnerStage);
+        }
+        else
+        {
+            var job = await db.PlannedJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == input.PlannedJobId && j.CompanyId == companyId) ?? throw new InvalidOperationException("Job not found.");
+            (vesselId, owner) = (job.VesselId, job.OwnerStage);
+            if (input.Kind == PlanChangeKind.JobInterval && input.Proposed.CalendarInterval is not > 0 && input.Proposed.HoursInterval is not > 0)
+                throw new InvalidOperationException("Propose a calendar interval, a running-hours interval, or both.");
+        }
+        await RequireEnabledAsync(db, companyId, vesselId);
+        if (owner == SyncStages.Vessel) throw new InvalidOperationException("The vessel made this itself, so it can change it directly.");
+
+        var request = new PlanChangeRequest
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = vesselId, Kind = input.Kind, PlannedJobId = input.PlannedJobId, MachineryItemId = input.MachineryItemId,
+            Proposed = System.Text.Json.JsonSerializer.Serialize(input.Proposed), Reason = input.Reason.Trim(), RequestedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
+        };
+        db.PlanChangeRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request;
+    }
+
+    /// <summary>The office decides. Approving makes the change to the plan (the office owns it), so it reaches the vessel like any other change.</summary>
+    public async Task<PlanChangeDecision> DecidePlanChangeAsync(Guid companyId, Guid requestId, bool approve, string comment, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) throw new InvalidOperationException("The office decides plan changes.");
+        var request = await db.PlanChangeRequests.AsNoTracking().FirstOrDefaultAsync(r => r.Id == requestId && r.CompanyId == companyId) ?? throw new InvalidOperationException("Request not found.");
+        if (await db.PlanChangeDecisions.AnyAsync(d => d.RequestId == requestId)) throw new InvalidOperationException("This request has already been decided.");
+        if (!approve && string.IsNullOrWhiteSpace(comment)) throw new InvalidOperationException("Say why the request is refused.");
+
+        var proposal = System.Text.Json.JsonSerializer.Deserialize<PlanChangeProposal>(request.Proposed) ?? new PlanChangeProposal();
+        Guid? changedJob = null;
+        if (approve)
+        {
+            if (request.Kind == PlanChangeKind.MachineryChange)
+            {
+                var item = await db.MachineryItems.FirstOrDefaultAsync(m => m.Id == request.MachineryItemId) ?? throw new InvalidOperationException("The machinery is no longer on the plan.");
+                if (proposal.Name is { } name && !string.IsNullOrWhiteSpace(name)) item.Name = name.Trim();
+                if (proposal.IsCritical is { } critical) item.IsCritical = critical;
+                if (proposal.MachineryClassId is { } cls) item.MachineryClassId = cls;
+                if (proposal.HasHourMeter is { } meter)
+                {
+                    if (!meter && item.HasHourMeter && await db.PlannedJobs.AnyAsync(j => j.MachineryItemId == item.Id && j.IsActive && j.HoursInterval > 0))
+                        throw new InvalidOperationException("Jobs on this machinery run on hours, so the hour meter has to stay.");
+                    item.HasHourMeter = meter;
+                }
+            }
+            else
+            {
+                var job = await db.PlannedJobs.FirstOrDefaultAsync(j => j.Id == request.PlannedJobId) ?? throw new InvalidOperationException("The job is no longer on the plan.");
+                if (request.Kind == PlanChangeKind.JobDeactivate) job.IsActive = false;
+                else
+                {
+                    var item = await db.MachineryItems.AsNoTracking().FirstAsync(m => m.Id == job.MachineryItemId);
+                    var calendar = proposal.CalendarInterval ?? job.CalendarInterval;
+                    var hours = proposal.HoursInterval ?? job.HoursInterval;
+                    if (hours is > 0 && !item.HasHourMeter) throw new InvalidOperationException($"Running hours need an hour meter on {item.Name}.");
+                    (job.CalendarInterval, job.CalendarUnit, job.HoursInterval) = (calendar, proposal.CalendarUnit ?? job.CalendarUnit, hours);
+                    if (proposal.GraceDays is { } grace) job.GraceDays = grace;
+                }
+                changedJob = job.Id;
+            }
+        }
+        var decision = new PlanChangeDecision
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = request.VesselId, RequestId = requestId, Approved = approve, Comment = (comment ?? "").Trim(),
+            DecidedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
+        };
+        db.PlanChangeDecisions.Add(decision);
+        await db.SaveChangesAsync();
+        if (changedJob is { } id) await PmsProjection.RefreshJobAsync(db, id);
+        return decision;
+    }
+
+    public async Task<List<PlanChangeView>> PlanChangesAsync(Guid companyId, bool pendingOnly, Guid? vesselId = null)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var query = db.PlanChangeRequests.AsNoTracking().Where(r => r.CompanyId == companyId);
+        if (vesselId is { } v) query = query.Where(r => r.VesselId == v);
+        var requests = (await query.ToListAsync()).OrderByDescending(r => r.At).ToList();
+        if (requests.Count == 0) return [];
+        var ids = requests.Select(r => r.Id).ToList();
+        var decisions = (await db.PlanChangeDecisions.AsNoTracking().Where(d => ids.Contains(d.RequestId)).ToListAsync()).GroupBy(d => d.RequestId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(d => d.At).ThenByDescending(d => d.Id).First());
+        var vessels = await db.Vessels.AsNoTracking().Where(x => x.CompanyId == companyId).ToDictionaryAsync(x => x.Id, x => x.Name);
+        var jobIds = requests.Where(r => r.PlannedJobId != null).Select(r => r.PlannedJobId!.Value).ToList();
+        var itemIds = requests.Where(r => r.MachineryItemId != null).Select(r => r.MachineryItemId!.Value).ToList();
+        var jobs = await db.PlannedJobs.AsNoTracking().Where(j => jobIds.Contains(j.Id)).ToDictionaryAsync(j => j.Id, j => j.Code + " " + j.Title);
+        var items = await db.MachineryItems.AsNoTracking().Where(m => itemIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, m => m.Name);
+        return requests.Where(r => !pendingOnly || !decisions.ContainsKey(r.Id))
+            .Select(r => new PlanChangeView(r, decisions.GetValueOrDefault(r.Id), vessels.GetValueOrDefault(r.VesselId, ""),
+                r.PlannedJobId is { } j ? jobs.GetValueOrDefault(j, "") : items.GetValueOrDefault(r.MachineryItemId ?? Guid.Empty, ""))).ToList();
+    }
+
+    // ---- template updates: proposed, never silent ----
+
+    /// <summary>Jobs made from a template that has since moved on, each with what would change. A job can be updated only by the side that owns it.</summary>
+    public async Task<List<TemplateUpdate>> TemplateUpdatesAsync(Guid companyId, Guid? vesselId = null)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var enabled = (await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.Pms)).ToDictionary(v => v.Id, v => v.Name);
+        var templates = await db.JobTemplates.AsNoTracking().Where(t => t.CompanyId == companyId).ToDictionaryAsync(t => t.Id);
+        var jobsQuery = db.PlannedJobs.AsNoTracking().Where(j => j.CompanyId == companyId && j.IsActive && j.TemplateId != null);
+        if (vesselId is { } v) jobsQuery = jobsQuery.Where(j => j.VesselId == v);
+        var jobs = (await jobsQuery.ToListAsync()).Where(j => enabled.ContainsKey(j.VesselId) && templates.TryGetValue(j.TemplateId!.Value, out var t) && j.TemplateVersion < t.Version).ToList();
+        if (jobs.Count == 0) return [];
+        var itemIds = jobs.Select(j => j.MachineryItemId).Distinct().ToList();
+        var items = await db.MachineryItems.AsNoTracking().Where(m => itemIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, m => m.Name);
+        var mine = db.Node.IsVessel ? SyncStages.Vessel : SyncStages.Office;
+        return jobs.Select(j =>
+        {
+            var t = templates[j.TemplateId!.Value];
+            return new TemplateUpdate(j, t, enabled[j.VesselId], items.GetValueOrDefault(j.MachineryItemId, ""), PmsTemplateDiff.Of(j, t), j.OwnerStage == mine);
+        }).OrderBy(u => u.Vessel).ThenBy(u => u.Job.Code).ToList();
+    }
+
+    /// <summary>Brings the chosen jobs up to their template's current version. Jobs the other side owns are left alone (and counted as skipped); the rest are all updated or none.</summary>
+    public async Task<(int Updated, int Skipped)> ApplyTemplateUpdatesAsync(Guid companyId, IEnumerable<Guid> jobIds, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var mine = db.Node.IsVessel ? SyncStages.Vessel : SyncStages.Office;
+        var ids = jobIds.Distinct().ToList();
+        var jobs = await db.PlannedJobs.Where(j => j.CompanyId == companyId && ids.Contains(j.Id) && j.TemplateId != null).ToListAsync();
+        var templates = await db.JobTemplates.AsNoTracking().Where(t => t.CompanyId == companyId).ToDictionaryAsync(t => t.Id);
+        var items = await db.MachineryItems.AsNoTracking().Where(m => jobs.Select(j => j.MachineryItemId).Contains(m.Id)).ToDictionaryAsync(m => m.Id);
+
+        int updated = 0, skipped = 0;
+        var touched = new List<Guid>();
+        foreach (var job in jobs)
+        {
+            var t = templates[job.TemplateId!.Value];
+            if (job.OwnerStage != mine || job.TemplateVersion >= t.Version) { skipped++; continue; }
+            if (t.HoursInterval is > 0 && !items[job.MachineryItemId].HasHourMeter)
+                throw new InvalidOperationException($"{job.Code}: the new version runs on hours, and {items[job.MachineryItemId].Name} has no hour meter.");
+            (job.Title, job.Instructions, job.Type, job.TemplateVersion) = (t.Title, t.Instructions, t.Type, t.Version);
+            (job.CalendarInterval, job.CalendarUnit, job.HoursInterval, job.Anchor, job.GraceDays) = (t.CalendarInterval, t.CalendarUnit, t.HoursInterval, t.Anchor, t.GraceDays);
+            (job.IsCritical, job.DepartmentId, job.EstimatedMinutes, job.RequiresVerification) = (t.IsCritical, t.DepartmentId, t.EstimatedMinutes, t.RequiresVerification);
+            job.FixedAnchorDate = job.Anchor == PmsAnchor.FixedCalendar ? job.FixedAnchorDate ?? job.StartDate : null;
+            touched.Add(job.Id);
+            updated++;
+        }
+        await db.SaveChangesAsync();
+        foreach (var id in touched) await PmsProjection.RefreshJobAsync(db, id);
+        return (updated, skipped);
     }
 
     // ---- rules ----

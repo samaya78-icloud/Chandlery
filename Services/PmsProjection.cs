@@ -39,6 +39,7 @@ public static class PmsProjection
         job.HoursUnknown = s.HoursUnknown;
         job.LastReadingDate = s.LastReadingDate;
         job.GraceUntil = s.GraceUntil;
+        job.DeferredUntil = s.DeferredTo;
     }
 
     /// <summary>Re-works one job's schedule from what is stored. Used after the job itself, or one of its completions, arrives or is saved.</summary>
@@ -48,8 +49,23 @@ public static class PmsProjection
         if (job is null) return;
         var completions = await db.JobCompletions.AsNoTracking().Where(c => c.PlannedJobId == jobId).ToListAsync(ct);
         var readings = await db.RunningHoursReadings.AsNoTracking().Where(r => r.MachineryItemId == job.MachineryItemId).ToListAsync(ct);
-        Apply(job, PmsScheduler.Compute(InputOf(job), completions.Select(InputOf), readings.Select(InputOf)));
+        var deferrals = await DeferralsAsync(db, [jobId], ct);
+        Apply(job, PmsScheduler.Compute(InputOf(job), completions.Select(InputOf), readings.Select(InputOf), deferrals[jobId]));
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>The approved deferrals of each job. On a request, the latest decision is the one that counts; a rejection after an approval cancels it.</summary>
+    public static async Task<ILookup<Guid, PmsDeferralInput>> DeferralsAsync(ChandleryDbContext db, IReadOnlyCollection<Guid> jobIds, CancellationToken ct = default)
+    {
+        var requests = await db.JobDeferralRequests.AsNoTracking().Where(r => jobIds.Contains(r.PlannedJobId)).ToListAsync(ct);
+        if (requests.Count == 0) return Enumerable.Empty<(Guid, PmsDeferralInput)>().ToLookup(x => x.Item1, x => x.Item2);
+        var requestIds = requests.Select(r => r.Id).ToList();
+        var latest = (await db.JobDeferralDecisions.AsNoTracking().Where(d => requestIds.Contains(d.RequestId)).ToListAsync(ct))
+            .GroupBy(d => d.RequestId).Select(g => g.OrderByDescending(d => d.At).ThenByDescending(d => d.Id).First())
+            .Where(d => d.Approved).ToDictionary(d => d.RequestId);
+        return requests.Where(r => latest.ContainsKey(r.Id))
+            .Select(r => (Job: r.PlannedJobId, Input: new PmsDeferralInput(latest[r.Id].ApprovedDueDate ?? r.RequestedDueDate, r.LastDoneAtRequest, latest[r.Id].At, latest[r.Id].Id)))
+            .ToLookup(x => x.Job, x => x.Input);
     }
 
     /// <summary>Re-works every job on a machinery item that is driven by hours. Used after a reading arrives or is saved.</summary>
@@ -60,8 +76,9 @@ public static class PmsProjection
         var readings = (await db.RunningHoursReadings.AsNoTracking().Where(r => r.MachineryItemId == machineryItemId).ToListAsync(ct)).Select(InputOf).ToList();
         var ids = jobs.Select(j => j.Id).ToList();
         var completions = (await db.JobCompletions.AsNoTracking().Where(c => ids.Contains(c.PlannedJobId)).ToListAsync(ct)).ToLookup(c => c.PlannedJobId);
+        var deferrals = await DeferralsAsync(db, ids, ct);
         foreach (var job in jobs)
-            Apply(job, PmsScheduler.Compute(InputOf(job), completions[job.Id].Select(InputOf), readings));
+            Apply(job, PmsScheduler.Compute(InputOf(job), completions[job.Id].Select(InputOf), readings, deferrals[job.Id]));
         await db.SaveChangesAsync(ct);
     }
 }

@@ -10,7 +10,7 @@ public record PmsFleetRow(Guid VesselId, string Vessel, int Jobs, int Overdue, i
     public int OnSchedulePercent => Jobs == 0 ? 100 : (int)Math.Round(100.0 * (Jobs - Overdue) / Jobs);
 }
 
-public record PmsCounts(int Overdue, int CriticalOverdue, int DueThisWeek, int HoursOutOfDate);
+public record PmsCounts(int Overdue, int CriticalOverdue, int DueThisWeek, int HoursOutOfDate, int PendingDecisions = 0);
 
 public record PmsJobRow(PlannedJob Job, string Vessel, string Machinery, int DaysOverdue);
 
@@ -73,7 +73,12 @@ public class PmsReportService(IDbContextFactory<ChandleryDbContext> factory)
     public async Task<PmsCounts?> CountsAsync(Guid companyId)
     {
         var rows = await FleetAsync(companyId);
-        return rows.Count == 0 ? null : new PmsCounts(rows.Sum(r => r.Overdue), rows.Sum(r => r.CriticalOverdue), rows.Sum(r => r.DueThisWeek), rows.Sum(r => r.HoursOutOfDate));
+        if (rows.Count == 0) return null;
+        var ids = rows.Select(r => r.VesselId).ToList();
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var waiting = await db.JobDeferralRequests.AsNoTracking().CountAsync(r => r.CompanyId == companyId && ids.Contains(r.VesselId) && !db.JobDeferralDecisions.Any(d => d.RequestId == r.Id));
+        return new PmsCounts(rows.Sum(r => r.Overdue), rows.Sum(r => r.CriticalOverdue), rows.Sum(r => r.DueThisWeek), rows.Sum(r => r.HoursOutOfDate), waiting);
     }
 
     // ---- lists behind the reports ----

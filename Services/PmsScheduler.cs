@@ -8,12 +8,15 @@ public record PmsJobInput(
 
 public record PmsCompletionInput(DateTime DoneDate, decimal? HoursAtDone, DateTime At, Guid Id);
 
+/// <summary>An approved deferral: the date granted, the cycle it belongs to (when the job was last done at the time) and when it was decided.</summary>
+public record PmsDeferralInput(DateTime ApprovedDate, DateTime? LastDoneAtRequest, DateTime DecidedAt, Guid DecisionId);
+
 public record PmsReadingInput(DateTime Date, decimal Hours, bool IsCorrection, DateTime At, Guid Id);
 
 /// <summary>A job's schedule at one moment: what was last done, when it is next due and why.</summary>
 public record PmsSchedule(
     DateTime? LastDoneDate, decimal? LastDoneHours, DateTime? CalendarDue, DateTime? HoursDue, DateTime? NextDue, string DueBasis,
-    bool HoursEstimated, bool HoursUnknown, DateTime? LastReadingDate, decimal? AverageDailyHours, DateTime? GraceUntil);
+    bool HoursEstimated, bool HoursUnknown, DateTime? LastReadingDate, decimal? AverageDailyHours, DateTime? GraceUntil, DateTime? DeferredTo = null);
 
 /// <summary>
 /// Works out when a job is next due. Pure: the same job, completions and readings always give the same answer, whatever order they arrived
@@ -58,7 +61,7 @@ public static class PmsScheduler
         .Select(g => g.OrderByDescending(r => r.IsCorrection).ThenByDescending(r => r.At).ThenByDescending(r => r.Id).First())
         .OrderBy(r => r.Date).ToList();
 
-    public static PmsSchedule Compute(PmsJobInput job, IEnumerable<PmsCompletionInput> completions, IEnumerable<PmsReadingInput> readings)
+    public static PmsSchedule Compute(PmsJobInput job, IEnumerable<PmsCompletionInput> completions, IEnumerable<PmsReadingInput> readings, IEnumerable<PmsDeferralInput>? deferrals = null)
     {
         var effective = EffectiveReadings(readings);
         var last = completions.OrderByDescending(c => c.DoneDate.Date).ThenByDescending(c => c.At).ThenByDescending(c => c.Id).FirstOrDefault();
@@ -106,8 +109,20 @@ public static class PmsScheduler
         var basis = next is null ? "" : calendarDue is { } cd && next == cd ? "calendar" : "hours";
         DateTime? graceUntil = next is { } n ? n.AddDays(GraceDaysFor(job, average)) : null;
 
-        return new PmsSchedule(last is null && job.BaselineDoneDate is null ? null : lastDate, last is null && job.BaselineDoneDate is null ? null : lastHours,
-            calendarDue, hoursDue, next, basis, estimated, hoursUnknown, latest?.Date.Date, average, graceUntil);
+        // An approved deferral moves the due date out, for the cycle it was asked in only (once the job has been done again it no longer applies).
+        // A deferred date is a concession, so it carries no further grace: the job is overdue the day after it.
+        var doneKey = last is null && job.BaselineDoneDate is null ? (DateTime?)null : lastDate;
+        DateTime? deferredTo = null;
+        var granted = deferrals?.Where(d => d.LastDoneAtRequest?.Date == doneKey?.Date).OrderByDescending(d => d.DecidedAt).ThenByDescending(d => d.DecisionId).FirstOrDefault();
+        if (granted is not null && next is { } natural && granted.ApprovedDate.Date > natural.Date)
+        {
+            next = granted.ApprovedDate.Date;
+            basis = "deferred";
+            deferredTo = next;
+            graceUntil = next;
+        }
+
+        return new PmsSchedule(doneKey, doneKey is null ? null : lastHours, calendarDue, hoursDue, next, basis, estimated, hoursUnknown, latest?.Date.Date, average, graceUntil, deferredTo);
     }
 
     private static DateTime? CalendarDue(PmsJobInput job, DateTime lastDate, bool doneForReal)

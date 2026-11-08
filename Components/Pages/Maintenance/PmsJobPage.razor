@@ -113,6 +113,9 @@ else
                 </div>
             </div>
 
+            <PmsJobDeferrals CompanyId="_companyId" Job="job" OnChanged="LoadAsync" />
+            <PmsJobChanges CompanyId="_companyId" Job="job" OnChanged="LoadAsync" />
+
             <div class="card p-5 text-sm">
                 <h2 class="mb-3 font-display text-base font-extrabold text-ink">The job</h2>
                 <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
@@ -186,6 +189,7 @@ else
         "hours" when job.HoursEstimated => "  (by running hours, projected from recent use)",
         "hours" => "  (by running hours, already reached)",
         "calendar" => "  (by calendar)",
+        "deferred" => "  (put off, approved)",
         _ => "",
     };
 

@@ -58,6 +58,10 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<RunningHoursReading> RunningHoursReadings => Set<RunningHoursReading>();
     public DbSet<JobCompletion> JobCompletions => Set<JobCompletion>();
     public DbSet<JobVerification> JobVerifications => Set<JobVerification>();
+    public DbSet<JobDeferralRequest> JobDeferralRequests => Set<JobDeferralRequest>();
+    public DbSet<JobDeferralDecision> JobDeferralDecisions => Set<JobDeferralDecision>();
+    public DbSet<PlanChangeRequest> PlanChangeRequests => Set<PlanChangeRequest>();
+    public DbSet<PlanChangeDecision> PlanChangeDecisions => Set<PlanChangeDecision>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -455,6 +459,55 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<JobCompletion>().WithMany().HasForeignKey(v => v.CompletionId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(v => v.CompletionId);
             b.HasQueryFilter(v => CurrentCompanyId == null || v.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<JobDeferralRequest>(b =>
+        {
+            b.Property(r => r.Reason).HasMaxLength(1000);
+            b.Property(r => r.RequestedByName).HasMaxLength(120);
+            b.Property(r => r.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<PlannedJob>().WithMany().HasForeignKey(r => r.PlannedJobId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(r => r.PlannedJobId);
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<JobDeferralDecision>(b =>
+        {
+            b.Property(d => d.Comment).HasMaxLength(1000);
+            b.Property(d => d.DecidedByName).HasMaxLength(120);
+            b.Property(d => d.DecidedByRole).HasMaxLength(10);
+            b.Property(d => d.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(d => d.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<JobDeferralRequest>().WithMany().HasForeignKey(d => d.RequestId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(d => d.RequestId);
+            b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<PlanChangeRequest>(b =>
+        {
+            b.Property(r => r.Reason).HasMaxLength(1000);
+            b.Property(r => r.RequestedByName).HasMaxLength(120);
+            b.Property(r => r.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<PlannedJob>().WithMany().HasForeignKey(r => r.PlannedJobId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<MachineryItem>().WithMany().HasForeignKey(r => r.MachineryItemId).OnDelete(DeleteBehavior.Restrict);
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<PlanChangeDecision>(b =>
+        {
+            b.Property(d => d.Comment).HasMaxLength(1000);
+            b.Property(d => d.DecidedByName).HasMaxLength(120);
+            b.Property(d => d.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(d => d.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<PlanChangeRequest>().WithMany().HasForeignKey(d => d.RequestId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(d => d.RequestId);
+            b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<PoDispatch>(b =>

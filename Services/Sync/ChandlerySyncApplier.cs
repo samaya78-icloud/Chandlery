@@ -384,6 +384,11 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
             case PlannedJob job: await PmsProjection.RefreshJobAsync(db, job.Id, ct); break;
             case JobCompletion completion: await PmsProjection.RefreshJobAsync(db, completion.PlannedJobId, ct); break;
             case RunningHoursReading reading: await PmsProjection.RefreshMachineryAsync(db, reading.MachineryItemId, ct); break;
+            case JobDeferralRequest request: await PmsProjection.RefreshJobAsync(db, request.PlannedJobId, ct); break;
+            case JobDeferralDecision decision:
+                var asked = await db.JobDeferralRequests.AsNoTracking().Where(r => r.Id == decision.RequestId).Select(r => (Guid?)r.PlannedJobId).FirstOrDefaultAsync(ct);
+                if (asked is { } askedJob) await PmsProjection.RefreshJobAsync(db, askedJob, ct);
+                break;
         }
 
         // An order the vessel approved reached the office: the supplier can see it in the portal from now on, and the vessel is told.

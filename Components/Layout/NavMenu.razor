@@ -71,8 +71,12 @@
                 _workItems.Add(pms[1]);
                 _workItems.Add(pms[2]);
                 _workItems.Add(new NavItem("/pms/reports", "Maintenance reports", PmsIcon));
+                var waiting = (await PmsSvc.PendingDeferralsAsync(companyId)).Count + (await PmsSvc.PlanChangesAsync(companyId, pendingOnly: true)).Count;
+                _workItems.Add(new NavItem("/pms/approvals", "Maintenance approvals", PmsIcon, waiting));
+                _workItems.Add(new NavItem("/pms/template-updates", "Template updates", PmsIcon));
                 _adminItems.Add(new NavItem("/company/pms-library", "Maintenance library", PmsIcon));
                 _vesselItems.InsertRange(Math.Min(2, _vesselItems.Count), pms);
+                _vesselItems.Insert(Math.Min(5, _vesselItems.Count), new NavItem("/pms/approvals", "Maintenance approvals", PmsIcon, (await PmsSvc.PendingDeferralsAsync(companyId)).Count));
             }
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
                                 + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;
