@@ -39,6 +39,7 @@ builder.Services.AddScoped<OrdersService>();
 builder.Services.AddScoped<VesselHomeService>();
 builder.Services.AddScoped<WorklistService>();
 builder.Services.AddScoped<WorklistReportService>();
+builder.Services.AddScoped<PmsService>();
 builder.Services.AddSingleton<SyncStatusService>();
 builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();

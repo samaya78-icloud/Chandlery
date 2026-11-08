@@ -1,6 +1,7 @@
 @inject ApprovalService ApprovalSvc
 @inject InvoiceService InvoiceSvc
 @inject WorklistService WorklistSvc
+@inject PmsService PmsSvc
 
 <nav class="flex flex-col pt-1">
     <AuthorizeView Roles="CompanyAdmin,CompanyUser">
@@ -62,6 +63,12 @@
                 _workItems.Insert(2, new NavItem("/worklist/fleet", "Fleet worklist", WorklistIcon));
                 _adminItems.Add(new NavItem("/company/worklist-lists", "Worklist lists", WorklistIcon));
             }
+            if (await PmsSvc.IsEnabledForCompanyAsync(companyId))
+            {
+                var pms = new[] { new NavItem("/pms", "Planned maintenance", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon), new NavItem("/pms/machinery", "Machinery", PmsIcon) };
+                _workItems.InsertRange(_workItems.Count, pms);
+                _vesselItems.InsertRange(Math.Min(2, _vesselItems.Count), pms);
+            }
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
                                 + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;
         }
@@ -73,7 +80,7 @@
         foreach (var item in items)
         {
             var badge = item.Href == "/company/approvals" ? _pendingApprovals : item.Badge;
-            <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
+            <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
                 <span class="nav-icon">@item.Icon</span>
                 <span class="nav-label">@item.Label</span>
                 @if (badge > 0)
@@ -109,6 +116,7 @@
     private static readonly MarkupString BankIcon = Icon("<path d='M3 10 12 4l9 6M5 10v8M9 10v8M15 10v8M19 10v8M3 20h18'/>");
 
     private static readonly MarkupString WorklistIcon = Icon("<path d='M9 6h11M9 12h11M9 18h11'/><path d='m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2'/>");
+    private static readonly MarkupString PmsIcon = Icon("<path d='M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4Z'/>");
     private static readonly MarkupString HomeIcon = Icon("<path d='m3 11 9-8 9 8M5 10v10h5v-6h4v6h5V10'/>");
 
     private readonly List<NavItem> _workItems = new()

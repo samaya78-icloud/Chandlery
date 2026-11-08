@@ -38,6 +38,10 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         return await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.Pms);
     }
 
+    /// <summary>Is planned maintenance on for at least one vessel of the company (for showing it in the menu)?</summary>
+    public async Task<bool> IsEnabledForCompanyAsync(Guid companyId)
+        => (await EnabledVesselsAsync(companyId)).Count > 0;
+
     private static async Task RequireEnabledAsync(ChandleryDbContext db, Guid companyId, Guid vesselId)
     {
         if (!await IsEnabledForVesselAsync(db, companyId, vesselId)) throw new InvalidOperationException("Planned maintenance is not switched on for this vessel.");
@@ -239,6 +243,29 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         var query = db.PlannedJobs.AsNoTracking().Where(j => j.CompanyId == companyId && j.IsActive);
         if (vesselId is { } v) query = query.Where(j => j.VesselId == v);
         return await query.OrderBy(j => j.NextDueDate == null).ThenBy(j => j.NextDueDate).ThenBy(j => j.Code).ToListAsync();
+    }
+
+    /// <summary>The templates a job can be made from (those in use).</summary>
+    public async Task<List<JobTemplate>> ListTemplatesAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.JobTemplates.AsNoTracking().Where(t => t.CompanyId == companyId && t.IsActive).OrderBy(t => t.Code).ToListAsync();
+    }
+
+    /// <summary>The latest reading of each hour meter on the vessel (the effective one: a correction beats an ordinary reading for its date).</summary>
+    public async Task<Dictionary<Guid, RunningHoursReading>> LatestReadingsAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var readings = await db.RunningHoursReadings.AsNoTracking().Where(r => r.CompanyId == companyId && r.VesselId == vesselId).ToListAsync();
+        var result = new Dictionary<Guid, RunningHoursReading>();
+        foreach (var group in readings.GroupBy(r => r.MachineryItemId))
+        {
+            var effective = PmsScheduler.EffectiveReadings(group.Select(PmsProjection.InputOf));
+            if (effective.LastOrDefault() is { } latest) result[group.Key] = group.First(r => r.Id == latest.Id);
+        }
+        return result;
     }
 
     public async Task<List<MachineryItem>> ListMachineryAsync(Guid companyId, Guid vesselId)

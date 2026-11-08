@@ -1,0 +1,199 @@
+@page "/pms/jobs/{JobId:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject PmsService Svc
+
+<PageTitle>@(_detail?.Job.Code ?? "Job") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Job not found" Message="It may belong to another vessel, or planned maintenance is switched off." />
+}
+else
+{
+    var job = _detail.Job;
+    var status = PmsProjection.StatusOf(job, _today);
+    <PageHeader Eyebrow="@job.Code" Title="@job.Title" Subtitle="@($"{_detail.Item.Name}{(string.IsNullOrWhiteSpace(_detail.Item.Maker) ? "" : " · " + _detail.Item.Maker)}")">
+        <Actions>
+            <a href="/pms" class="btn btn-secondary">Back to the plan</a>
+        </Actions>
+    </PageHeader>
+
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @if (_notice is not null) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div> }
+
+    <div class="grid gap-6 lg:grid-cols-3">
+        <div class="space-y-6 lg:col-span-2">
+            <div class="card p-5">
+                <div class="mb-3 flex flex-wrap items-center gap-2">
+                    <StatusChip Value="@status" />
+                    <StatusChip Value="@job.Type" />
+                    @if (job.IsCritical) { <span class="chip" data-tone="danger">critical</span> }
+                    @if (job.RequiresVerification) { <span class="chip" data-tone="info">second sign-off</span> }
+                </div>
+                <dl class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+                    <dt class="text-muted">Next due</dt>
+                    <dd class="@(status == PmsStatus.Overdue ? "font-semibold text-rose-600" : "font-medium")">@(job.NextDueDate?.ToString("dd MMM yyyy") ?? "No schedule")@WhyText(job)</dd>
+                    <dt class="text-muted">Overdue after</dt><dd>@(job.GraceUntil?.ToString("dd MMM yyyy") ?? "–")</dd>
+                    <dt class="text-muted">Last done</dt><dd>@(job.LastDoneDate?.ToString("dd MMM yyyy") ?? "Not yet")@(job.LastDoneHours is { } h ? $" at {h:N1} h" : "")</dd>
+                    @if (job.HoursInterval is > 0)
+                    {
+                        <dt class="text-muted">Latest reading</dt>
+                        <dd>@(_latest is { } r ? $"{r.Hours:N1} h on {r.ReadingDate:dd MMM yyyy}" : "None yet") <a href="/pms/hours" class="link ml-2 text-xs">enter hours</a></dd>
+                    }
+                </dl>
+                @if (job.HoursUnknown)
+                {
+                    <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">The hours date cannot be worked out yet: it needs the hours at the last completion and at least two readings about a month apart that show the engine running.@(job.CalendarInterval is > 0 ? " Until then the calendar date applies." : "")</p>
+                }
+                else if (PmsProjection.HoursStale(job, _today))
+                {
+                    <p class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">The last running-hours reading is more than a week old, so the hours date is a guess. Enter today's hours.</p>
+                }
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(job.Instructions))
+            {
+                <div class="card p-5">
+                    <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Checklist</h2>
+                    <ul class="space-y-1.5 text-sm">
+                        @foreach (var step in job.Instructions.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            <li><label class="flex items-start gap-2"><input type="checkbox" class="mt-1" /><span>@step</span></label></li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="card p-5">
+                <h2 class="mb-3 font-display text-lg font-extrabold text-ink">History</h2>
+                @if (_detail.Completions.Count == 0) { <p class="text-sm text-muted">Nothing recorded yet.</p> }
+                <ol class="space-y-4">
+                    @foreach (var c in _detail.Completions)
+                    {
+                        <li class="border-l-2 border-line pl-4 text-sm">
+                            <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-muted">
+                                <span class="font-semibold text-ink">@c.DoneDate.ToString("dd MMM yyyy")</span>
+                                <span>@c.PerformedBy</span>
+                                @if (c.HoursAtDone is { } hd) { <span>@hd.ToString("N1") h</span> }
+                                @if (c.TimeSpentMinutes is { } m) { <span>@(m / 60)h @(m % 60)m</span> }
+                                @if (c.IsImported) { <span class="chip chip-plain" data-tone="neutral">imported</span> }
+                                @if (_detail.VerifiedCompletionIds.Contains(c.Id)) { <span class="chip" data-tone="success">verified</span> }
+                                else if (job.RequiresVerification) { <span class="chip" data-tone="warning">awaiting sign-off</span> }
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(c.Comments)) { <p class="mt-1 whitespace-pre-line text-ink-2">@c.Comments</p> }
+                            @if (job.RequiresVerification && !_detail.VerifiedCompletionIds.Contains(c.Id))
+                            {
+                                <button class="btn btn-secondary btn-sm mt-2" @onclick="() => VerifyAsync(c.Id)">Sign off</button>
+                            }
+                        </li>
+                    }
+                </ol>
+            </div>
+        </div>
+
+        <div class="space-y-6">
+            <div class="card p-5">
+                <h2 class="mb-3 font-display text-base font-extrabold text-ink">Record the job as done</h2>
+                <div class="space-y-3 text-sm">
+                    <label class="block">Date done <input type="date" class="input mt-1" @bind="_doneDate" /></label>
+                    @if (job.HoursInterval is > 0)
+                    {
+                        <label class="block">Running hours when done <input type="number" step="0.1" min="0" class="input mt-1" @bind="_hoursAtDone" placeholder="@(_latest is { } l ? $"latest reading {l.Hours:N1}" : "")" /></label>
+                    }
+                    <label class="block">Done by <input class="input mt-1" @bind="_performedBy" /></label>
+                    <label class="block">Time spent (minutes) <input type="number" min="0" class="input mt-1" @bind="_minutes" /></label>
+                    <label class="block">Comments <textarea class="textarea mt-1" rows="3" @bind="_comments"></textarea></label>
+                    <button class="btn btn-primary" @onclick="CompleteAsync">Record as done</button>
+                </div>
+            </div>
+
+            <div class="card p-5 text-sm">
+                <h2 class="mb-3 font-display text-base font-extrabold text-ink">The job</h2>
+                <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                    <dt class="text-muted">Every</dt><dd>@IntervalText(job)</dd>
+                    <dt class="text-muted">Counted</dt><dd>@(job.Anchor == PmsAnchor.FixedCalendar ? "on fixed dates" : "from when it was last done")</dd>
+                    <dt class="text-muted">Estimated time</dt><dd>@(job.EstimatedMinutes is { } e ? $"{e / 60}h {e % 60}m" : "–")</dd>
+                    <dt class="text-muted">From the library</dt><dd>@(job.TemplateId is null ? "No, made on this vessel" : $"Yes, version {job.TemplateVersion}")</dd>
+                    <dt class="text-muted">Added by</dt><dd>@job.CreatedByName (@(job.OwnerStage == SyncStages.Vessel ? "vessel" : "office"))</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid JobId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private string? _error, _notice;
+    private PmsJobDetail? _detail;
+    private RunningHoursReading? _latest;
+    private DateTime _today = DateTime.UtcNow.Date;
+    private DateTime? _doneDate = DateTime.UtcNow.Date;
+    private decimal? _hoursAtDone;
+    private int? _minutes;
+    private string _performedBy = "", _comments = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _performedBy = _actor.Name;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _today = DateTime.UtcNow.Date;
+        _detail = await Svc.GetJobAsync(_companyId, JobId);
+        _latest = _detail is { Job.HoursInterval: > 0 } ? (await Svc.ReadingsAsync(_companyId, _detail.Item.Id)).FirstOrDefault() : null;
+    }
+
+    private async Task CompleteAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            if (_doneDate is null) throw new InvalidOperationException("Enter the date it was done.");
+            await Svc.CompleteJobAsync(_companyId, new NewCompletion(JobId, _doneDate.Value, _hoursAtDone, _performedBy, _minutes, _comments), _actor);
+            _notice = "Recorded. The next due date has been worked out again.";
+            _hoursAtDone = null; _minutes = null; _comments = "";
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task VerifyAsync(Guid completionId)
+    {
+        _error = _notice = null;
+        try { await Svc.VerifyCompletionAsync(_companyId, completionId, "", _actor); await LoadAsync(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private static string WhyText(PlannedJob job) => job.DueBasis switch
+    {
+        "hours" when job.HoursEstimated => "  (by running hours, projected from recent use)",
+        "hours" => "  (by running hours, already reached)",
+        "calendar" => "  (by calendar)",
+        _ => "",
+    };
+
+    public static string IntervalText(PlannedJob job)
+    {
+        var parts = new List<string>();
+        if (job.CalendarInterval is > 0 and var n) parts.Add($"{n} {job.CalendarUnit.ToString().ToLowerInvariant().TrimEnd('s')}{(n == 1 ? "" : "s")}");
+        if (job.HoursInterval is > 0) parts.Add($"{job.HoursInterval:N0} running hours");
+        return parts.Count == 0 ? "no interval" : string.Join(" or ", parts) + (parts.Count > 1 ? ", whichever comes first" : "");
+    }
+}

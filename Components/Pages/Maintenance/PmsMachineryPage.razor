@@ -1,0 +1,267 @@
+@page "/pms/machinery"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Data
+@using Microsoft.EntityFrameworkCore
+@inject PmsService Svc
+@inject IDbContextFactory<ChandleryDbContext> Factory
+
+<PageTitle>Machinery · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Machinery"
+            Subtitle="The equipment on the plan, as a tree: location, system, item. Each item can carry jobs, and an hour meter for jobs driven by running hours.">
+    <Actions>
+        <button class="btn btn-primary" @onclick="() => { _addingItem = !_addingItem; _error = null; }">+ Add machinery</button>
+        <a href="/pms" class="btn btn-secondary">Back to the plan</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Planned maintenance is switched off" Message="The module has not been switched on for this vessel." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    @if (_vessels.Count > 1)
+    {
+        <div class="card mb-5 p-4 text-sm">
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId" @bind:after="LoadAsync">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        </div>
+    }
+
+    @if (_addingItem)
+    {
+        <div class="card mb-6 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Add machinery</h2>
+            <div class="grid gap-3 md:grid-cols-3">
+                <label class="md:col-span-2">Name <input class="input mt-1" @bind="_itemName" placeholder="e.g. Main engine No. 1" /></label>
+                <label>Code <input class="input mt-1" @bind="_itemCode" /></label>
+                <label>Part of
+                    <select class="select mt-1" @bind="_itemParent">
+                        <option value="@Guid.Empty">Top level</option>
+                        @foreach (var (m, depth) in Flat()) { <option value="@m.Id">@(new string('–', depth) + " " + m.Name)</option> }
+                    </select>
+                </label>
+                <label>Maker <input class="input mt-1" @bind="_itemMaker" /></label>
+                <label>Model <input class="input mt-1" @bind="_itemModel" /></label>
+                <label>Serial number <input class="input mt-1" @bind="_itemSerial" /></label>
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="_itemCritical" /> Critical equipment</label>
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="_itemHourMeter" /> Has an hour meter</label>
+            </div>
+            <div class="mt-4 flex gap-2">
+                <button class="btn btn-primary" @onclick="AddItemAsync">Add</button>
+                <button class="btn btn-ghost" @onclick="() => _addingItem = false">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_items.Count == 0)
+    {
+        <EmptyState Title="No machinery yet" Message="Add the first item, or the office can apply the library to this vessel." />
+    }
+
+    <div class="card divide-y divide-line/60">
+        @foreach (var (m, depth) in Flat())
+        {
+            var jobs = _jobs.Where(j => j.MachineryItemId == m.Id).ToList();
+            var overdue = jobs.Count(j => PmsProjection.StatusOf(j, _today) == PmsStatus.Overdue);
+            <div class="p-4">
+                <div class="flex flex-wrap items-center gap-3" style="padding-left:@(depth * 1.5)rem">
+                    <span class="font-medium text-ink">@m.Name</span>
+                    @if (m.Code != "") { <span class="font-mono text-xs text-muted">@m.Code</span> }
+                    @if (m.IsCritical) { <span class="chip" data-tone="danger">critical</span> }
+                    @if (m.HasHourMeter) { <span class="chip chip-plain" data-tone="info">hour meter</span> }
+                    <span class="text-xs text-muted">@(string.Join(" · ", new[] { m.Maker, m.Model, m.Serial }.Where(x => x != "")))</span>
+                    <span class="ml-auto flex items-center gap-2 text-xs">
+                        @if (jobs.Count > 0) { <span class="text-muted">@jobs.Count job(s)</span> }
+                        @if (overdue > 0) { <span class="chip" data-tone="danger">@overdue overdue</span> }
+                        <button class="btn btn-ghost btn-sm" @onclick="() => StartJob(m.Id)">+ Job</button>
+                    </span>
+                </div>
+                @if (jobs.Count > 0)
+                {
+                    <ul class="mt-2 space-y-1 text-sm" style="padding-left:@(depth * 1.5 + 1)rem">
+                        @foreach (var j in jobs.OrderBy(j => j.NextDueDate))
+                        {
+                            <li class="flex flex-wrap items-center gap-2">
+                                <a href="/pms/jobs/@j.Id" class="link font-mono text-xs font-semibold">@j.Code</a><span>@j.Title</span>
+                                <span class="text-xs text-muted">@(j.NextDueDate?.ToString("dd MMM yyyy"))</span><StatusChip Value="@PmsProjection.StatusOf(j, _today)" />
+                            </li>
+                        }
+                    </ul>
+                }
+                @if (_jobFor == m.Id) { @JobForm(m) }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId, _jobFor, _itemParent, _templateId, _jobDepartment;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _addingItem, _itemCritical, _itemHourMeter, _fromLibrary = true, _jobCritical, _jobVerify, _jobFixed;
+    private string? _error;
+    private string _itemName = "", _itemCode = "", _itemMaker = "", _itemModel = "", _itemSerial = "";
+    private string _jobCode = "", _jobTitle = "", _jobInstructions = "";
+    private PmsJobType _jobType;
+    private PmsIntervalUnit _jobUnit = PmsIntervalUnit.Months;
+    private int? _jobCalendar, _jobHours;
+    private DateTime? _jobStart = DateTime.UtcNow.Date, _jobLastDone;
+    private decimal? _jobLastHours;
+    private DateTime _today = DateTime.UtcNow.Date;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<MachineryItem> _items = [];
+    private List<PlannedJob> _jobs = [];
+    private List<JobTemplate> _templates = [];
+    private List<Department> _departments = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_vesselId == Guid.Empty) return;
+        _today = DateTime.UtcNow.Date;
+        _items = await Svc.ListMachineryAsync(_companyId, _vesselId);
+        _jobs = await Svc.ListJobsAsync(_companyId, _vesselId);
+        _templates = await Svc.ListTemplatesAsync(_companyId);
+        await using var db = await Factory.CreateDbContextAsync();
+        db.CurrentCompanyId = _companyId;
+        _departments = await db.Departments.AsNoTracking().Where(d => d.CompanyId == _companyId).OrderBy(d => d.Name).ToListAsync();
+    }
+
+    /// <summary>The tree flattened for display: each item with its depth, parents before children.</summary>
+    private List<(MachineryItem Item, int Depth)> Flat()
+    {
+        var result = new List<(MachineryItem, int)>();
+        var ids = _items.Select(i => i.Id).ToHashSet();
+        void Walk(Guid? parent, int depth, HashSet<Guid> seen)
+        {
+            foreach (var child in _items.Where(i => i.ParentId == parent || (parent is null && i.ParentId is { } p && !ids.Contains(p))).OrderBy(i => i.Name))
+            {
+                if (!seen.Add(child.Id)) continue;
+                result.Add((child, depth));
+                Walk(child.Id, depth + 1, seen);
+            }
+        }
+        Walk(null, 0, []);
+        return result;
+    }
+
+    private async Task AddItemAsync()
+    {
+        _error = null;
+        try
+        {
+            await Svc.AddMachineryItemAsync(_companyId, new NewMachineryItem(_vesselId, _itemName, _itemCode, _itemParent == Guid.Empty ? null : _itemParent, _itemMaker, _itemModel, _itemSerial,
+                IsCritical: _itemCritical, HasHourMeter: _itemHourMeter), _actor);
+            _itemName = _itemCode = _itemMaker = _itemModel = _itemSerial = "";
+            _itemCritical = _itemHourMeter = false; _addingItem = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private void StartJob(Guid itemId)
+    {
+        _jobFor = _jobFor == itemId ? Guid.Empty : itemId;
+        _error = null; _templateId = Guid.Empty; _jobCode = _jobTitle = _jobInstructions = "";
+        _jobCalendar = _jobHours = null; _jobLastDone = null; _jobLastHours = null; _jobStart = _today;
+        _fromLibrary = _templates.Count > 0;
+    }
+
+    private async Task AddJobAsync(MachineryItem item)
+    {
+        _error = null;
+        try
+        {
+            var baseline = _jobLastDone;
+            var input = _fromLibrary
+                ? new NewPlannedJob(item.Id, _templateId == Guid.Empty ? throw new InvalidOperationException("Choose a template.") : _templateId, StartDate: _jobStart, BaselineDoneDate: baseline, BaselineDoneHours: _jobLastHours)
+                : new NewPlannedJob(item.Id, null, _jobCode, _jobTitle, _jobInstructions, _jobType, _jobCalendar, _jobUnit, _jobHours, _jobFixed ? PmsAnchor.FixedCalendar : PmsAnchor.FromCompletion,
+                    null, null, _jobCritical, _jobDepartment == Guid.Empty ? null : _jobDepartment, null, _jobVerify, _jobStart, baseline, _jobLastHours);
+            await Svc.AddJobAsync(_companyId, input, _actor);
+            _jobFor = Guid.Empty;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private RenderFragment JobForm(MachineryItem item) => __builder =>
+    {
+        <div class="mt-3 rounded-xl bg-surface-2/60 p-4 text-sm">
+            <div class="mb-3 flex gap-2">
+                <button class="btn btn-sm @(_fromLibrary ? "btn-primary" : "btn-secondary")" @onclick="() => _fromLibrary = true" disabled="@(_templates.Count == 0)">From the library</button>
+                <button class="btn btn-sm @(!_fromLibrary ? "btn-primary" : "btn-secondary")" @onclick="() => _fromLibrary = false">A job of our own</button>
+            </div>
+            <div class="grid gap-3 md:grid-cols-3">
+                @if (_fromLibrary)
+                {
+                    <label class="md:col-span-3">Template
+                        <select class="select mt-1" @bind="_templateId">
+                            <option value="@Guid.Empty">Choose…</option>
+                            @foreach (var t in _templates) { <option value="@t.Id">@t.Code · @t.Title</option> }
+                        </select>
+                    </label>
+                }
+                else
+                {
+                    <label>Code <input class="input mt-1" @bind="_jobCode" /></label>
+                    <label class="md:col-span-2">Title <input class="input mt-1" @bind="_jobTitle" /></label>
+                    <label>Type
+                        <select class="select mt-1" @bind="_jobType">
+                            @foreach (var t in Enum.GetValues<PmsJobType>()) { <option value="@t">@t</option> }
+                        </select>
+                    </label>
+                    <label>Every <input type="number" min="1" class="input mt-1" @bind="_jobCalendar" placeholder="blank for none" /></label>
+                    <label>Unit
+                        <select class="select mt-1" @bind="_jobUnit">
+                            @foreach (var u in Enum.GetValues<PmsIntervalUnit>()) { <option value="@u">@u</option> }
+                        </select>
+                    </label>
+                    <label>Or every (running hours) <input type="number" min="1" class="input mt-1" @bind="_jobHours" disabled="@(!item.HasHourMeter)" placeholder="@(item.HasHourMeter ? "blank for none" : "needs an hour meter")" /></label>
+                    <label>Department
+                        <select class="select mt-1" @bind="_jobDepartment">
+                            <option value="@Guid.Empty">None</option>
+                            @foreach (var d in _departments) { <option value="@d.Id">@d.Name</option> }
+                        </select>
+                    </label>
+                    <div class="flex flex-col justify-end gap-1">
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_jobFixed" /> Fixed dates (annual stays annual)</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_jobCritical" /> Critical</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_jobVerify" /> Needs a second sign-off</label>
+                    </div>
+                    <label class="md:col-span-3">Checklist (one step per line) <textarea class="textarea mt-1" rows="3" @bind="_jobInstructions"></textarea></label>
+                }
+                <label>Put on the plan on <input type="date" class="input mt-1" @bind="_jobStart" /></label>
+                <label>Last done on <input type="date" class="input mt-1" @bind="_jobLastDone" /></label>
+                <label>Hours at last done <input type="number" step="0.1" min="0" class="input mt-1" @bind="_jobLastHours" disabled="@(!item.HasHourMeter)" /></label>
+            </div>
+            <div class="mt-4 flex gap-2">
+                <button class="btn btn-primary" @onclick="() => AddJobAsync(item)">Add job</button>
+                <button class="btn btn-ghost" @onclick="() => _jobFor = Guid.Empty">Cancel</button>
+            </div>
+        </div>
+    };
+}

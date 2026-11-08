@@ -1,0 +1,164 @@
+@page "/pms"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Data
+@using Microsoft.EntityFrameworkCore
+@inject PmsService Svc
+@inject IDbContextFactory<ChandleryDbContext> Factory
+
+<PageTitle>Planned maintenance · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Planned maintenance"
+            Subtitle="What is overdue, what is due now and what comes next. A job is due at whichever comes first: its calendar date or the date its running hours are projected to reach the interval.">
+    <Actions>
+        <a href="/pms/hours" class="btn btn-primary">Running hours</a>
+        <a href="/pms/machinery" class="btn btn-secondary">Machinery</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Planned maintenance is switched off" Message="@(NodeContext.Current.IsVessel ? "The office has not switched planned maintenance on for this vessel." : "Switch the PMS module on for a vessel or a vessel group under Vessel groups and policy.")" />
+}
+else
+{
+    var stale = _filtered.Count(j => PmsProjection.HoursStale(j, _today));
+    <div class="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard Label="Overdue" Value="@_overdue.Count.ToString()" Tone="@(_overdue.Count > 0 ? "danger" : "success")" Hint="@($"{_overdue.Count(j => j.IsCritical)} critical")" />
+        <StatCard Label="Due now" Value="@_due.Count.ToString()" Tone="warning" Hint="Inside the grace window" />
+        <StatCard Label="Due in 7 days" Value="@_week.Count.ToString()" />
+        <StatCard Label="Hours out of date" Value="@stale.ToString()" Tone="info" Hint="No reading for over a week" Href="/pms/hours" />
+    </div>
+
+    <div class="card mb-5 flex flex-wrap items-end gap-3 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId" @bind:after="LoadAsync">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Department
+            <select class="select mt-1" @bind="_fDepartment" @bind:after="Refilter">
+                <option value="@Guid.Empty">All</option>
+                @foreach (var d in _departments) { <option value="@d.Id">@d.Name</option> }
+            </select>
+        </label>
+        <label>Machinery
+            <select class="select mt-1" @bind="_fMachinery" @bind:after="Refilter">
+                <option value="@Guid.Empty">All</option>
+                @foreach (var m in _machinery.OrderBy(m => m.Name)) { <option value="@m.Id">@m.Name</option> }
+            </select>
+        </label>
+        <label class="flex items-center gap-2 pb-2"><input type="checkbox" @bind="_fCritical" @bind:after="Refilter" /> Critical only</label>
+        <input class="input max-w-xs" placeholder="Search code, job or machinery…" @bind="_search" @bind:event="oninput" @bind:after="Refilter" />
+    </div>
+
+    @Bucket("Overdue", _overdue, "danger")
+    @Bucket("Due now", _due, "warning")
+    @Bucket("Due in the next 7 days", _week, "neutral")
+    @Bucket("Due in the next 30 days", _month, "neutral")
+    @Bucket("Later", _later, "neutral")
+    @Bucket("No schedule", _none, "neutral")
+
+    @if (_filtered.Count == 0)
+    {
+        <EmptyState Title="No jobs on the plan" Message="Add machinery and jobs under Machinery, or the office can apply the library to this vessel." />
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId, _fDepartment, _fMachinery;
+    private bool _loaded, _fCritical;
+    private string _search = "";
+    private DateTime _today = DateTime.UtcNow.Date;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<PlannedJob> _jobs = [], _filtered = [], _overdue = [], _due = [], _week = [], _month = [], _later = [], _none = [];
+    private List<MachineryItem> _machinery = [];
+    private List<Department> _departments = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_vesselId == Guid.Empty) return;
+        _today = DateTime.UtcNow.Date;
+        _jobs = await Svc.ListJobsAsync(_companyId, _vesselId);
+        _machinery = await Svc.ListMachineryAsync(_companyId, _vesselId);
+        await using (var db = await Factory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = _companyId;
+            _departments = await db.Departments.AsNoTracking().Where(d => d.CompanyId == _companyId).OrderBy(d => d.Name).ToListAsync();
+        }
+        Refilter();
+    }
+
+    private void Refilter()
+    {
+        var q = _jobs.AsEnumerable();
+        if (_fDepartment != Guid.Empty) q = q.Where(j => j.DepartmentId == _fDepartment);
+        if (_fMachinery != Guid.Empty) q = q.Where(j => j.MachineryItemId == _fMachinery);
+        if (_fCritical) q = q.Where(j => j.IsCritical);
+        if (!string.IsNullOrWhiteSpace(_search))
+            q = q.Where(j => j.Code.Contains(_search, StringComparison.OrdinalIgnoreCase) || j.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                             || MachineryName(j.MachineryItemId).Contains(_search, StringComparison.OrdinalIgnoreCase));
+        _filtered = q.ToList();
+        PlannedJob[] Where(Func<PlannedJob, bool> f) => _filtered.Where(f).OrderBy(j => j.NextDueDate).ThenBy(j => j.Code).ToArray();
+        _overdue = [.. Where(j => PmsProjection.StatusOf(j, _today) == PmsStatus.Overdue)];
+        _due = [.. Where(j => PmsProjection.StatusOf(j, _today) == PmsStatus.Due)];
+        _week = [.. Where(j => PmsProjection.StatusOf(j, _today) == PmsStatus.NotDue && j.NextDueDate!.Value.Date <= _today.AddDays(7))];
+        _month = [.. Where(j => PmsProjection.StatusOf(j, _today) == PmsStatus.NotDue && j.NextDueDate!.Value.Date > _today.AddDays(7) && j.NextDueDate!.Value.Date <= _today.AddDays(30))];
+        _later = [.. Where(j => PmsProjection.StatusOf(j, _today) == PmsStatus.NotDue && j.NextDueDate!.Value.Date > _today.AddDays(30))];
+        _none = [.. Where(j => PmsProjection.StatusOf(j, _today) == PmsStatus.NoSchedule)];
+    }
+
+    private string MachineryName(Guid id) => _machinery.FirstOrDefault(m => m.Id == id)?.Name ?? "";
+
+    private RenderFragment Bucket(string title, List<PlannedJob> rows, string tone) => __builder =>
+    {
+        if (rows.Count == 0) return;
+        <section class="mb-6">
+            <h2 class="mb-2 flex items-center gap-2 font-display text-base font-extrabold text-ink">@title <span class="chip" data-tone="@tone">@rows.Count</span></h2>
+            <div class="card overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <tbody>
+                    @foreach (var j in rows)
+                    {
+                        var status = PmsProjection.StatusOf(j, _today);
+                        <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                            <td class="px-4 py-3 font-mono font-semibold whitespace-nowrap"><a href="/pms/jobs/@j.Id" class="link">@j.Code</a></td>
+                            <td class="px-4 py-3">
+                                <a href="/pms/jobs/@j.Id" class="font-medium text-ink hover:underline">@j.Title</a>
+                                @if (j.IsCritical) { <span class="chip ml-1" data-tone="danger">critical</span> }
+                                <div class="text-xs text-muted">@MachineryName(j.MachineryItemId)</div>
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-xs">
+                                @if (j.DueBasis == "hours") { <span class="chip chip-plain" data-tone="info">@(j.HoursEstimated ? "by hours, estimated" : "by hours")</span> }
+                                else if (j.DueBasis == "calendar") { <span class="chip chip-plain" data-tone="neutral">by calendar</span> }
+                                @if (PmsProjection.HoursStale(j, _today)) { <span class="chip chip-plain" data-tone="warning" title="No recent running-hours reading">hours out of date</span> }
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap text-right @(status == PmsStatus.Overdue ? "font-semibold text-rose-600" : "")">@(j.NextDueDate is { } d ? d.ToString("dd MMM yyyy") : "–")</td>
+                            <td class="px-4 py-3 text-right"><StatusChip Value="@status" /></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    };
+}

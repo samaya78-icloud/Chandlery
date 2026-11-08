@@ -17,6 +17,18 @@ public static class PmsProjection
 
     public static PmsReadingInput InputOf(RunningHoursReading r) => new(r.ReadingDate, r.Hours, r.IsCorrection, r.At, r.Id);
 
+    /// <summary>Where a job stands today, from its stored schedule (the same rule as <see cref="PmsScheduler.StatusOf"/>).</summary>
+    public static PmsStatus StatusOf(PlannedJob job, DateTime today)
+    {
+        if (job.NextDueDate is not { } due) return PmsStatus.NoSchedule;
+        if (today.Date < due.Date) return PmsStatus.NotDue;
+        return job.GraceUntil is { } until && today.Date > until.Date ? PmsStatus.Overdue : PmsStatus.Due;
+    }
+
+    /// <summary>An hours-driven job whose latest reading is old, or missing: its hours date should not be trusted.</summary>
+    public static bool HoursStale(PlannedJob job, DateTime today, int staleDays = PmsScheduler.DefaultStaleDays)
+        => job.HoursInterval is > 0 && (job.LastReadingDate is not { } read || (today.Date - read.Date).Days > staleDays);
+
     public static void Apply(PlannedJob job, PmsSchedule s)
     {
         job.LastDoneDate = s.LastDoneDate;
