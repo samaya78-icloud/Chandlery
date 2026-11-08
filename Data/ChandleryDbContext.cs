@@ -63,6 +63,12 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<PlanChangeRequest> PlanChangeRequests => Set<PlanChangeRequest>();
     public DbSet<PlanChangeDecision> PlanChangeDecisions => Set<PlanChangeDecision>();
     public DbSet<MachinerySpare> MachinerySpares => Set<MachinerySpare>();
+    public DbSet<TankChecklistTemplate> TankChecklistTemplates => Set<TankChecklistTemplate>();
+    public DbSet<TankCriterion> TankCriteria => Set<TankCriterion>();
+    public DbSet<Tank> Tanks => Set<Tank>();
+    public DbSet<TankInspection> TankInspections => Set<TankInspection>();
+    public DbSet<TankInspectionResult> TankInspectionResults => Set<TankInspectionResult>();
+    public DbSet<TankInspectionReview> TankInspectionReviews => Set<TankInspectionReview>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -525,6 +531,83 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
         });
 
+        modelBuilder.Entity<TankChecklistTemplate>(b =>
+        {
+            b.Property(t => t.Name).HasMaxLength(160);
+            b.Property(t => t.ShipType).HasMaxLength(80);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<TankCriterion>(b =>
+        {
+            b.Property(c => c.Name).HasMaxLength(200);
+            b.Property(c => c.ExceptionValues).HasMaxLength(100);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<TankChecklistTemplate>().WithMany().HasForeignKey(c => c.TemplateId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => c.TemplateId);
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<Tank>(b =>
+        {
+            b.Property(t => t.Code).HasMaxLength(40);
+            b.Property(t => t.Name).HasMaxLength(160);
+            b.Property(t => t.SteelGradeDeck).HasMaxLength(60);
+            b.Property(t => t.SteelGradeBottom).HasMaxLength(60);
+            b.Property(t => t.SteelGradeSide).HasMaxLength(60);
+            b.Property(t => t.SteelGradeBulkhead).HasMaxLength(60);
+            b.Property(t => t.OriginalCoating).HasMaxLength(200);
+            b.Property(t => t.CathodicProtection).HasMaxLength(200);
+            b.Property(t => t.CoatedAreaM2).HasPrecision(12, 1);
+            b.Property(t => t.ProtectedAreaM2).HasPrecision(12, 1);
+            b.Property(t => t.CreatedByName).HasMaxLength(120);
+            b.Property(t => t.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(t => t.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(t => new { t.VesselId, t.Code }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<TankInspection>(b =>
+        {
+            b.Property(i => i.Code).HasMaxLength(40);
+            b.Property(i => i.TemplateName).HasMaxLength(160);
+            b.Property(i => i.Place).HasMaxLength(120);
+            b.Property(i => i.WorkDone).HasMaxLength(200);
+            b.Property(i => i.InspectorName).HasMaxLength(120);
+            b.Property(i => i.CreatedByName).HasMaxLength(120);
+            b.Property(i => i.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(i => i.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Tank>().WithMany().HasForeignKey(i => i.TankId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(i => i.Results).WithOne().HasForeignKey(r => r.InspectionId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(i => new { i.CompanyId, i.Code }).IsUnique();
+            b.HasIndex(i => new { i.TankId, i.InspectedOn });
+            b.HasQueryFilter(i => CurrentCompanyId == null || i.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<TankInspectionResult>(b =>
+        {
+            b.Property(r => r.CriterionName).HasMaxLength(200);
+            b.Property(r => r.ExceptionValues).HasMaxLength(100);
+            b.Property(r => r.Value).HasMaxLength(20);
+            b.Property(r => r.Comment).HasMaxLength(1000);
+            b.HasIndex(r => r.InspectionId);
+        });
+
+        modelBuilder.Entity<TankInspectionReview>(b =>
+        {
+            b.Property(r => r.Comment).HasMaxLength(1000);
+            b.Property(r => r.ReviewerName).HasMaxLength(120);
+            b.Property(r => r.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<TankInspection>().WithMany().HasForeignKey(r => r.InspectionId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(r => r.InspectionId);
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<PoDispatch>(b =>
         {
             b.Property(d => d.AcknowledgedByName).HasMaxLength(120);
@@ -763,7 +846,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -824,6 +907,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         MachineryItem m => m.Name,
         PlannedJob j => j.Code,
         MachinerySpare sp => sp.Id.ToString(),
+        Tank tk => tk.Name,
+        TankInspection ti => ti.Code,
         _ => "",
     };
 
@@ -843,6 +928,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<Requisition>().FirstOrDefault(e => e.Entity.Id == requisitionId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A requisition line was changed without loading its requisition; load the requisition with its lines.");
+        return parent;
+    }
+
+    /// <summary>An inspection result is its own table but part of the inspection: changing one moves the inspection's version.</summary>
+    private EntityEntry? InspectionOf(EntityEntry result)
+    {
+        var property = result.Property("InspectionId");
+        var inspectionId = (Guid)(result.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<TankInspection>().FirstOrDefault(e => e.Entity.Id == inspectionId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("An inspection result was changed without loading its inspection; load the inspection with its results.");
         return parent;
     }
 

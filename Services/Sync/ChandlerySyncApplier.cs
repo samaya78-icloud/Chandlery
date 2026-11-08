@@ -315,6 +315,9 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         // again (a resend, or a newer version from a faulty or altered sender): the local rule that forbids it must hold on this path too.
         if (existing is not null && Aggregates.IsAppendOnly(aggregate.Clr)) return;
 
+        // A reviewed inspection is locked: a changed copy of it arriving (a resend, or a vessel that was not told) is ignored, as the rule onboard says.
+        if (existing is TankInspection held && TankStatus.Of(held.SubmissionCount, await db.TankInspectionReviews.AsNoTracking().Where(r => r.InspectionId == held.Id).ToListAsync(ct)) == InspectionStatus.Reviewed) return;
+
         // A vessel may only send for the vessel it runs.
         if (atHub)
         {

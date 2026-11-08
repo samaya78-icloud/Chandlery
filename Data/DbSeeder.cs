@@ -229,7 +229,10 @@ public static class DbSeeder
     private static async Task EnsureWorklistListsAsync(ChandleryDbContext db)
     {
         foreach (var companyId in await db.Companies.Select(c => c.Id).ToListAsync())
+        {
             await Chandlery.Services.WorklistLists.EnsureDefaultsAsync(db, companyId);
+            await Chandlery.Services.TankDefaults.EnsureDefaultsAsync(db, companyId);
+        }
         await db.SaveChangesAsync();
     }
 

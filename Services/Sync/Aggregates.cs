@@ -41,12 +41,16 @@ public static class Aggregates
         new(nameof(PlanChangeRequest), typeof(PlanChangeRequest)),
         new(nameof(PlanChangeDecision), typeof(PlanChangeDecision)),
         new(nameof(MachinerySpare), typeof(MachinerySpare)),
+        new(nameof(Tank), typeof(Tank)),
+        new(nameof(TankInspection), typeof(TankInspection)),
+        new(nameof(TankInspectionReview), typeof(TankInspectionReview)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
     public static bool IsAppendOnly(Type clr) => clr == typeof(WorklistTask) || clr == typeof(WorklistEntry)
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
-        || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision);
+        || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
+        || clr == typeof(TankInspectionReview);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
     private static readonly Dictionary<Type, AggregateType> ByClr = Types.ToDictionary(t => t.Clr);
@@ -94,6 +98,9 @@ public static class Aggregates
         PlanChangeRequest pq => pq.OwnerStage,
         PlanChangeDecision pd => pd.OwnerStage,
         MachinerySpare ms => ms.OwnerStage,
+        Tank tk => tk.OwnerStage,
+        TankInspection ti => ti.OwnerStage,
+        TankInspectionReview tr => tr.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -115,6 +122,9 @@ public static class Aggregates
         else if (root is PlanChangeRequest changeRequest) changeRequest.OwnerStage = stage;
         else if (root is PlanChangeDecision changeDecision) changeDecision.OwnerStage = stage;
         else if (root is MachinerySpare spare) spare.OwnerStage = stage;
+        else if (root is Tank tank) tank.OwnerStage = stage;
+        else if (root is TankInspection inspection) inspection.OwnerStage = stage;
+        else if (root is TankInspectionReview tankReview) tankReview.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

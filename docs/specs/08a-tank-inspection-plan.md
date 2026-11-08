@@ -1,6 +1,6 @@
 # 08a. Tank inspection: plan (implements spec 08 in stages)
 
-Status: **proposed 2026-11-08, waiting for approval.** Builds on the patterns proven in Worklist and PMS (records written once, state worked out from them, one owner per record, module switch, master data for templates) and links to both of them.
+Status: **approved 2026-11-08. T1 (foundation: data, scales and status rules, tanks, checklists as master data, inspections and reviews, sync, tests) built 2026-11-08; T2 to T6 to do.** Builds on the patterns proven in Worklist and PMS (records written once, state worked out from them, one owner per record, module switch, master data for templates) and links to both of them.
 
 ## 1. The core idea
 An inspection is a **vessel document that moves through review**, not a record that two sides edit:
