@@ -31,10 +31,16 @@ public static class Aggregates
         new(nameof(PoDispatch), typeof(PoDispatch)),
         new(nameof(WorklistTask), typeof(WorklistTask)),
         new(nameof(WorklistEntry), typeof(WorklistEntry)),
+        new(nameof(MachineryItem), typeof(MachineryItem)),
+        new(nameof(PlannedJob), typeof(PlannedJob)),
+        new(nameof(RunningHoursReading), typeof(RunningHoursReading)),
+        new(nameof(JobCompletion), typeof(JobCompletion)),
+        new(nameof(JobVerification), typeof(JobVerification)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
-    public static bool IsAppendOnly(Type clr) => clr == typeof(WorklistTask) || clr == typeof(WorklistEntry);
+    public static bool IsAppendOnly(Type clr) => clr == typeof(WorklistTask) || clr == typeof(WorklistEntry)
+        || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
     private static readonly Dictionary<Type, AggregateType> ByClr = Types.ToDictionary(t => t.Clr);
@@ -47,6 +53,11 @@ public static class Aggregates
     {
         [typeof(PurchaseOrder)] = [nameof(PurchaseOrder.DeliveryStatus), nameof(PurchaseOrder.ReviewedAt), nameof(PurchaseOrder.ReviewedByName)],
         [typeof(DeliveryOrder)] = [nameof(DeliveryOrder.InvoiceId)],
+        [typeof(PlannedJob)] =
+        [
+            nameof(PlannedJob.LastDoneDate), nameof(PlannedJob.LastDoneHours), nameof(PlannedJob.NextDueDate), nameof(PlannedJob.DueBasis), nameof(PlannedJob.HoursEstimated),
+            nameof(PlannedJob.HoursUnknown), nameof(PlannedJob.LastReadingDate), nameof(PlannedJob.GraceUntil),
+        ],
         [typeof(WorklistTask)] =
         [
             nameof(WorklistTask.Title), nameof(WorklistTask.Description), nameof(WorklistTask.Priority), nameof(WorklistTask.Status),
@@ -67,6 +78,11 @@ public static class Aggregates
         Quote q => q.OwnerStage,
         WorklistTask t => t.OwnerStage,
         WorklistEntry e => e.OwnerStage,
+        MachineryItem mi => mi.OwnerStage,
+        PlannedJob pj => pj.OwnerStage,
+        RunningHoursReading rr => rr.OwnerStage,
+        JobCompletion jc => jc.OwnerStage,
+        JobVerification jv => jv.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -78,6 +94,11 @@ public static class Aggregates
         else if (root is Quote q) q.OwnerStage = stage;
         else if (root is WorklistTask t) t.OwnerStage = stage;
         else if (root is WorklistEntry e) e.OwnerStage = stage;
+        else if (root is MachineryItem item) item.OwnerStage = stage;
+        else if (root is PlannedJob job) job.OwnerStage = stage;
+        else if (root is RunningHoursReading reading) reading.OwnerStage = stage;
+        else if (root is JobCompletion completion) completion.OwnerStage = stage;
+        else if (root is JobVerification verification) verification.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

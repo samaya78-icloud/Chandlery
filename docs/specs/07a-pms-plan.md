@@ -1,6 +1,6 @@
 # 07a. PMS: plan (implements spec 07 in stages)
 
-Status: **proposed 2026-11-08, waiting for approval.** Builds on the sync engine, vessel groups and policy (module switch `Pms`), master data sync, and the patterns proven by Worklist (records that are history, state worked out by replaying them) and procurement (one owner per record).
+Status: **approved 2026-11-08. P1 (foundation: data, scheduling rules, sync, baseline, tests) built 2026-11-08; P2 to P7 to do.** Builds on the sync engine, vessel groups and policy (module switch `Pms`), master data sync, and the patterns proven by Worklist (records that are history, state worked out by replaying them) and procurement (one owner per record).
 
 ## 1. The core idea
 Spec 07 has two kinds of data: things that are **defined** (the library, the machinery, the planned jobs) and things that **happen** (running-hours readings, job completions, deferrals). The design keeps them apart, exactly as Worklist keeps a task apart from its timeline:
@@ -42,7 +42,7 @@ Lanes: `Transaction` for readings and completions, `Urgent` for a deferral reque
 
 Spec phase 1 is P1 to P3, phase 2 is P4, phase 3 is P6. Stock-on-board (spec phase 4) and classification surveys and certificates stay out.
 
-## 5. Proposed answers to the three open decisions (change any you disagree with)
+## 5. Proposed answers to the three open decisions (approved as proposed)
 1. **Second sign-off:** off by default. A template can mark a job "needs verification"; the vessel's completion then shows "awaiting verification" until a designated rank (the Master or Chief Engineer, set in policy) or the office verifies, the same way Worklist verification works.
 2. **Who edits intervals:** the office, through the plan. A vessel can change the interval only on jobs it created itself; for a library job it sends a plan change request (P4).
 3. **Default grace:** 10% of the interval with a one-day minimum, overridable per template.

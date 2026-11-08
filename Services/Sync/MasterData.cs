@@ -29,7 +29,7 @@ public static class MasterData
     public static readonly IReadOnlyList<MasterType> Types =
     [
         Of<Company>(), Of<Supplier>(), Of<CompanySupplier>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(), Of<CrewMember>(),
-        Of<Department>(), Of<Category>(), Of<WorklistListItem>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
+        Of<Department>(), Of<Category>(), Of<WorklistListItem>(), Of<MachineryClass>(), Of<JobTemplate>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
         Of<VesselPolicy>(), Of<VesselModuleSwitch>(),
     ];
 

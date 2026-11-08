@@ -50,29 +50,9 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- the module switch ----
 
     /// <summary>Is Worklist switched on for this vessel (its own switch, else its group's, up the tree; none means off)?</summary>
-    public static async Task<bool> IsEnabledForVesselAsync(ChandleryDbContext db, Guid companyId, Guid vesselId)
-    {
-        var vessel = await db.Vessels.FirstOrDefaultAsync(v => v.Id == vesselId && v.CompanyId == companyId);
-        if (vessel is null) return false;
-        var groups = await db.VesselGroups.Where(g => g.CompanyId == companyId).ToListAsync();
-        var switches = await db.VesselModuleSwitches.Where(m => m.CompanyId == companyId).ToListAsync();
-        return PolicyResolver.ResolveModule(vessel.Id, PolicyResolver.GroupChain(groups, vessel.GroupId), switches, groups.ToDictionary(g => g.Id, g => g.Name), PolicyModules.Worklist).Enabled;
-    }
+    public static Task<bool> IsEnabledForVesselAsync(ChandleryDbContext db, Guid companyId, Guid vesselId) => ModuleGate.IsEnabledAsync(db, companyId, vesselId, PolicyModules.Worklist);
 
-    /// <summary>
-    /// The company's vessels the worklist is switched on for, worked out from one read of the vessels, groups and switches (a page that
-    /// needs this on every load must not cost three queries per vessel).
-    /// </summary>
-    private static async Task<List<(Guid Id, string Name)>> EnabledVesselsAsync(ChandleryDbContext db, Guid companyId)
-    {
-        var vessels = await db.Vessels.AsNoTracking().Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync();
-        if (vessels.Count == 0) return [];
-        var groups = await db.VesselGroups.AsNoTracking().Where(g => g.CompanyId == companyId).ToListAsync();
-        var switches = await db.VesselModuleSwitches.AsNoTracking().Where(m => m.CompanyId == companyId).ToListAsync();
-        var names = groups.ToDictionary(g => g.Id, g => g.Name);
-        return vessels.Where(v => PolicyResolver.ResolveModule(v.Id, PolicyResolver.GroupChain(groups, v.GroupId), switches, names, PolicyModules.Worklist).Enabled)
-            .Select(v => (v.Id, v.Name)).ToList();
-    }
+    private static Task<List<(Guid Id, string Name)>> EnabledVesselsAsync(ChandleryDbContext db, Guid companyId) => ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.Worklist);
 
     /// <summary>Is Worklist on for at least one vessel of the company (for showing it in the office menu)?</summary>
     public async Task<bool> IsEnabledForCompanyAsync(Guid companyId)

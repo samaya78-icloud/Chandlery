@@ -51,6 +51,13 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<WorklistListItem> WorklistListItems => Set<WorklistListItem>();
     public DbSet<WorklistTask> WorklistTasks => Set<WorklistTask>();
     public DbSet<WorklistEntry> WorklistEntries => Set<WorklistEntry>();
+    public DbSet<MachineryClass> MachineryClasses => Set<MachineryClass>();
+    public DbSet<JobTemplate> JobTemplates => Set<JobTemplate>();
+    public DbSet<MachineryItem> MachineryItems => Set<MachineryItem>();
+    public DbSet<PlannedJob> PlannedJobs => Set<PlannedJob>();
+    public DbSet<RunningHoursReading> RunningHoursReadings => Set<RunningHoursReading>();
+    public DbSet<JobCompletion> JobCompletions => Set<JobCompletion>();
+    public DbSet<JobVerification> JobVerifications => Set<JobVerification>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -357,6 +364,99 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
         });
 
+        modelBuilder.Entity<MachineryClass>(b =>
+        {
+            b.Property(c => c.Name).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<MachineryClass>().WithMany().HasForeignKey(c => c.ParentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<JobTemplate>(b =>
+        {
+            b.Property(t => t.Code).HasMaxLength(40);
+            b.Property(t => t.Title).HasMaxLength(200);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<MachineryClass>().WithMany().HasForeignKey(t => t.MachineryClassId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Department>().WithMany().HasForeignKey(t => t.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(t => new { t.CompanyId, t.Code }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<MachineryItem>(b =>
+        {
+            b.Property(m => m.Code).HasMaxLength(40);
+            b.Property(m => m.Name).HasMaxLength(160);
+            b.Property(m => m.Maker).HasMaxLength(120);
+            b.Property(m => m.Model).HasMaxLength(120);
+            b.Property(m => m.Serial).HasMaxLength(120);
+            b.Property(m => m.CreatedByName).HasMaxLength(120);
+            b.Property(m => m.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(m => m.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(m => m.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<MachineryItem>().WithMany().HasForeignKey(m => m.ParentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<MachineryClass>().WithMany().HasForeignKey(m => m.MachineryClassId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(m => new { m.VesselId, m.ParentId });
+            b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<PlannedJob>(b =>
+        {
+            b.Property(j => j.Code).HasMaxLength(40);
+            b.Property(j => j.Title).HasMaxLength(200);
+            b.Property(j => j.DueBasis).HasMaxLength(10);
+            b.Property(j => j.CreatedByName).HasMaxLength(120);
+            b.Property(j => j.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.Property(j => j.BaselineDoneHours).HasPrecision(12, 1);
+            b.Property(j => j.LastDoneHours).HasPrecision(12, 1);
+            b.HasOne<Company>().WithMany().HasForeignKey(j => j.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(j => j.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<MachineryItem>().WithMany().HasForeignKey(j => j.MachineryItemId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<JobTemplate>().WithMany().HasForeignKey(j => j.TemplateId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Department>().WithMany().HasForeignKey(j => j.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(j => new { j.VesselId, j.NextDueDate });
+            b.HasIndex(j => j.MachineryItemId);
+            b.HasQueryFilter(j => CurrentCompanyId == null || j.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<RunningHoursReading>(b =>
+        {
+            b.Property(r => r.Hours).HasPrecision(12, 1);
+            b.Property(r => r.Source).HasMaxLength(10);
+            b.Property(r => r.Note).HasMaxLength(400);
+            b.Property(r => r.AuthorName).HasMaxLength(120);
+            b.Property(r => r.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<MachineryItem>().WithMany().HasForeignKey(r => r.MachineryItemId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(r => new { r.MachineryItemId, r.ReadingDate });
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<JobCompletion>(b =>
+        {
+            b.Property(c => c.HoursAtDone).HasPrecision(12, 1);
+            b.Property(c => c.PerformedBy).HasMaxLength(120);
+            b.Property(c => c.AuthorName).HasMaxLength(120);
+            b.Property(c => c.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<PlannedJob>().WithMany().HasForeignKey(c => c.PlannedJobId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => new { c.PlannedJobId, c.DoneDate });
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<JobVerification>(b =>
+        {
+            b.Property(v => v.VerifiedBy).HasMaxLength(120);
+            b.Property(v => v.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(v => v.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(v => v.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<JobCompletion>().WithMany().HasForeignKey(v => v.CompletionId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(v => v.CompletionId);
+            b.HasQueryFilter(v => CurrentCompanyId == null || v.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<PoDispatch>(b =>
         {
             b.Property(d => d.AcknowledgedByName).HasMaxLength(120);
@@ -564,7 +664,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                 // worked out from its entries.
                 if (Aggregates.IsAppendOnly(entry.Metadata.ClrType) && entry.State is EntityState.Modified or EntityState.Deleted
                     && !(entry.State == EntityState.Modified && Aggregates.OnlyLocalChanged(entry)))
-                    throw new InvalidOperationException($"{entry.Metadata.ClrType.Name.Replace("Worklist", "Worklist ")} records are history and cannot be changed or deleted.");
+                    throw new InvalidOperationException($"{entry.Metadata.ClrType.Name} records are history and cannot be changed or deleted.");
 
                 // A vessel keeps requisitions, crew logins and its own bookkeeping; RFQs, orders, invoices and the like are the office's.
                 var localOnlyOrder = entry.Entity is PurchaseOrder && Aggregates.OnlyLocalChanged(entry);   // e.g. the delivery status, worked out onboard
@@ -653,6 +753,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         Rfq r => r.RfqNumber,
         Quote q => q.SupplierRef,
         WorklistTask t => t.Code,
+        MachineryItem m => m.Name,
+        PlannedJob j => j.Code,
         _ => "",
     };
 

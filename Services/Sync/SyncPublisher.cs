@@ -169,6 +169,13 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         if (aggregate.Clr == typeof(PurchaseOrder)) return MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId));
         if (aggregate.Clr == typeof(Rfq)) return MasterData.ReadGuid(payload, nameof(Rfq.VesselId));
         if (aggregate.Clr == typeof(WorklistTask)) return MasterData.ReadGuid(payload, nameof(WorklistTask.VesselId));
+        if (aggregate.Clr == typeof(MachineryItem) || aggregate.Clr == typeof(PlannedJob) || aggregate.Clr == typeof(RunningHoursReading) || aggregate.Clr == typeof(JobCompletion))
+            return MasterData.ReadGuid(payload, nameof(PlannedJob.VesselId));
+        if (aggregate.Clr == typeof(JobVerification))
+        {
+            var completionId = MasterData.ReadGuid(payload, nameof(JobVerification.CompletionId));
+            return await db.JobCompletions.Where(c => c.Id == completionId).Select(c => (Guid?)c.VesselId).FirstOrDefaultAsync(ct);
+        }
         if (aggregate.Clr == typeof(WorklistEntry))
         {
             var taskId = MasterData.ReadGuid(payload, nameof(WorklistEntry.TaskId));
@@ -382,8 +389,63 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             }
             db.ChangeTracker.Clear();
         }
+
+        // The tasks and the maintenance plan the office already holds for this vessel (what the vessel needs to start from nothing).
+        foreach (var scope in scopes)
+        {
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.WorklistTasks.IgnoreQueryFilters().Where(t => t.VesselId == scope.VesselId && t.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.WorklistEntries.IgnoreQueryFilters().Where(e => e.OwnerStage == SyncStages.Office
+                && db.WorklistTasks.IgnoreQueryFilters().Any(t => t.Id == e.TaskId && t.VesselId == scope.VesselId)), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.MachineryItems.IgnoreQueryFilters().Where(m => m.VesselId == scope.VesselId && m.OwnerStage == SyncStages.Office)
+                .OrderBy(m => m.CreatedAt), ct, parentsFirst: true);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.PlannedJobs.IgnoreQueryFilters().Where(j => j.VesselId == scope.VesselId && j.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.RunningHoursReadings.IgnoreQueryFilters().Where(r => r.VesselId == scope.VesselId && r.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.JobCompletions.IgnoreQueryFilters().Where(c => c.VesselId == scope.VesselId && c.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.JobVerifications.IgnoreQueryFilters().Where(v => v.VesselId == scope.VesselId && v.OwnerStage == SyncStages.Office), ct);
+        }
         log.LogInformation("Queued {Count} documents for node {Node}.", queued, nodeId);
         return queued;
+    }
+
+    /// <summary>Sends every record of a query, in batches so a plan of thousands of jobs does not sit in memory at once.</summary>
+    private async Task<int> BaselineOwnedAsync<T>(ChandleryDbContext db, HubEndpoint hub, string nodeId, IQueryable<T> query, CancellationToken ct, bool parentsFirst = false) where T : class
+    {
+        var aggregate = Aggregates.Find(typeof(T))!;
+        var queued = 0;
+        const int Batch = 500;
+        var ordered = query is IOrderedQueryable<T> ? query : query.OrderBy(e => EF.Property<Guid>(e, "Id"));
+        var records = await ordered.AsNoTracking().ToListAsync(ct);
+        if (parentsFirst) records = SortParentsFirst(records);
+        for (var from = 0; from < records.Count; from += Batch)
+        {
+            foreach (var record in records.Skip(from).Take(Batch))
+            {
+                var entry = db.Attach(record);
+                var payload = Aggregates.ToJson(db, record);
+                await hub.PublishToNodeAsync(nodeId, Aggregates.Document(aggregate, (Guid)entry.Property("Id").CurrentValue!, (int)entry.Property(ChandleryDbContext.SyncVersion).CurrentValue!, payload,
+                    Aggregates.StageOf(record), clock.Now(), (Guid?)entry.Property(ChandleryDbContext.OriginNodeId).CurrentValue), LaneFor(record));
+                queued++;
+            }
+            db.ChangeTracker.Clear();
+        }
+        return queued;
+    }
+
+    /// <summary>Machinery items refer to their parent; a vessel must receive the parent first.</summary>
+    private static List<T> SortParentsFirst<T>(List<T> items) where T : class
+    {
+        if (items is not List<MachineryItem> machinery) return items;
+        var byId = machinery.ToDictionary(m => m.Id);
+        var sorted = new List<MachineryItem>();
+        var placed = new HashSet<Guid>();
+        void Place(MachineryItem m)
+        {
+            if (!placed.Add(m.Id)) return;
+            if (m.ParentId is { } parent && byId.TryGetValue(parent, out var p)) Place(p);
+            sorted.Add(m);
+        }
+        foreach (var m in machinery) Place(m);
+        return (List<T>)(object)sorted;
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
