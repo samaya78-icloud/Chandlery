@@ -126,6 +126,62 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
         return await query.OrderBy(t => t.TargetDate == null).ThenBy(t => t.TargetDate).ThenBy(t => t.Code).ToListAsync();
     }
 
+    /// <summary>The vessels the worklist is switched on for (on a vessel installation: its own vessel).</summary>
+    public async Task<List<(Guid Id, string Name)>> EnabledVesselsAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var result = new List<(Guid, string)>();
+        foreach (var v in await db.Vessels.Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync())
+            if (await IsEnabledForVesselAsync(db, companyId, v.Id)) result.Add((v.Id, v.Name));
+        return result;
+    }
+
+    // ---- the lists (office maintains them; vessels read them) ----
+
+    public async Task<List<WorklistListItem>> GetListsAsync(Guid companyId, bool includeInactive = false)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var query = db.WorklistListItems.AsNoTracking().Where(i => i.CompanyId == companyId);
+        if (!includeInactive) query = query.Where(i => i.IsActive);
+        return await query.OrderBy(i => i.Kind).ThenBy(i => i.SortOrder).ThenBy(i => i.Name).ToListAsync();
+    }
+
+    public async Task<WorklistListItem> AddListItemAsync(Guid companyId, WorklistListKind kind, string name, Guid? parentId = null, bool requiresVerification = false)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Give the entry a name.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        name = name.Trim();
+        if (await db.WorklistListItems.AnyAsync(i => i.CompanyId == companyId && i.Kind == kind && i.ParentId == parentId && i.Name.ToLower() == name.ToLower()))
+            throw new InvalidOperationException($"\"{name}\" is already in the list.");
+        if (parentId is { } parent && !await db.WorklistListItems.AnyAsync(i => i.Id == parent && i.Kind == kind))
+            throw new InvalidOperationException("The parent is not in this list.");
+        var order = await db.WorklistListItems.Where(i => i.CompanyId == companyId && i.Kind == kind && i.ParentId == parentId).Select(i => (int?)i.SortOrder).MaxAsync() ?? -1;
+        var item = new WorklistListItem
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, Kind = kind, Name = name, ParentId = parentId, SortOrder = order + 1,
+            RequiresVerification = kind == WorklistListKind.Source && requiresVerification,
+        };
+        db.WorklistListItems.Add(item);
+        await db.SaveChangesAsync();
+        return item;
+    }
+
+    /// <summary>Rename, switch off or on, and (for sources) change the verification flag. Tasks already raised keep what they were created with.</summary>
+    public async Task UpdateListItemAsync(Guid companyId, Guid itemId, string name, bool isActive, bool requiresVerification)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new InvalidOperationException("Give the entry a name.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var item = await db.WorklistListItems.FirstOrDefaultAsync(i => i.Id == itemId && i.CompanyId == companyId) ?? throw new InvalidOperationException("Entry not found.");
+        item.Name = name.Trim();
+        item.IsActive = isActive;
+        item.RequiresVerification = item.Kind == WorklistListKind.Source && requiresVerification;
+        await db.SaveChangesAsync();
+    }
+
     // ---- rules ----
 
     private static WorklistEntry NewEntry(WorklistTask task, WorklistEntryType type, Actor actor, DateTime at, string text, string payload) => new()

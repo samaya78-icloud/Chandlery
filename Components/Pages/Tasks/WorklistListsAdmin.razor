@@ -1,0 +1,121 @@
+@page "/company/worklist-lists"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@inject WorklistService Svc
+
+<PageTitle>Worklist lists · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Admin" Title="Worklist lists"
+            Subtitle="Sources, natures and categories offered when a task is raised. They reach every vessel; renaming or switching one off never changes tasks already raised." />
+
+@if (_error is not null)
+{
+    <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div>
+}
+
+<div class="grid gap-6 lg:grid-cols-3">
+    @ListCard(WorklistListKind.Source, "Sources", "Where a task comes from. A source marked for verification keeps its tasks open until the office verifies the completion.")
+    @ListCard(WorklistListKind.Nature, "Natures", "The kind of work, for example planned or emergency.")
+    @ListCard(WorklistListKind.Category, "Categories", "Two levels: a heading and the entries under it.")
+</div>
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private string? _error;
+    private List<WorklistListItem> _items = [];
+    private readonly Dictionary<WorklistListKind, string> _newName = new();
+    private readonly Dictionary<WorklistListKind, bool> _newVerify = new();
+    private readonly Dictionary<WorklistListKind, Guid> _newParent = new();
+    private Guid _editing;
+    private string _editName = "";
+    private bool _editVerify;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _items = await Svc.GetListsAsync(_companyId, includeInactive: true);
+
+    private async Task AddAsync(WorklistListKind kind)
+    {
+        _error = null;
+        try
+        {
+            var parent = _newParent.GetValueOrDefault(kind);
+            await Svc.AddListItemAsync(_companyId, kind, _newName.GetValueOrDefault(kind, ""), parent == Guid.Empty ? null : parent, _newVerify.GetValueOrDefault(kind));
+            _newName[kind] = ""; _newVerify[kind] = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task SaveAsync(WorklistListItem item, bool active)
+    {
+        _error = null;
+        try
+        {
+            await Svc.UpdateListItemAsync(_companyId, item.Id, _editing == item.Id ? _editName : item.Name, active, _editing == item.Id ? _editVerify : item.RequiresVerification);
+            _editing = Guid.Empty;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private void SetName(WorklistListKind kind, object? value) => _newName[kind] = value?.ToString() ?? string.Empty;
+
+    private void Edit(WorklistListItem item) { _editing = item.Id; _editName = item.Name; _editVerify = item.RequiresVerification; }
+
+    private RenderFragment ListCard(WorklistListKind kind, string title, string help) => __builder =>
+    {
+        var rows = _items.Where(i => i.Kind == kind).OrderBy(i => i.SortOrder).ThenBy(i => i.Name).ToList();
+        var ordered = kind == WorklistListKind.Category
+            ? rows.Where(r => r.ParentId is null).SelectMany(r => new[] { r }.Concat(rows.Where(c => c.ParentId == r.Id))).ToList()
+            : rows;
+        <div class="card p-5">
+            <h2 class="font-display text-lg font-extrabold text-ink">@title</h2>
+            <p class="mb-3 text-xs text-muted">@help</p>
+            <ul class="divide-y divide-line/60 text-sm">
+                @foreach (var item in ordered)
+                {
+                    <li class="flex items-center gap-2 py-1.5 @(item.ParentId is null ? "" : "pl-5") @(item.IsActive ? "" : "opacity-50")">
+                        @if (_editing == item.Id)
+                        {
+                            <input class="input" @bind="_editName" />
+                            @if (kind == WorklistListKind.Source) { <label class="flex items-center gap-1 text-xs"><input type="checkbox" @bind="_editVerify" />verify</label> }
+                            <button class="btn btn-primary btn-sm" @onclick="() => SaveAsync(item, item.IsActive)">Save</button>
+                            <button class="btn btn-ghost btn-sm" @onclick="() => _editing = Guid.Empty">×</button>
+                        }
+                        else
+                        {
+                            <span class="min-w-0 flex-1 truncate @(item.ParentId is null && kind == WorklistListKind.Category ? "font-semibold" : "")">@item.Name</span>
+                            @if (item.RequiresVerification) { <span class="chip" data-tone="warning" title="Completion must be verified by the office">verify</span> }
+                            <button class="btn btn-ghost btn-sm" @onclick="() => Edit(item)">Rename</button>
+                            <button class="btn btn-ghost btn-sm" @onclick="() => SaveAsync(item, !item.IsActive)">@(item.IsActive ? "Switch off" : "Switch on")</button>
+                        }
+                    </li>
+                }
+            </ul>
+            <div class="mt-4 space-y-2 border-t border-line pt-3 text-sm">
+                @if (kind == WorklistListKind.Category)
+                {
+                    <select class="select" @onchange="e => _newParent[kind] = Guid.TryParse(e.Value?.ToString(), out var g) ? g : Guid.Empty">
+                        <option value="@Guid.Empty">New heading</option>
+                        @foreach (var root in rows.Where(r => r.ParentId is null)) { <option value="@root.Id">Under @root.Name</option> }
+                    </select>
+                }
+                <div class="flex gap-2">
+                    <input class="input" placeholder="New entry…" value="@_newName.GetValueOrDefault(kind, "")" @onchange="e => SetName(kind, e.Value)" />
+                    <button class="btn btn-primary" @onclick="() => AddAsync(kind)">Add</button>
+                </div>
+                @if (kind == WorklistListKind.Source)
+                {
+                    <label class="flex items-center gap-2 text-xs"><input type="checkbox" checked="@_newVerify.GetValueOrDefault(kind)" @onchange="e => _newVerify[kind] = (bool)(e.Value ?? false)" />Completion must be verified by the office</label>
+                }
+            </div>
+        </div>
+    };
+}

@@ -1,0 +1,301 @@
+@page "/worklist"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Data
+@using Microsoft.EntityFrameworkCore
+@inject WorklistService Svc
+@inject IDbContextFactory<ChandleryDbContext> Factory
+@inject NavigationManager Nav
+
+<PageTitle>Worklist · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Worklist"
+            Subtitle="Open items by when they are due. History is never rewritten: progress, deferrals and completions are added to a task's timeline.">
+    <Actions>
+        <button class="btn btn-primary" @onclick="() => _adding = !_adding">+ New task</button>
+        @if (!NodeContext.Current.IsVessel)
+        {
+            <a href="/company/worklist-lists" class="btn btn-secondary">Lists</a>
+        }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="The worklist is switched off" Message="@(NodeContext.Current.IsVessel ? "The office has not switched the worklist on for this vessel." : "Switch the Worklist module on for a vessel or a vessel group under Vessel groups and policy.")" />
+}
+else
+{
+    @if (_error is not null)
+    {
+        <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div>
+    }
+
+    @if (_adding)
+    {
+        <div class="card mb-6 p-5">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">New task</h2>
+            <div class="grid gap-3 md:grid-cols-3">
+                @if (_vessels.Count > 1)
+                {
+                    <label class="text-sm">Vessel
+                        <select class="select mt-1" @bind="_newVessel">
+                            <option value="@Guid.Empty">Choose…</option>
+                            @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                        </select>
+                    </label>
+                }
+                <label class="text-sm md:col-span-2">Title
+                    <input class="input mt-1" @bind="_newTitle" placeholder="What needs doing?" />
+                </label>
+                <label class="text-sm md:col-span-3">Description
+                    <textarea class="textarea mt-1" rows="2" @bind="_newDescription"></textarea>
+                </label>
+                <label class="text-sm">Source
+                    <select class="select mt-1" @bind="_newSource">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var i in Of(WorklistListKind.Source)) { <option value="@i.Id">@i.Name@(i.RequiresVerification ? " (verified by office)" : "")</option> }
+                    </select>
+                </label>
+                <label class="text-sm">Nature
+                    <select class="select mt-1" @bind="_newNature">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var i in Of(WorklistListKind.Nature)) { <option value="@i.Id">@i.Name</option> }
+                    </select>
+                </label>
+                <label class="text-sm">Category
+                    <select class="select mt-1" @bind="_newCategory">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var i in CategoryOptions()) { <option value="@i.Id">@(i.ParentId is null ? i.Name : "   " + i.Name)</option> }
+                    </select>
+                </label>
+                <label class="text-sm">Department
+                    <select class="select mt-1" @bind="_newDepartment">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var d in _departments) { <option value="@d.Id">@d.Name</option> }
+                    </select>
+                </label>
+                <label class="text-sm">Priority
+                    <select class="select mt-1" @bind="_newPriority">
+                        <option value="@WorklistPriority.Normal">Normal</option>
+                        <option value="@WorklistPriority.Urgent">Urgent</option>
+                    </select>
+                </label>
+                <label class="text-sm">Target date
+                    <input type="date" class="input mt-1" @bind="_newTarget" />
+                </label>
+                <label class="text-sm">Assigned to
+                    <input class="input mt-1" @bind="_newAssignee" placeholder="Name or rank" />
+                </label>
+            </div>
+            <div class="mt-4 flex gap-2">
+                <button class="btn btn-primary" @onclick="CreateAsync">Add task</button>
+                <button class="btn btn-ghost" @onclick="() => _adding = false">Cancel</button>
+            </div>
+        </div>
+    }
+
+    <div class="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard Label="Overdue" Value="@_overdue.Count.ToString()" />
+        <StatCard Label="Due this week" Value="@_week.Count.ToString()" />
+        <StatCard Label="Awaiting verification" Value="@_open.Count(t => t.AwaitingVerification).ToString()" />
+        <StatCard Label="Open in all" Value="@_open.Count.ToString()" />
+    </div>
+
+    <div class="card mb-5 flex flex-wrap items-end gap-3 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_fVessel" @bind:after="Refilter">
+                    <option value="@Guid.Empty">All</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Source
+            <select class="select mt-1" @bind="_fSource" @bind:after="Refilter">
+                <option value="@Guid.Empty">All</option>
+                @foreach (var i in Of(WorklistListKind.Source)) { <option value="@i.Id">@i.Name</option> }
+            </select>
+        </label>
+        <label>Nature
+            <select class="select mt-1" @bind="_fNature" @bind:after="Refilter">
+                <option value="@Guid.Empty">All</option>
+                @foreach (var i in Of(WorklistListKind.Nature)) { <option value="@i.Id">@i.Name</option> }
+            </select>
+        </label>
+        <label>Department
+            <select class="select mt-1" @bind="_fDepartment" @bind:after="Refilter">
+                <option value="@Guid.Empty">All</option>
+                @foreach (var d in _departments) { <option value="@d.Id">@d.Name</option> }
+            </select>
+        </label>
+        <label>Priority
+            <select class="select mt-1" @bind="_fPriority" @bind:after="Refilter">
+                <option value="">All</option>
+                <option value="@WorklistPriority.Urgent">Urgent</option>
+                <option value="@WorklistPriority.Normal">Normal</option>
+            </select>
+        </label>
+        <input class="input max-w-xs" placeholder="Search number, title, assignee…" @bind="_search" @bind:event="oninput" @bind:after="Refilter" />
+    </div>
+
+    @Bucket("Overdue", _overdue, "danger")
+    @Bucket("Due in the next 7 days", _week, "warning")
+    @Bucket("Later", _later, "neutral")
+    @Bucket("No target date", _undated, "neutral")
+
+    <details class="mt-6">
+        <summary class="cursor-pointer text-sm font-semibold text-muted">Closed (@_closed.Count)</summary>
+        <div class="mt-3">@Bucket("", _closed, "neutral")</div>
+    </details>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _adding;
+    private string? _error;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<WorklistListItem> _lists = [];
+    private List<Department> _departments = [];
+    private List<WorklistTask> _all = [];
+    private List<WorklistTask> _open = [], _overdue = [], _week = [], _later = [], _undated = [], _closed = [];
+
+    private Guid _fVessel, _fSource, _fNature, _fDepartment;
+    private string _fPriority = "", _search = "";
+
+    private Guid _newVessel, _newSource, _newNature, _newCategory, _newDepartment;
+    private string _newTitle = "", _newDescription = "", _newAssignee = "";
+    private WorklistPriority _newPriority;
+    private DateTime? _newTarget;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 1) _newVessel = _vessels[0].Id;
+        _lists = await Svc.GetListsAsync(_companyId, includeInactive: true);
+        await using (var db = await Factory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = _companyId;
+            _departments = await db.Departments.AsNoTracking().Where(d => d.CompanyId == _companyId).OrderBy(d => d.Name).ToListAsync();
+        }
+        var enabled = _vessels.Select(v => v.Id).ToHashSet();
+        _all = (await Svc.ListAsync(_companyId)).Where(t => enabled.Contains(t.VesselId)).ToList();
+        Refilter();
+    }
+
+    private IEnumerable<WorklistListItem> Of(WorklistListKind kind) => _lists.Where(i => i.Kind == kind && i.IsActive).OrderBy(i => i.SortOrder).ThenBy(i => i.Name);
+
+    private IEnumerable<WorklistListItem> CategoryOptions()
+    {
+        var categories = Of(WorklistListKind.Category).ToList();
+        foreach (var root in categories.Where(c => c.ParentId is null))
+        {
+            yield return root;
+            foreach (var child in categories.Where(c => c.ParentId == root.Id)) yield return child;
+        }
+    }
+
+    private void Refilter()
+    {
+        var today = DateTime.UtcNow.Date;
+        var q = _all.AsEnumerable();
+        if (_fVessel != Guid.Empty) q = q.Where(t => t.VesselId == _fVessel);
+        if (_fSource != Guid.Empty) q = q.Where(t => t.SourceId == _fSource);
+        if (_fNature != Guid.Empty) q = q.Where(t => t.NatureId == _fNature);
+        if (_fDepartment != Guid.Empty) q = q.Where(t => t.DepartmentId == _fDepartment);
+        if (Enum.TryParse<WorklistPriority>(_fPriority, out var priority)) q = q.Where(t => t.Priority == priority);
+        if (!string.IsNullOrWhiteSpace(_search))
+            q = q.Where(t => t.Code.Contains(_search, StringComparison.OrdinalIgnoreCase) || t.Title.Contains(_search, StringComparison.OrdinalIgnoreCase)
+                             || t.AssigneeName.Contains(_search, StringComparison.OrdinalIgnoreCase));
+        var rows = q.ToList();
+        _open = rows.Where(t => !t.IsClosed).ToList();
+        _closed = rows.Where(t => t.IsClosed).OrderByDescending(t => t.LastEntryAt).ToList();
+        _overdue = _open.Where(t => t.IsOverdue(today)).OrderBy(t => t.TargetDate).ToList();
+        _week = _open.Where(t => t.TargetDate is { } d && d.Date >= today && d.Date <= today.AddDays(7)).ToList();
+        _later = _open.Where(t => t.TargetDate is { } d && d.Date > today.AddDays(7)).ToList();
+        _undated = _open.Where(t => t.TargetDate is null).ToList();
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        try
+        {
+            var vessel = _vessels.Count == 1 ? _vessels[0].Id : _newVessel;
+            if (vessel == Guid.Empty) throw new InvalidOperationException("Choose the vessel.");
+            var task = await Svc.CreateTaskAsync(_companyId, new NewWorklistTask(vessel, _newTitle, _newDescription,
+                Nz(_newSource), Nz(_newNature), Nz(_newCategory), Nz(_newDepartment), _newPriority, null, _newTarget, _newAssignee), _actor);
+            Nav.NavigateTo($"/worklist/{task.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private static Guid? Nz(Guid g) => g == Guid.Empty ? null : g;
+    private string VesselName(Guid id) => _vessels.FirstOrDefault(v => v.Id == id).Name ?? "";
+    private string Name(Guid? id) => id is null ? "" : _lists.FirstOrDefault(i => i.Id == id)?.Name ?? "";
+    private string DeptName(Guid? id) => id is null ? "" : _departments.FirstOrDefault(d => d.Id == id)?.Name ?? "";
+
+    private RenderFragment Bucket(string title, List<WorklistTask> rows, string tone) => __builder =>
+    {
+        if (rows.Count == 0 && title != "") return;
+        var today = DateTime.UtcNow.Date;
+        <section class="mb-6">
+            @if (title != "")
+            {
+                <h2 class="mb-2 flex items-center gap-2 font-display text-base font-extrabold text-ink">@title <span class="chip" data-tone="@tone">@rows.Count</span></h2>
+            }
+            <div class="card overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <tbody>
+                    @foreach (var t in rows)
+                    {
+                        <tr class="border-b border-line/60 hover:bg-surface-2/50">
+                            <td class="px-4 py-3 font-mono font-semibold whitespace-nowrap"><a href="/worklist/@t.Id" class="link">@t.Code</a></td>
+                            <td class="px-4 py-3">
+                                <a href="/worklist/@t.Id" class="font-medium text-ink hover:underline">@t.Title</a>
+                                <div class="text-xs text-muted">
+                                    @string.Join(" · ", new[] { _vessels.Count > 1 ? VesselName(t.VesselId) : "", Name(t.SourceId), Name(t.NatureId), DeptName(t.DepartmentId), t.AssigneeName }.Where(x => x != ""))
+                                </div>
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                @if (t.Priority == WorklistPriority.Urgent) { <StatusChip Value="@t.Priority" /> }
+                                @if (t.AwaitingVerification) { <StatusChip Label="Awaiting verification" Tone="warning" /> }
+                                else { <StatusChip Value="@t.Status" /> }
+                            </td>
+                            <td class="px-4 py-3 text-right whitespace-nowrap">
+                                @if (t.PercentComplete > 0) { <span class="text-muted">@t.PercentComplete%</span> }
+                            </td>
+                            <td class="px-4 py-3 text-right whitespace-nowrap @(t.IsOverdue(today) ? "font-semibold text-rose-600" : "")">
+                                @(t.TargetDate is { } d ? d.ToString("dd MMM yyyy") : "–")
+                                @if (t.DeferralCount > 0) { <span class="ml-1 text-xs text-muted" title="Deferred">↻@t.DeferralCount</span> }
+                            </td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0)
+                    {
+                        <tr><td class="px-4 py-6 text-center text-muted">Nothing here.</td></tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    };
+}

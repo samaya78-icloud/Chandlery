@@ -1,0 +1,298 @@
+@page "/worklist/{TaskId:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using System.Text.Json
+@using Chandlery.Data
+@using Microsoft.EntityFrameworkCore
+@inject WorklistService Svc
+@inject IDbContextFactory<ChandleryDbContext> Factory
+
+<PageTitle>@(_detail?.Task.Code ?? "Task") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Task not found" Message="It may belong to another vessel, or the worklist is switched off." />
+}
+else
+{
+    var t = _detail.Task;
+    var today = DateTime.UtcNow.Date;
+    <PageHeader Eyebrow="@t.Code" Title="@t.Title" Subtitle="@($"Raised by {t.CreatedByName} on {t.CreatedAt:dd MMM yyyy}{(string.IsNullOrEmpty(_vessel) ? "" : " · " + _vessel)}")">
+        <Actions>
+            <a href="/worklist" class="btn btn-secondary">Back to worklist</a>
+        </Actions>
+    </PageHeader>
+
+    @if (_error is not null)
+    {
+        <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div>
+    }
+
+    <div class="grid gap-6 lg:grid-cols-3">
+        <div class="space-y-6 lg:col-span-2">
+            <div class="card p-5">
+                <div class="mb-3 flex flex-wrap items-center gap-2">
+                    @if (t.AwaitingVerification) { <StatusChip Label="Completed, awaiting verification" Tone="warning" /> }
+                    else { <StatusChip Value="@t.Status" /> }
+                    @if (t.Priority == WorklistPriority.Urgent) { <StatusChip Value="@t.Priority" /> }
+                    @if (t.IsOverdue(today)) { <StatusChip Label="Overdue" Tone="danger" /> }
+                    @if (t.VerifiedAt is not null) { <StatusChip Label="Verified" Tone="success" /> }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(t.Description))
+                {
+                    <p class="whitespace-pre-line text-sm text-ink-2">@t.Description</p>
+                }
+                <div class="mt-4 h-2 overflow-hidden rounded-full bg-surface-2">
+                    <div class="h-full rounded-full bg-accent-500" style="width:@(t.PercentComplete)%"></div>
+                </div>
+                <p class="mt-1 text-xs text-muted">@t.PercentComplete% complete</p>
+            </div>
+
+            <div class="card p-5">
+                <h2 class="mb-4 font-display text-lg font-extrabold text-ink">Timeline</h2>
+                <ol class="space-y-4">
+                    @foreach (var e in _detail.Entries.AsEnumerable().Reverse())
+                    {
+                        <li class="border-l-2 border-line pl-4">
+                            <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-muted">
+                                <span class="font-semibold text-ink">@e.AuthorName</span>
+                                <span>@e.At.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
+                                <span class="chip chip-plain" data-tone="neutral">@(e.OwnerStage == SyncStages.Vessel ? "vessel" : "office")</span>
+                            </div>
+                            <div class="mt-0.5 text-sm"><span class="font-medium">@Summary(e)</span>@if (!string.IsNullOrWhiteSpace(e.Text) && e.Type != WorklistEntryType.Comment) { <span class="text-ink-2"> — @e.Text</span> }</div>
+                            @if (e.Type == WorklistEntryType.Comment) { <p class="mt-1 whitespace-pre-line text-sm text-ink-2">@e.Text</p> }
+                        </li>
+                    }
+                </ol>
+            </div>
+        </div>
+
+        <div class="space-y-6">
+            <div class="card p-5 text-sm">
+                <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                    <dt class="text-muted">Target date</dt><dd class="@(t.IsOverdue(today) ? "font-semibold text-rose-600" : "")">@(t.TargetDate?.ToString("dd MMM yyyy") ?? "–")@(t.DeferralCount > 0 ? $"  (deferred {t.DeferralCount}×)" : "")</dd>
+                    <dt class="text-muted">Planned</dt><dd>@(t.PlannedDate?.ToString("dd MMM yyyy") ?? "–")</dd>
+                    <dt class="text-muted">Assigned to</dt><dd>@(string.IsNullOrEmpty(t.AssigneeName) ? "–" : t.AssigneeName)</dd>
+                    <dt class="text-muted">Source</dt><dd>@(Name(t.SourceId))</dd>
+                    <dt class="text-muted">Nature</dt><dd>@(Name(t.NatureId))</dd>
+                    <dt class="text-muted">Category</dt><dd>@(Name(t.CategoryId))</dd>
+                    <dt class="text-muted">Department</dt><dd>@(_departments.FirstOrDefault(d => d.Id == t.DepartmentId)?.Name ?? "")</dd>
+                    <dt class="text-muted">Needs verification</dt><dd>@(t.RequiresVerification ? "Yes, by the office" : "No")</dd>
+                    @if (t.CompletedAt is { } done) { <dt class="text-muted">Completed</dt><dd>@done.ToLocalTime().ToString("dd MMM yyyy")</dd> }
+                </dl>
+            </div>
+
+            @if (t.Status == WorklistStatus.Cancelled)
+            {
+                <div class="card p-5 text-sm text-muted">This task was cancelled. Only comments can be added.</div>
+            }
+            <div class="card p-5">
+                <h2 class="mb-3 font-display text-base font-extrabold text-ink">Add to the timeline</h2>
+                <div class="mb-3 flex flex-wrap gap-1.5">
+                    @foreach (var (key, label) in Modes(t))
+                    {
+                        <button class="btn btn-sm @(_mode == key ? "btn-primary" : "btn-secondary")" @onclick="() => Pick(key, t)">@label</button>
+                    }
+                </div>
+
+                @if (_mode != "")
+                {
+                    <div class="space-y-3 text-sm">
+                        @if (_mode == "progress")
+                        {
+                            <label class="block">Percent complete <input type="number" min="0" max="100" class="input mt-1" @bind="_percent" /></label>
+                        }
+                        @if (_mode == "status")
+                        {
+                            <label class="block">Status
+                                <select class="select mt-1" @bind="_status">
+                                    <option value="@WorklistStatus.Open">Open</option>
+                                    <option value="@WorklistStatus.InProgress">In progress</option>
+                                    <option value="@WorklistStatus.Waiting">Waiting</option>
+                                </select>
+                            </label>
+                        }
+                        @if (_mode is "defer" or "target")
+                        {
+                            <label class="block">New target date <input type="date" class="input mt-1" @bind="_date" /></label>
+                        }
+                        @if (_mode == "priority")
+                        {
+                            <label class="block">Priority
+                                <select class="select mt-1" @bind="_priority">
+                                    <option value="@WorklistPriority.Normal">Normal</option>
+                                    <option value="@WorklistPriority.Urgent">Urgent</option>
+                                </select>
+                            </label>
+                        }
+                        @if (_mode == "assignee")
+                        {
+                            <label class="block">Assigned to <input class="input mt-1" @bind="_assignee" /></label>
+                        }
+                        @if (_mode == "details")
+                        {
+                            <label class="block">Title <input class="input mt-1" @bind="_title" /></label>
+                            <label class="block">Description <textarea class="textarea mt-1" rows="3" @bind="_description"></textarea></label>
+                        }
+                        <label class="block">@NoteLabel()
+                            <textarea class="textarea mt-1" rows="3" @bind="_text"></textarea>
+                        </label>
+                        <div class="flex gap-2">
+                            <button class="btn btn-primary" @onclick="SubmitAsync">@SubmitLabel()</button>
+                            <button class="btn btn-ghost" @onclick="Reset">Cancel</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid TaskId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private string? _error;
+    private WorklistDetail? _detail;
+    private string _vessel = "";
+    private List<WorklistListItem> _lists = [];
+    private List<Department> _departments = [];
+
+    private string _mode = "", _text = "", _assignee = "", _title = "", _description = "";
+    private int _percent;
+    private DateTime? _date;
+    private WorklistStatus _status = WorklistStatus.InProgress;
+    private WorklistPriority _priority;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _detail = await Svc.GetAsync(_companyId, TaskId);
+        if (_detail is null) return;
+        _lists = await Svc.GetListsAsync(_companyId, includeInactive: true);
+        await using var db = await Factory.CreateDbContextAsync();
+        db.CurrentCompanyId = _companyId;
+        _departments = await db.Departments.AsNoTracking().Where(d => d.CompanyId == _companyId).ToListAsync();
+        _vessel = (await db.Vessels.AsNoTracking().FirstOrDefaultAsync(v => v.Id == _detail.Task.VesselId))?.Name ?? "";
+    }
+
+    private string Name(Guid? id) => id is null ? "–" : _lists.FirstOrDefault(i => i.Id == id)?.Name ?? "–";
+
+    /// <summary>The office shapes tasks it raised and tasks from vessels; a vessel shapes only the tasks it raised itself.</summary>
+    private static bool CanShape(WorklistTask t) => !NodeContext.Current.IsVessel || t.OwnerStage == SyncStages.Vessel;
+
+    private IEnumerable<(string Key, string Label)> Modes(WorklistTask t)
+    {
+        if (t.Status == WorklistStatus.Cancelled) { yield return ("comment", "Comment"); yield break; }
+        yield return ("comment", "Comment");
+        if (!t.IsClosed)
+        {
+            yield return ("progress", "Progress");
+            yield return ("status", "Status");
+            yield return ("defer", "Defer");
+            yield return ("complete", "Complete");
+        }
+        if (CanShape(t))
+        {
+            yield return ("priority", "Priority");
+            yield return ("target", "Change date");
+            yield return ("assignee", "Assign");
+            yield return ("details", "Edit wording");
+            if (!t.IsClosed) yield return ("cancel", "Cancel task");
+        }
+        if (!NodeContext.Current.IsVessel && t.AwaitingVerification) yield return ("verify", "Verify");
+    }
+
+    private void Pick(string mode, WorklistTask t)
+    {
+        _mode = mode; _error = null; _text = "";
+        _percent = t.PercentComplete; _date = t.TargetDate; _priority = t.Priority; _assignee = t.AssigneeName;
+        _title = t.Title; _description = t.Description;
+        _status = t.Status is WorklistStatus.Open or WorklistStatus.InProgress or WorklistStatus.Waiting ? t.Status : WorklistStatus.InProgress;
+    }
+
+    private void Reset() { _mode = ""; _error = null; }
+
+    private string NoteLabel() => _mode switch
+    {
+        "comment" => "Comment",
+        "defer" or "target" => "Reason (required)",
+        "complete" => "What was done (required)",
+        "verify" => "Verification note",
+        "cancel" => "Reason",
+        _ => "Note (optional)",
+    };
+
+    private string SubmitLabel() => _mode switch
+    {
+        "complete" => "Mark completed", "verify" => "Verify", "cancel" => "Cancel the task", "defer" => "Defer", _ => "Add",
+    };
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        try
+        {
+            var input = _mode switch
+            {
+                "comment" => new WorklistEntryInput(WorklistEntryType.Comment, _text),
+                "progress" => new WorklistEntryInput(WorklistEntryType.Percent, _text, Percent: _percent),
+                "status" => new WorklistEntryInput(WorklistEntryType.Status, _text, Status: _status),
+                "defer" => new WorklistEntryInput(WorklistEntryType.Defer, _text, Date: _date),
+                "target" => new WorklistEntryInput(WorklistEntryType.Target, _text, Date: _date),
+                "complete" => new WorklistEntryInput(WorklistEntryType.Completed, _text),
+                "verify" => new WorklistEntryInput(WorklistEntryType.Verified, _text),
+                "priority" => new WorklistEntryInput(WorklistEntryType.Priority, _text, Priority: _priority),
+                "assignee" => new WorklistEntryInput(WorklistEntryType.Assignee, _text, Assignee: _assignee),
+                "details" => new WorklistEntryInput(WorklistEntryType.Details, _text, Title: _title, Description: _description),
+                "cancel" => new WorklistEntryInput(WorklistEntryType.Status, _text, Status: WorklistStatus.Cancelled),
+                _ => throw new InvalidOperationException("Choose what to add."),
+            };
+            await Svc.AddEntryAsync(_companyId, TaskId, input, _actor);
+            _mode = "";
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private static string Summary(WorklistEntry e)
+    {
+        using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(e.Payload) ? "{}" : e.Payload);
+        string Get(string key) => doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind != JsonValueKind.Null ? v.ToString() : "";
+        string Date(string key) => DateTime.TryParse(Get(key), out var d) ? d.ToString("dd MMM yyyy") : "no date";
+        return e.Type switch
+        {
+            WorklistEntryType.Created => $"Raised the task: {Get("title")}",
+            WorklistEntryType.Comment => "Commented",
+            WorklistEntryType.Status => $"Status set to {Humanize(Get("status"))}",
+            WorklistEntryType.Percent => $"Progress {Get("percent")}%",
+            WorklistEntryType.Priority => $"Priority set to {Get("priority")}",
+            WorklistEntryType.Target => $"Target date changed to {Date("target")}",
+            WorklistEntryType.Assignee => string.IsNullOrEmpty(Get("assignee")) ? "Assignment cleared" : $"Assigned to {Get("assignee")}",
+            WorklistEntryType.Details => $"Reworded: {Get("title")}",
+            WorklistEntryType.Defer => $"Deferred to {Date("target")}",
+            WorklistEntryType.Completed => "Marked completed",
+            WorklistEntryType.Verified => "Verified by the office",
+            WorklistEntryType.Link => $"Linked: {Get("label")}",
+            _ => e.Type.ToString(),
+        };
+    }
+
+    private static string Humanize(string text) => System.Text.RegularExpressions.Regex.Replace(text, "(?<=[a-z])(?=[A-Z])", " ");
+}

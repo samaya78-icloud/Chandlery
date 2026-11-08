@@ -156,6 +156,33 @@ public class WorklistSyncTests : IAsyncLifetime
     private Task<WorklistTask> OnboardTaskAsync(Guid? source = null) => _vessel.CreateTaskAsync(_s.CompanyId, NewTask(source), _s.User);
 
     [Fact]
+    public async Task TheOfficeMaintainsTheLists_AndTasksAlreadyRaisedKeepWhatTheyHad()
+    {
+        await SwitchOnAsync();
+        Assert.Equal([(_s.VesselId, (await OnShore(db => db.Vessels.SingleAsync(v => v.Id == _s.VesselId))).Name)], await _shore.EnabledVesselsAsync(_s.CompanyId));
+        Assert.Equal(_s.VesselId, (await _vessel.EnabledVesselsAsync(_s.CompanyId)).Single().Id);
+
+        var task = await OnboardTaskAsync(_classSource);
+        Assert.True(task.RequiresVerification);
+
+        var added = await _shore.AddListItemAsync(_s.CompanyId, WorklistListKind.Source, "Flag state", requiresVerification: true);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.AddListItemAsync(_s.CompanyId, WorklistListKind.Source, " flag state".Trim()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.AddListItemAsync(_s.CompanyId, WorklistListKind.Nature, " "));
+        await _s.SettleUntilQuietAsync();
+        Assert.Contains(await _vessel.GetListsAsync(_s.CompanyId), i => i.Id == added.Id && i.RequiresVerification);
+
+        // Switching Class off, and removing its verification, does not change the task raised from it.
+        await _shore.UpdateListItemAsync(_s.CompanyId, _classSource, "Class society", isActive: false, requiresVerification: false);
+        await _s.SettleUntilQuietAsync();
+        Assert.DoesNotContain(await _vessel.GetListsAsync(_s.CompanyId), i => i.Id == _classSource);
+        Assert.Contains(await _vessel.GetListsAsync(_s.CompanyId, includeInactive: true), i => i.Id == _classSource && i.Name == "Class society" && !i.IsActive);
+        Assert.True((await OnVessel(db => db.WorklistTasks.SingleAsync(t => t.Id == task.Id))).RequiresVerification);
+
+        // A vessel never edits the lists.
+        await Assert.ThrowsAnyAsync<Exception>(() => _vessel.AddListItemAsync(_s.CompanyId, WorklistListKind.Nature, "Made onboard"));
+    }
+
+    [Fact]
     public async Task TheModuleIsOffUntilTheOfficeSwitchesItOn()
     {
         var off = await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.CreateTaskAsync(_s.CompanyId, NewTask(), _s.User));

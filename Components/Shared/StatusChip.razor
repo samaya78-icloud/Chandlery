@@ -58,6 +58,14 @@
         RfqType.Stores => ("Stores", "accent"),
         RfqType.Spares => ("Spares", "info"),
 
+        WorklistStatus.Open => ("Open", "neutral"),
+        WorklistStatus.InProgress => ("In progress", "info"),
+        WorklistStatus.Waiting => ("Waiting", "warning"),
+        WorklistStatus.Completed => ("Completed", "success"),
+        WorklistStatus.Cancelled => ("Cancelled", "danger"),
+        WorklistPriority.Urgent => ("Urgent", "danger"),
+        WorklistPriority.Normal => ("Normal", "neutral"),
+
         null => ("", "neutral"),
         _ => (Humanize(value.ToString() ?? ""), "neutral")
     };
