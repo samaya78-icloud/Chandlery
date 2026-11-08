@@ -42,6 +42,7 @@ builder.Services.AddScoped<WorklistReportService>();
 builder.Services.AddScoped<PmsService>();
 builder.Services.AddScoped<PmsReportService>();
 builder.Services.AddScoped<PmsIntegrationService>();
+builder.Services.AddScoped<PmsImportService>();
 builder.Services.AddSingleton<SyncStatusService>();
 builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();

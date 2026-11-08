@@ -1,0 +1,16 @@
+Location,System,Equipment,Job code,Job,Interval,Last done,Hours at last done,Critical,Department
+Engine room,Main propulsion,Main engine,ME-001,Overhaul fuel injectors,6 months / 4000 hrs,12/05/2026,18250,Yes,Engine
+Engine room,Main propulsion,Main engine,ME-002,Take lube oil sample for analysis,3 months,02/09/2026,,Yes,Engine
+Engine room,Main propulsion,Main engine,ME-003,Check and clean turbocharger,2000 hrs,14/03/2026,17100,No,Engine
+Engine room,Auxiliary,Generator No. 1,GE-001,Change engine oil and filters,500 hrs,20/10/2026,9540,No,Engine
+Engine room,Auxiliary,Generator No. 1,GE-002,Check cooling water pump seal,Monthly,05/10/2026,,No,Engine
+Engine room,Auxiliary,Air compressor,AC-001,Inspect and test safety valves,Annual,18/01/2026,,Yes,Engine
+Engine room,Pumps,Fire pump,FP-001,Test fire pump capacity and pressure,Quarterly,01/09/2026,,Yes,Engine
+Engine room,Pumps,Bilge pump,BP-001,Check bilge pump and alarms,1 month,28/09/2026,,No,Engine
+Deck,Mooring,Windlass,WL-001,Grease windlass bearings,Weekly,02/11/2026,,No,Deck
+Deck,Mooring,Windlass,WL-002,Inspect windlass brake lining,6 months,15/06/2026,,No,Deck
+Deck,Lifesaving,Lifeboat No. 1,LB-001,Start and run lifeboat engine,Weekly,04/11/2026,,Yes,Deck
+Deck,Lifesaving,Lifeboat No. 1,LB-002,Inspect lifeboat falls and hooks,3 months,10/08/2026,,Yes,Deck
+Bridge,Navigation,Radar,RD-001,Check radar performance,Monthly,29/10/2026,,Yes,Deck
+Bridge,Navigation,Gyro compass,GY-001,Check gyro compass error,1 week,03/11/2026,,Yes,Deck
+Accommodation,Safety,Fire detection panel,FD-001,Test fire detectors,3 months,22/08/2026,,Yes,Deck

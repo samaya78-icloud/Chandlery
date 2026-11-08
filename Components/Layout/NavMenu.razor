@@ -71,13 +71,13 @@
                 if (NodeContext.Current.IsVessel)
                 {
                     _maintenanceItems.AddRange([new NavItem("/pms", "Plan", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon), new NavItem("/pms/machinery", "Machinery", PmsIcon),
-                        new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting)]);
+                        new NavItem("/pms/import", "Import a plan", PmsIcon), new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting)]);
                 }
                 else
                 {
                     waiting += (await PmsSvc.PlanChangesAsync(companyId, pendingOnly: true)).Count;
                     _maintenanceItems.AddRange([new NavItem("/pms", "Plan", PmsIcon), new NavItem("/pms/fleet", "Fleet overview", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon),
-                        new NavItem("/pms/machinery", "Machinery", PmsIcon), new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting), new NavItem("/pms/template-updates", "Template updates", PmsIcon),
+                        new NavItem("/pms/machinery", "Machinery", PmsIcon), new NavItem("/pms/import", "Import a plan", PmsIcon), new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting), new NavItem("/pms/template-updates", "Template updates", PmsIcon),
                         new NavItem("/pms/sister-vessels", "Sister vessels", PmsIcon), new NavItem("/pms/reports", "Reports", PmsIcon)]);
                     _adminItems.Add(new NavItem("/company/pms-library", "Maintenance library", PmsIcon));
                 }
