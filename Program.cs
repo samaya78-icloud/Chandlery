@@ -44,6 +44,7 @@ builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();
 builder.Services.AddSingleton(sp => CrewCrypto.From(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHostEnvironment>()));
 builder.Services.AddScoped<CrewService>();
+builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddSingleton<IFileStore, DiskFileStore>();
 builder.Services.AddHttpClient<FxFeed>(client =>
 {
@@ -153,7 +154,7 @@ static List<Claim> BuildClaims(AppUser user, bool crewAdmin = false)
 
 static string DefaultHomeFor(UserRole role) => "/";
 
-app.MapPost("/account/login", async (HttpContext http, ProcurementService procurement, CrewService crew, IAntiforgery antiforgery) =>
+app.MapPost("/account/login", async (HttpContext http, ProcurementService procurement, CrewService crew, IAntiforgery antiforgery, LoginThrottle throttle) =>
 {
     try
     {
@@ -169,11 +170,23 @@ app.MapPost("/account/login", async (HttpContext http, ProcurementService procur
     var password = form["password"].ToString();
     var returnUrl = form["returnUrl"].ToString();
 
+    // Only a path on this site may be returned to; anything else (https://elsewhere, //elsewhere, /\elsewhere) falls back to the home page.
+    if (!LoginThrottle.IsLocalPath(returnUrl)) returnUrl = "";
+
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    if (throttle.IsLocked(email, ip))
+    {
+        app.Logger.LogWarning("Sign-in refused for {Login} from {Ip}: too many failed attempts.", email.Trim(), ip);
+        return Results.Redirect($"/login?error=2&returnUrl={Uri.EscapeDataString(returnUrl)}");
+    }
+
     var user = await procurement.VerifyLoginAsync(email, password);
     if (user is null)
     {
+        throttle.RecordFailure(email, ip);
         return Results.Redirect($"/login?error=1&returnUrl={Uri.EscapeDataString(returnUrl)}");
     }
+    throttle.RecordSuccess(email);
 
     var identity = new ClaimsIdentity(BuildClaims(user, user.LoginName is not null && await crew.IsCrewAdminAsync(user.Id)), CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));

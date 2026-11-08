@@ -13,6 +13,8 @@ public record WorklistEntryInput(WorklistEntryType Type, string Text = "", Workl
 
 public record WorklistDetail(WorklistTask Task, List<WorklistEntry> Entries);
 
+public record WorklistCounts(int Overdue, int DueThisWeek, int AwaitingVerification);
+
 /// <summary>What a task is linked to: a requisition, an order, or another task (a copy or its origin).</summary>
 public record WorklistLink(string Type, Guid Target, string Label, DateTime At);
 
@@ -42,6 +44,9 @@ public static class WorklistLinkTypes
 /// </summary>
 public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
 {
+    /// <summary>Runs just before a new entry is saved. Lets a test make the other side's entry arrive at exactly that moment; unused otherwise.</summary>
+    public Func<Task>? BeforeEntrySaved { get; set; }
+
     // ---- the module switch ----
 
     /// <summary>Is Worklist switched on for this vessel (its own switch, else its group's, up the tree; none means off)?</summary>
@@ -54,14 +59,46 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
         return PolicyResolver.ResolveModule(vessel.Id, PolicyResolver.GroupChain(groups, vessel.GroupId), switches, groups.ToDictionary(g => g.Id, g => g.Name), PolicyModules.Worklist).Enabled;
     }
 
+    /// <summary>
+    /// The company's vessels the worklist is switched on for, worked out from one read of the vessels, groups and switches (a page that
+    /// needs this on every load must not cost three queries per vessel).
+    /// </summary>
+    private static async Task<List<(Guid Id, string Name)>> EnabledVesselsAsync(ChandleryDbContext db, Guid companyId)
+    {
+        var vessels = await db.Vessels.AsNoTracking().Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync();
+        if (vessels.Count == 0) return [];
+        var groups = await db.VesselGroups.AsNoTracking().Where(g => g.CompanyId == companyId).ToListAsync();
+        var switches = await db.VesselModuleSwitches.AsNoTracking().Where(m => m.CompanyId == companyId).ToListAsync();
+        var names = groups.ToDictionary(g => g.Id, g => g.Name);
+        return vessels.Where(v => PolicyResolver.ResolveModule(v.Id, PolicyResolver.GroupChain(groups, v.GroupId), switches, names, PolicyModules.Worklist).Enabled)
+            .Select(v => (v.Id, v.Name)).ToList();
+    }
+
     /// <summary>Is Worklist on for at least one vessel of the company (for showing it in the office menu)?</summary>
     public async Task<bool> IsEnabledForCompanyAsync(Guid companyId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        foreach (var vessel in await db.Vessels.Where(v => v.CompanyId == companyId).Select(v => v.Id).ToListAsync())
-            if (await IsEnabledForVesselAsync(db, companyId, vessel)) return true;
-        return false;
+        return (await EnabledVesselsAsync(db, companyId)).Count > 0;
+    }
+
+    /// <summary>Overdue, due-soon and awaiting-verification counts for the dashboards, counted in the database. Null when the worklist is off everywhere.</summary>
+    public async Task<WorklistCounts?> CountsAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var vessels = (await EnabledVesselsAsync(db, companyId)).Select(v => v.Id).ToList();
+        if (vessels.Count == 0) return null;
+        var today = DateTime.UtcNow.Date;
+        var soon = today.AddDays(7);
+
+        // The same rules as WorklistTask.IsClosed / IsOverdue / AwaitingVerification, written so the database can evaluate them.
+        var tasks = db.WorklistTasks.AsNoTracking().Where(t => t.CompanyId == companyId && vessels.Contains(t.VesselId));
+        var open = tasks.Where(t => t.Status != WorklistStatus.Cancelled && (t.Status != WorklistStatus.Completed || (t.RequiresVerification && t.VerifiedAt == null)));
+        return new WorklistCounts(
+            await open.CountAsync(t => t.Status != WorklistStatus.Completed && t.TargetDate != null && t.TargetDate < today),
+            await open.CountAsync(t => t.TargetDate != null && t.TargetDate >= today && t.TargetDate <= soon),
+            await tasks.CountAsync(t => t.RequiresVerification && t.Status == WorklistStatus.Completed && t.VerifiedAt == null));
     }
 
     // ---- writing ----
@@ -70,7 +107,14 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
+        var (task, _) = await StageNewTaskAsync(db, companyId, input, actor);
+        await db.SaveChangesAsync();
+        return task;
+    }
 
+    /// <summary>Checks the input and adds the task and its first entry to the context, without saving.</summary>
+    private static async Task<(WorklistTask Task, WorklistEntry Created)> StageNewTaskAsync(ChandleryDbContext db, Guid companyId, NewWorklistTask input, Actor actor)
+    {
         if (string.IsNullOrWhiteSpace(input.Title)) throw new InvalidOperationException("Give the task a title.");
         if (!await IsEnabledForVesselAsync(db, companyId, input.VesselId))
             throw new InvalidOperationException("The worklist is not switched on for this vessel.");
@@ -104,8 +148,7 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
         WorklistProjection.Apply(task, WorklistProjection.Replay([created]));
         db.WorklistTasks.Add(task);
         db.WorklistEntries.Add(created);
-        await db.SaveChangesAsync();
-        return task;
+        return (task, created);
     }
 
     public async Task<WorklistEntry> AddEntryAsync(Guid companyId, Guid taskId, WorklistEntryInput input, Actor actor)
@@ -121,10 +164,12 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
 
         var payload = BuildPayload(input);
         var entry = NewEntry(task, input.Type, actor, DateTime.UtcNow, (input.Text ?? "").Trim(), payload);
-        var existing = await db.WorklistEntries.AsNoTracking().Where(e => e.TaskId == taskId).ToListAsync();
-        WorklistProjection.Apply(task, WorklistProjection.Replay([.. existing, entry]));
+        if (BeforeEntrySaved is { } beforeSave) await beforeSave();
         db.WorklistEntries.Add(entry);
         await db.SaveChangesAsync();
+        // The state is worked out from every entry now stored, not from a read made before saving: an entry that arrived from the other
+        // side in between is then part of it, and the two sides cannot end up with different results.
+        await WorklistProjection.RefreshAsync(db, taskId);
         return entry;
     }
 
@@ -154,10 +199,7 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        var result = new List<(Guid, string)>();
-        foreach (var v in await db.Vessels.Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync())
-            if (await IsEnabledForVesselAsync(db, companyId, v.Id)) result.Add((v.Id, v.Name));
-        return result;
+        return await EnabledVesselsAsync(db, companyId);
     }
 
     // ---- the lists (office maintains them; vessels read them) ----
@@ -257,30 +299,36 @@ public class WorklistService(IDbContextFactory<ChandleryDbContext> factory)
     /// </summary>
     public async Task<TransferResult> TransferAsync(Guid companyId, Guid taskId, IEnumerable<Guid> vesselIds, Actor actor)
     {
-        await using (var check = await factory.CreateDbContextAsync())
-            if (check.Node.IsVessel) throw new InvalidOperationException("Only the office can copy a task to other vessels.");
-        var origin = (await GetAsync(companyId, taskId))?.Task ?? throw new InvalidOperationException("Task not found.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) throw new InvalidOperationException("Only the office can copy a task to other vessels.");
+        var origin = await db.WorklistTasks.FirstOrDefaultAsync(t => t.Id == taskId && t.CompanyId == companyId) ?? throw new InvalidOperationException("Task not found.");
         if (origin.Status == WorklistStatus.Cancelled) throw new InvalidOperationException("A cancelled task cannot be copied.");
 
-        var enabled = (await EnabledVesselsAsync(companyId)).ToDictionary(v => v.Id, v => v.Name);
+        var enabled = (await EnabledVesselsAsync(db, companyId)).ToDictionary(v => v.Id, v => v.Name);
         var result = new TransferResult([], []);
+        await using var transaction = await db.Database.BeginTransactionAsync();
         foreach (var vesselId in vesselIds.Distinct().Where(v => v != origin.VesselId))
         {
-            if (!enabled.TryGetValue(vesselId, out _))
+            if (!enabled.ContainsKey(vesselId))
             {
-                await using var db = await factory.CreateDbContextAsync();
-                db.CurrentCompanyId = companyId;
                 result.Skipped.Add((await db.Vessels.AsNoTracking().FirstOrDefaultAsync(v => v.Id == vesselId))?.Name ?? vesselId.ToString());
                 continue;
             }
-            var copy = await CreateTaskAsync(companyId, new NewWorklistTask(vesselId, origin.Title, origin.Description, origin.SourceId, origin.NatureId, origin.CategoryId,
-                origin.DepartmentId, origin.Priority, origin.PlannedDate, origin.TargetDate), actor);
-            await AddEntryAsync(companyId, copy.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Task, LinkTarget: origin.Id, LinkLabel: $"Copied from {origin.Code}"), actor);
-            await AddEntryAsync(companyId, origin.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Task, LinkTarget: copy.Id, LinkLabel: $"Copied to {copy.Code} ({enabled[vesselId]})"), actor);
+            var (copy, created) = await StageNewTaskAsync(db, companyId, new NewWorklistTask(vesselId, origin.Title, origin.Description, origin.SourceId, origin.NatureId,
+                origin.CategoryId, origin.DepartmentId, origin.Priority, origin.PlannedDate, origin.TargetDate), actor);
+            db.WorklistEntries.Add(LinkEntry(copy, actor, created.At.AddMilliseconds(1), WorklistLinkTypes.Task, origin.Id, $"Copied from {origin.Code}"));
+            db.WorklistEntries.Add(LinkEntry(origin, actor, DateTime.UtcNow, WorklistLinkTypes.Task, copy.Id, $"Copied to {copy.Code} ({enabled[vesselId]})"));
             result.Created.Add(copy);
         }
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        if (result.Created.Count > 0) await WorklistProjection.RefreshAsync(db, origin.Id);
         return result;
     }
+
+    private static WorklistEntry LinkEntry(WorklistTask task, Actor actor, DateTime at, string type, Guid target, string label)
+        => NewEntry(task, WorklistEntryType.Link, actor, at, "", WorklistProjection.Json(("linkType", type), ("target", target.ToString()), ("label", label)));
 
     // ---- rules ----
 

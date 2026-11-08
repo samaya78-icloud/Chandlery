@@ -311,6 +311,10 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         if (!RequisitionOwnership.ShouldApply(atHub, existing is null ? null : Aggregates.StageOf(existing), localVersion, document.OwnerStage, (int)document.Version))
             return;
 
+        // History is written once. A task or timeline entry already held here is never replaced or removed by a document that arrives
+        // again (a resend, or a newer version from a faulty or altered sender): the local rule that forbids it must hold on this path too.
+        if (existing is not null && Aggregates.IsAppendOnly(aggregate.Clr)) return;
+
         // A vessel may only send for the vessel it runs.
         if (atHub)
         {

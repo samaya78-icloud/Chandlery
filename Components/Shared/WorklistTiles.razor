@@ -1,30 +1,22 @@
 @inject WorklistService Worklist
 @inject AuthenticationStateProvider Auth
 
-@if (_on)
+@if (_counts is not null)
 {
     <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard Label="Worklist: overdue" Value="@_overdue.ToString("N0")" Hint="Open tasks past their target date" Href="/worklist" Tone="@(_overdue > 0 ? "danger" : "success")" />
-        <StatCard Label="Worklist: due in 7 days" Value="@_week.ToString("N0")" Href="/worklist" Tone="warning" />
-        <StatCard Label="Worklist: to verify" Value="@_verify.ToString("N0")" Hint="@(NodeContext.Current.IsVessel ? "Completed, waiting for the office" : "Completed by vessels, waiting for you")" Href="@(NodeContext.Current.IsVessel ? "/worklist" : "/worklist/fleet")" Tone="info" />
+        <StatCard Label="Worklist: overdue" Value="@_counts.Overdue.ToString("N0")" Hint="Open tasks past their target date" Href="/worklist" Tone="@(_counts.Overdue > 0 ? "danger" : "success")" />
+        <StatCard Label="Worklist: due in 7 days" Value="@_counts.DueThisWeek.ToString("N0")" Href="/worklist" Tone="warning" />
+        <StatCard Label="Worklist: to verify" Value="@_counts.AwaitingVerification.ToString("N0")" Hint="@(NodeContext.Current.IsVessel ? "Completed, waiting for the office" : "Completed by vessels, waiting for you")" Href="@(NodeContext.Current.IsVessel ? "/worklist" : "/worklist/fleet")" Tone="info" />
     </div>
 }
 
 @code {
-    private bool _on;
-    private int _overdue, _week, _verify;
+    private WorklistCounts? _counts;
 
     protected override async Task OnInitializedAsync()
     {
         var user = (await Auth.GetAuthenticationStateAsync()).User;
-        if (!Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)) return;
-        var enabled = (await Worklist.EnabledVesselsAsync(companyId)).Select(v => v.Id).ToHashSet();
-        if (enabled.Count == 0) return;
-        _on = true;
-        var today = DateTime.UtcNow.Date;
-        var tasks = (await Worklist.ListAsync(companyId)).Where(t => enabled.Contains(t.VesselId)).ToList();
-        _overdue = tasks.Count(t => !t.IsClosed && t.IsOverdue(today));
-        _week = tasks.Count(t => !t.IsClosed && t.TargetDate is { } d && d.Date >= today && d.Date <= today.AddDays(7));
-        _verify = tasks.Count(t => t.AwaitingVerification);
+        if (Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId))
+            _counts = await Worklist.CountsAsync(companyId);
     }
 }

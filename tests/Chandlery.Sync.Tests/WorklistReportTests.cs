@@ -73,6 +73,30 @@ public class WorklistReportTests
     }
 
     [Fact]
+    public void CompletionBySource_CountsATaskAwaitingVerificationAsOpen_SoDoneAndOpenAddUp()
+    {
+        var sources = new Dictionary<Guid, string> { [Class] = "Class" };
+        var tasks = new[] { Task(Falcon, "A", null, WorklistStatus.Completed, source: Class, verify: true), Task(Falcon, "B", null, WorklistStatus.Completed, source: Class) };
+        var row = WorklistReports.CompletionBySource(tasks, sources, Today).Single();
+        Assert.Equal((2, 1, 1, 50), (row.Total, row.Completed, row.Open, row.RatePercent));
+    }
+
+    [Fact]
+    public void UrgentThingsTravelOnTheUrgentLane()
+    {
+        Assert.Equal(Marine.Sync.Lane.Urgent, Chandlery.Services.Sync.SyncPublisher.LaneFor(new PurchaseOrder { IsEmergency = true }));
+        Assert.Equal(Marine.Sync.Lane.Urgent, Chandlery.Services.Sync.SyncPublisher.LaneFor(Task(Falcon, "A", null, priority: WorklistPriority.Urgent)));
+        Assert.Equal(Marine.Sync.Lane.Transaction, Chandlery.Services.Sync.SyncPublisher.LaneFor(Task(Falcon, "B", null)));
+        var created = new WorklistEntry { Type = WorklistEntryType.Created, Payload = WorklistProjection.Json(("priority", WorklistPriority.Urgent)) };
+        var raised = new WorklistEntry { Type = WorklistEntryType.Priority, Payload = WorklistProjection.Json(("priority", WorklistPriority.Urgent)) };
+        var calmed = new WorklistEntry { Type = WorklistEntryType.Priority, Payload = WorklistProjection.Json(("priority", WorklistPriority.Normal)) };
+        var comment = new WorklistEntry { Type = WorklistEntryType.Comment, Payload = "{}" };
+        Assert.Equal([Marine.Sync.Lane.Urgent, Marine.Sync.Lane.Urgent, Marine.Sync.Lane.Transaction, Marine.Sync.Lane.Transaction],
+            new[] { created, raised, calmed, comment }.Select(Chandlery.Services.Sync.SyncPublisher.LaneFor));
+        Assert.Equal(Marine.Sync.Lane.Transaction, Chandlery.Services.Sync.SyncPublisher.LaneFor(new WorklistEntry { Type = WorklistEntryType.Priority, Payload = "not json" }));
+    }
+
+    [Fact]
     public void Csv_QuotesEveryFieldAndDoublesQuotes()
     {
         var csv = WorklistReports.Csv(["Title", "Note"], [["Fire hose, 15m", "said \"renew\""]]);

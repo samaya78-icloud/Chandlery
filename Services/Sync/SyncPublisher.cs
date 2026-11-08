@@ -100,7 +100,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
                 var snapshot = JsonNode.Parse(latest.Snapshot!)!.AsObject();
                 var stage = snapshot[nameof(PurchaseOrder.OwnerStage)]?.GetValue<string>() ?? SyncStages.Office;
                 var tombstone = Aggregates.Document(aggregate, group.Key.DocId, latest.Version, snapshot, stage, clock.Now(), null, deleted: true);
-                sent += await SendAggregateAsync(db, aggregate, snapshot, stage, tombstone, withSupplier: false, ct);
+                sent += await SendAggregateAsync(db, aggregate, snapshot, stage, tombstone, withSupplier: false, Lane.Transaction, ct);
                 continue;
             }
 
@@ -110,7 +110,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             var payload = Aggregates.ToJson(db, root);
             var document = Aggregates.Document(aggregate, group.Key.DocId, (int)entry.Property(ChandleryDbContext.SyncVersion).CurrentValue!, payload,
                 Aggregates.StageOf(root), clock.Now(), (Guid?)entry.Property(ChandleryDbContext.OriginNodeId).CurrentValue);
-            sent += await SendAggregateAsync(db, aggregate, payload, document.OwnerStage, document, withSupplier: aggregate.Clr == typeof(PurchaseOrder), ct);
+            sent += await SendAggregateAsync(db, aggregate, payload, document.OwnerStage, document, withSupplier: aggregate.Clr == typeof(PurchaseOrder), LaneFor(root), ct);
         }
         return sent;
     }
@@ -119,13 +119,11 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
     /// Onboard, only what the vessel owns goes up. Ashore, only what the office owns goes down, to the node that runs the vessel the
     /// order is for. An order is sent with its supplier, so the vessel can always show who it is from.
     /// </summary>
-    private async Task<int> SendAggregateAsync(ChandleryDbContext db, AggregateType aggregate, JsonObject payload, string stage, SyncDocument document, bool withSupplier, CancellationToken ct)
+    private async Task<int> SendAggregateAsync(ChandleryDbContext db, AggregateType aggregate, JsonObject payload, string stage, SyncDocument document, bool withSupplier, Lane lane, CancellationToken ct)
     {
         if (node.IsVessel)
         {
             if (stage != SyncStages.Vessel) return 0;
-            // An emergency purchase tells the office at once.
-            var lane = payload[nameof(PurchaseOrder.IsEmergency)] is { } flag && flag.GetValueKind() == System.Text.Json.JsonValueKind.True ? Lane.Urgent : Lane.Transaction;
             await services.GetRequiredService<INodePublisher>().PublishAsync(document, lane);
             return 1;
         }
@@ -140,8 +138,26 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         var nodeId = vesselNode.Value.ToString("N");
         if (withSupplier && MasterData.ReadGuid(payload, nameof(PurchaseOrder.SupplierId)) is { } supplierId)
             await PushSupplierAsync(db, hub, nodeId, supplierId, ct);
-        await hub.PublishToNodeAsync(nodeId, document, Lane.Transaction);
+        await hub.PublishToNodeAsync(nodeId, document, lane);
         return 1;
+    }
+
+    /// <summary>
+    /// The lane a document travels on. An emergency purchase tells the office at once; an urgent task, and the entry that makes it urgent
+    /// (its first entry, or a later change of priority), reach the other side ahead of routine documents.
+    /// </summary>
+    internal static Lane LaneFor(object root) => root switch
+    {
+        PurchaseOrder { IsEmergency: true } => Lane.Urgent,
+        WorklistTask { Priority: WorklistPriority.Urgent } => Lane.Urgent,
+        WorklistEntry { Type: WorklistEntryType.Created or WorklistEntryType.Priority } entry when SaysUrgent(entry.Payload) => Lane.Urgent,
+        _ => Lane.Transaction,
+    };
+
+    private static bool SaysUrgent(string payload)
+    {
+        try { return JsonNode.Parse(payload)?["priority"]?.GetValue<string>() == nameof(WorklistPriority.Urgent); }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException) { return false; }
     }
 
     /// <summary>

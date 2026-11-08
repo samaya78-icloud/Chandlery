@@ -113,6 +113,11 @@ public class WorklistWalkthroughTests : IAsyncLifetime
         var rows = new[] { await RowAsync(_vessel), await RowAsync(_shore) };
         Assert.Equal(rows[0], rows[1]);
         Assert.Equal((5, 1, 1, 1, 1, 3), (rows[0].Open, rows[0].Overdue, rows[0].DueThisWeek, rows[0].AwaitingVerification, rows[0].Urgent, rows[0].NewFromVessel));
+        foreach (var side in new[] { _vessel, _shore })
+        {
+            var counts = (await side.CountsAsync(_s.CompanyId))!;                                                   // counted in the database, for the dashboard tiles
+            Assert.Equal((rows[0].Overdue, rows[0].DueThisWeek, rows[0].AwaitingVerification), (counts.Overdue, counts.DueThisWeek, counts.AwaitingVerification));
+        }
         var escalated = WorklistReports.Escalations(await _shore.ListAsync(_s.CompanyId), DateTime.UtcNow.Date, 0);
         Assert.Equal(["Record the fire drill"], escalated.Select(t => t.Title));
 

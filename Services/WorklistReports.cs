@@ -66,12 +66,12 @@ public static class WorklistReports
         ];
     }
 
-    /// <summary>Per source: how many tasks there are, how many are completed (not cancelled) and the share. Cancelled tasks are left out.</summary>
+    /// <summary>Per source: how many tasks there are, how many are finished (completed, and verified where that is required) and the share. Cancelled tasks are left out; a task awaiting verification counts as open, so finished plus open is always the total.</summary>
     public static List<SourceCompletion> CompletionBySource(IEnumerable<WorklistTask> tasks, IReadOnlyDictionary<Guid, string> sources, DateTime today)
     {
         return tasks.Where(t => t.Status != WorklistStatus.Cancelled)
             .GroupBy(t => t.SourceId is { } s && sources.ContainsKey(s) ? sources[s] : "No source")
-            .Select(g => new SourceCompletion(g.Key, g.Count(), g.Count(t => t.Status == WorklistStatus.Completed), g.Count(IsOpen), g.Count(t => IsOpen(t) && t.IsOverdue(today))))
+            .Select(g => new SourceCompletion(g.Key, g.Count(), g.Count(t => t.Status == WorklistStatus.Completed && t.IsClosed), g.Count(IsOpen), g.Count(t => IsOpen(t) && t.IsOverdue(today))))
             .OrderByDescending(r => r.Total).ThenBy(r => r.Source).ToList();
     }
 

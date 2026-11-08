@@ -241,6 +241,53 @@ public class WorklistSyncTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HistoryArrivingAgainWithDifferentContent_IsIgnored_OnTheSyncPathToo()
+    {
+        await SwitchOnAsync();
+        var task = await OnboardTaskAsync();
+        var comment = await _vessel.AddEntryAsync(_s.CompanyId, task.Id, new(WorklistEntryType.Comment, "original wording"), _s.User);
+        await _s.SettleUntilQuietAsync();
+
+        // A document for the same entry, newer, with other text and a different date for the task it belongs to.
+        await using (var db = await _s.VesselFactory.CreateDbContextAsync())
+        {
+            var type = Chandlery.Services.Sync.Aggregates.Find(nameof(WorklistEntry))!;
+            var json = Chandlery.Services.Sync.Aggregates.ToJson(db, await db.WorklistEntries.SingleAsync(e => e.Id == comment.Id));
+            json["Text"] = "rewritten history";
+            await _s.Agent.PublishAsync(Chandlery.Services.Sync.Aggregates.Document(type, comment.Id, 9, json, SyncStages.Vessel, 99, null), Lane.Transaction);
+        }
+        await _s.SettleUntilQuietAsync();
+
+        Assert.Equal("original wording", (await OnShore(db => db.WorklistEntries.SingleAsync(e => e.Id == comment.Id))).Text);
+        Assert.Equal("original wording", (await OnVessel(db => db.WorklistEntries.SingleAsync(e => e.Id == comment.Id))).Text);
+        Assert.Empty(await _s.ShoreSyncStore.GetQuarantineAsync());
+    }
+
+    [Fact]
+    public async Task AnEntryArrivingWhileAnotherIsBeingAdded_IsPartOfTheResultingState()
+    {
+        await SwitchOnAsync();
+        var task = await OnboardTaskAsync();
+
+        // The office's entry is stored (as the applier does, which then refreshes the task) at the very moment the vessel's comment is being saved.
+        _vessel.BeforeEntrySaved = async () =>
+        {
+            await using var db = await _s.VesselFactory.CreateDbContextAsync();
+            db.ApplyingSync = true;
+            db.WorklistEntries.Add(new WorklistEntry
+            {
+                Id = Guid.CreateVersion7(), CompanyId = _s.CompanyId, TaskId = task.Id, Type = WorklistEntryType.Target, Text = "class deadline", AuthorName = "Office",
+                At = DateTime.UtcNow, OwnerStage = SyncStages.Office, Payload = WorklistProjection.Json(("target", new DateTime(2026, 12, 24))),
+            });
+            await db.SaveChangesAsync();
+        };
+        await _vessel.AddEntryAsync(_s.CompanyId, task.Id, new(WorklistEntryType.Comment, "carrying on"), _s.User);
+        _vessel.BeforeEntrySaved = null;
+
+        Assert.Equal(new DateTime(2026, 12, 24), (await OnVessel(db => db.WorklistTasks.SingleAsync(t => t.Id == task.Id))).TargetDate);   // the comment did not wipe it out
+    }
+
+    [Fact]
     public async Task TheModuleIsOffUntilTheOfficeSwitchesItOn()
     {
         var off = await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.CreateTaskAsync(_s.CompanyId, NewTask(), _s.User));

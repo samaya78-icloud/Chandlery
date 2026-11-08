@@ -18,7 +18,7 @@
     @if (Error)
     {
         <div class="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
-            Invalid sign-in or password.
+            @(Locked ? "Too many unsuccessful attempts. Please wait 15 minutes and try again." : "Invalid sign-in or password.")
         </div>
     }
 
@@ -62,5 +62,6 @@
     [SupplyParameterFromQuery(Name = "returnUrl")]
     public string? ReturnUrl { get; set; }
 
-    private bool Error => ErrorFlag == "1";
+    private bool Error => ErrorFlag is "1" or "2";
+    private bool Locked => ErrorFlag == "2";
 }

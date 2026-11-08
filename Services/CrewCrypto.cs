@@ -42,11 +42,20 @@ public sealed class CrewCrypto
         if (stored == "") return "";
         var key = _key ?? throw new InvalidOperationException("No crew ID encryption key is configured (Crew:IdKey).");
         if (!stored.StartsWith("v1:")) throw new InvalidOperationException("Unknown ID number format.");
-        var all = Convert.FromBase64String(stored[3..]);
-        var data = new byte[all.Length - 28];
-        using var aes = new AesGcm(key, 16);
-        aes.Decrypt(all.AsSpan(0, 12), all.AsSpan(28), all.AsSpan(12, 16), data);
-        return Encoding.UTF8.GetString(data);
+        try
+        {
+            var all = Convert.FromBase64String(stored[3..]);
+            if (all.Length < 28) throw new InvalidOperationException("The stored ID number is incomplete.");
+            var data = new byte[all.Length - 28];
+            using var aes = new AesGcm(key, 16);
+            aes.Decrypt(all.AsSpan(0, 12), all.AsSpan(28), all.AsSpan(12, 16), data);
+            return Encoding.UTF8.GetString(data);
+        }
+        catch (Exception ex) when (ex is FormatException or CryptographicException)
+        {
+            // Damaged text, or a different key from the one it was written with: say so plainly instead of failing with a low-level error.
+            throw new InvalidOperationException("The stored ID number cannot be read (damaged, or encrypted with a different key).", ex);
+        }
     }
 
     /// <summary>The last four characters, for showing the number masked.</summary>
