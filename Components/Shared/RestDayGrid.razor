@@ -1,0 +1,92 @@
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@* One day in quarter hours, in two rows of twelve hours so the cells stay big enough for a thumb. Tap flips a cell; drag paints. Work is dark, rest is light. *@
+<div class="rest-grid" @ref="_root" aria-label="Hours of work and rest for the day">
+    @for (var half = 0; half < 2; half++)
+    {
+        <div class="rest-row">
+            @for (var h = half * 12; h < half * 12 + 12; h++)
+            {
+                <div class="rest-hour">
+                    <span class="rest-hour-label">@h.ToString("00")</span>
+                    <div class="rest-quarters">
+                        @for (var q = 0; q < 4; q++)
+                        {
+                            <span class="rest-cell" data-slot="@(h * 4 + q)" title="@($"{h:00}:{q * 15:00}")"></span>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .rest-grid { display: flex; flex-direction: column; gap: .75rem; touch-action: none; user-select: none; }
+    .rest-row { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 2px; }
+    .rest-hour { min-width: 0; }
+    .rest-hour-label { display: block; font-size: .7rem; line-height: 1; color: var(--c-muted); margin-bottom: .25rem; padding-left: 1px; }
+    .rest-quarters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 1px; border-radius: .4rem; background: var(--c-line); }
+    .rest-cell { height: 2.75rem; background: var(--c-surface-2); cursor: pointer; transition: background-color .08s; }
+    .rest-cell:first-child { border-radius: .3rem 0 0 .3rem; }
+    .rest-cell:last-child { border-radius: 0 .3rem .3rem 0; }
+    .rest-cell.work { background: var(--accent-600); }
+    .rest-grid[data-readonly="true"] .rest-cell { cursor: default; }
+    @@media (max-width: 640px) { .rest-row { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+</style>
+
+@code {
+    /// <summary>The work periods of the day as text, for example "04:00-08:00,16:00-20:00".</summary>
+    [Parameter] public string Spans { get; set; } = "";
+    [Parameter] public bool ReadOnly { get; set; }
+
+    /// <summary>Raised when a stroke on the grid ends, with the periods now shown.</summary>
+    [Parameter] public EventCallback<string> SpansChanged { get; set; }
+
+    private ElementReference _root;
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<RestDayGrid>? _self;
+    private string _shown = "";
+    private bool _readOnlyShown;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/rest-grid.js");
+            _self = DotNetObjectReference.Create(this);
+            await _module.InvokeVoidAsync("init", _root, _self, Spans, ReadOnly);
+            (_shown, _readOnlyShown) = (Spans, ReadOnly);
+        }
+        else if (_module is not null && (Spans != _shown || ReadOnly != _readOnlyShown))
+        {
+            if (ReadOnly != _readOnlyShown) await _module.InvokeVoidAsync("init", _root, _self, Spans, ReadOnly);
+            else await _module.InvokeVoidAsync("set", _root, Spans, ReadOnly);
+            (_shown, _readOnlyShown) = (Spans, ReadOnly);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnGridChanged(string spans)
+    {
+        _shown = spans;
+        Spans = spans;
+        await SpansChanged.InvokeAsync(spans);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_module is not null)
+            {
+                await _module.InvokeVoidAsync("dispose", _root);
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException) { }
+        _self?.Dispose();
+    }
+}

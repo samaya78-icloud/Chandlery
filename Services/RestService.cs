@@ -188,6 +188,135 @@ public class RestHoursService(IDbContextFactory<ChandleryDbContext> factory)
         var rank = crew?.Rank ?? entries.OrderBy(e => e.EnteredAt).LastOrDefault()?.Rank ?? "";
         return new RestSheet(crewMemberId, name, rank, days, limits);
     }
+
+    // ---- for the screens ----
+
+    /// <summary>The crew record behind a signed-in user: only a seafarer signed on to a vessel has one.</summary>
+    public async Task<CrewMember?> CrewOfUserAsync(Guid companyId, Guid? userId)
+    {
+        if (userId is null) return null;
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == userId && c.VesselId != null && c.IsActive);
+    }
+
+    /// <summary>The seafarers signed on to a vessel.</summary>
+    public async Task<List<CrewMember>> CrewAboardAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.CrewMembers.AsNoTracking().Where(c => c.CompanyId == companyId && c.VesselId == vesselId && c.IsActive).OrderBy(c => c.FullName).ToListAsync();
+    }
+
+    /// <summary>
+    /// Records hours as the signed-in person. A seafarer records their own; the Master and crew admins may record for others (marked as such, and the
+    /// seafarer still has to agree when signing). Anyone who is not a seafarer aboard this vessel, the office included, cannot record.
+    /// </summary>
+    public async Task<RestEntry> RecordAsync(Guid companyId, Guid vesselId, Actor actor, Guid crewMemberId, DateTime date, string workSpans, string reason = "")
+    {
+        var me = await CrewOfUserAsync(companyId, actor.UserId) ?? throw new InvalidOperationException("Hours are recorded onboard, by the seafarers of the vessel.");
+        if (me.VesselId != vesselId) throw new InvalidOperationException("You are not signed on to this vessel.");
+        if (crewMemberId != me.Id && !me.IsMaster && !me.IsCrewAdmin)
+            throw new InvalidOperationException("You can record your own hours. The Master or a crew admin can record them for someone else.");
+        return await RecordDayAsync(companyId, vesselId, crewMemberId, date, workSpans, new Actor(actor.UserId, me.FullName), me.Id, reason);
+    }
+
+    /// <summary>Sets the vessel's day status as the signed-in person; any seafarer aboard may.</summary>
+    public async Task<VesselDayStatus> SetStatusAsync(Guid companyId, Guid vesselId, Actor actor, DateTime date, VesselDayKind kind, string portName)
+    {
+        var me = await CrewOfUserAsync(companyId, actor.UserId) ?? throw new InvalidOperationException("The day status is set onboard, by the seafarers of the vessel.");
+        if (me.VesselId != vesselId) throw new InvalidOperationException("You are not signed on to this vessel.");
+        return await SetDayStatusAsync(companyId, vesselId, date, kind, portName, new Actor(actor.UserId, me.FullName));
+    }
+
+    /// <summary>What the screen needs to check a day as it is being filled in: the days recorded around it, and the rules.</summary>
+    public sealed record RestWindow(List<RestDayInput> Days, RestLimits Limits, DateTime? BornOn)
+    {
+        public Func<DateTime, bool>? IsMinor => BornOn is { } dob ? date => dob.Date.AddYears(18) > date : null;
+
+        /// <summary>The days around <paramref name="date"/> checked with <paramref name="draft"/> in place of what is recorded for it (null: as recorded).</summary>
+        public List<RestDayResult> Check(DateTime date, string? draft)
+        {
+            var day = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+            var days = Days.Where(d => d.Date.Date != day).ToList();
+            if (draft is not null) days.Add(new RestDayInput(day, RestSpans.Parse(draft)));
+            else if (Days.FirstOrDefault(d => d.Date.Date == day) is { } recorded) days.Add(recorded);
+            var results = RestRules.Evaluate(Limits, days, day, day.AddDays(1), IsMinor);
+            return results[0].State == RestDayState.NotRecorded ? [] : results.Where(r => r.State != RestDayState.NotRecorded).ToList();      // the next day is shown only if it is recorded
+        }
+    }
+
+    public async Task<RestWindow> WindowAsync(Guid companyId, Guid vesselId, Guid crewMemberId, DateTime date)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var day = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+        var crew = await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == crewMemberId && c.CompanyId == companyId);
+        var (_, limits) = await RulesForAsync(db, companyId, vesselId);
+        var from = day.AddDays(-8);
+        var entries = await db.RestEntries.AsNoTracking().Where(e => e.CrewMemberId == crewMemberId && e.Date >= from && e.Date <= day.AddDays(1)).ToListAsync();
+        return new RestWindow(Inputs(entries), limits, crew?.DateOfBirth);
+    }
+
+    public sealed record RestMonthDay(DateTime Date, string? Spans, RestDayResult Result, int Revisions, string? LastBy, bool OnBehalf, VesselDayStatus? Status);
+
+    public sealed record RestMonth(DateTime First, DateTime Last, string CrewName, string Rank, List<RestMonthDay> Days, RestLimits Limits)
+    {
+        public int Recorded => Days.Count(d => d.Spans is not null);
+        public int Breaches => Days.Count(d => d.Result.State == RestDayState.Breach);
+        public int Reduced => Days.Count(d => d.Result.State == RestDayState.OkByReduction);
+        public int Missing(DateTime today) => Days.Count(d => d.Spans is null && d.Date <= today);
+    }
+
+    /// <summary>A seafarer's month as recorded, day by day, with each day checked.</summary>
+    public async Task<RestMonth> MonthAsync(Guid companyId, Guid vesselId, Guid crewMemberId, int year, int month)
+    {
+        var first = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var last = first.AddMonths(1).AddDays(-1);
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var crew = await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == crewMemberId && c.CompanyId == companyId);
+        var (_, limits) = await RulesForAsync(db, companyId, vesselId);
+        var entries = await db.RestEntries.AsNoTracking().Where(e => e.CrewMemberId == crewMemberId && e.Date >= first.AddDays(-7) && e.Date <= last).ToListAsync();
+        var statuses = Latest(await db.VesselDayStatuses.AsNoTracking().Where(s => s.VesselId == vesselId && s.Date >= first && s.Date <= last).ToListAsync());
+        var latest = Latest(entries);
+        var born = crew?.DateOfBirth;
+        var results = RestRules.Evaluate(limits, Inputs(entries), first, last, born is { } dob ? date => dob.Date.AddYears(18) > date : null).ToDictionary(r => r.Date);
+        var revisions = entries.GroupBy(e => e.Date.Date).ToDictionary(g => g.Key, g => g.Count());
+        var days = new List<RestMonthDay>();
+        for (var date = first; date <= last; date = date.AddDays(1))
+        {
+            var entry = latest.GetValueOrDefault(date);
+            days.Add(new RestMonthDay(date, entry?.WorkSpans, results[date], revisions.GetValueOrDefault(date), entry?.EnteredByName, entry?.OnBehalf ?? false, statuses.GetValueOrDefault(date)));
+        }
+        var sample = entries.OrderBy(e => e.EnteredAt).LastOrDefault();
+        return new RestMonth(first, last, crew?.FullName ?? sample?.CrewName ?? "", crew?.Rank ?? sample?.Rank ?? "", days, limits);
+    }
+
+    /// <summary>The work periods the working-arrangements table gives this seafarer's rank for the day (at sea or in port), to start the day from. Null when there is no table or no row for the rank.</summary>
+    public sealed record RestSuggestion(string Spans, string Basis);
+
+    public async Task<RestSuggestion?> SuggestAsync(Guid companyId, Guid vesselId, Guid crewMemberId, DateTime date)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var day = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+        var crew = await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.Id == crewMemberId && c.CompanyId == companyId);
+        if (crew is null) return null;
+        var table = (await db.WorkArrangementTables.AsNoTracking().Where(t => t.VesselId == vesselId && t.EffectiveFrom <= day).ToListAsync()).OrderBy(t => t.VersionNo).LastOrDefault();
+        var row = table is null ? null : WorkArrangementService.RowsOf(table).FirstOrDefault(r => string.Equals(r.Position.Trim(), crew.Rank.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (table is null || row is null) return null;
+
+        // The vessel's status for the date, else the latest one before it (a ship stays at sea until it is told otherwise).
+        var earlier = await db.VesselDayStatuses.AsNoTracking().Where(s => s.VesselId == vesselId && s.Date <= day && s.Date >= day.AddDays(-30)).ToListAsync();
+        var status = Latest(earlier).OrderBy(p => p.Key).LastOrDefault().Value;
+        var inPort = status?.Kind == VesselDayKind.InPort;
+        var spans = RestSpans.Format(RestSpans.Normalize(RestSpans.Parse(inPort ? row.PortWatchkeeping : row.SeaWatchkeeping).Concat(RestSpans.Parse(inPort ? row.PortOther : row.SeaOther))));
+        return new RestSuggestion(spans, $"{row.Position}, {(inPort ? "in port" : "at sea")}, table version {table.VersionNo}");
+    }
+
+    private static Dictionary<DateTime, VesselDayStatus> Latest(IEnumerable<VesselDayStatus> statuses)
+        => statuses.GroupBy(s => s.Date.Date).ToDictionary(g => g.Key, g => g.OrderBy(s => s.At).ThenBy(s => s.Id).Last());
 }
 
 /// <summary>The starting rule set a company has.</summary>

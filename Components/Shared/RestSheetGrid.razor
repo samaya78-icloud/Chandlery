@@ -1,0 +1,68 @@
+@* The month as the model record of hours of work or rest lays it out (appendix 4 of the ILO/IMO guidelines): a row per date, a column per hour, work shaded. *@
+<div class="overflow-x-auto">
+    <table class="rest-sheet w-full border-collapse text-xs">
+        <thead>
+            <tr class="text-muted">
+                <th class="px-2 py-1.5 text-left font-medium">Date</th>
+                @for (var h = 0; h < 24; h++) { <th class="w-6 px-0 py-1.5 text-center font-medium">@h.ToString("00")</th> }
+                <th class="px-2 py-1.5 text-right font-medium" title="Rest in the calendar day">Rest</th>
+                <th class="px-2 py-1.5 text-right font-medium" title="Least rest in any 24 hours ending that day">24 h</th>
+                <th class="px-2 py-1.5 text-right font-medium" title="Least rest in any 7 days ending that day">7 d</th>
+                <th class="px-2 py-1.5 text-left font-medium">Result</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var d in Month.Days)
+        {
+            var (label, tone) = RestLook.Describe(d.Result.State);
+            var work = d.Spans is null ? [] : RestSpans.Parse(d.Spans);
+            <tr class="border-t border-line @(d.Date.DayOfWeek is DayOfWeek.Sunday ? "bg-surface-2/60" : "")">
+                <td class="whitespace-nowrap px-2 py-1">
+                    @if (Link is not null) { <a class="font-medium text-accent-700 hover:underline" href="@Link(d.Date)">@d.Date.ToString("ddd d")</a> }
+                    else { <span class="font-medium">@d.Date.ToString("ddd d")</span> }
+                    @if (d.Revisions > 1) { <span class="ml-1 text-muted" title="@(d.Revisions - 1) correction(s)">✎</span> }
+                </td>
+                @for (var h = 0; h < 24; h++)
+                {
+                    var minutes = d.Spans is null ? -1 : WorkIn(work, h);
+                    <td class="rest-sheet-cell p-0" style="@Shade(minutes)" title="@(minutes < 0 ? "not recorded" : $"{h:00}:00  {minutes} min work")"></td>
+                }
+                <td class="px-2 py-1 text-right">@(d.Spans is null ? "" : RestRules.Hm(d.Result.RestMinutes))</td>
+                <td class="px-2 py-1 text-right">@(d.Result.Worst24 is { } a ? RestRules.Hm(a) : "")</td>
+                <td class="px-2 py-1 text-right">@(d.Result.Worst7 is { } b ? RestRules.Hm(b) : "")</td>
+                <td class="px-2 py-1 align-top">
+                    @if (d.Result.State != RestDayState.NotRecorded) { <StatusChip Label="@label" Tone="@tone" /> }
+                    @foreach (var f in d.Result.Findings) { <div class="mt-0.5 max-w-xs text-rose-700">@f.Message</div> }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<style>
+    .rest-sheet-cell { height: 1.5rem; border-left: 1px solid var(--c-line); }
+    .rest-sheet th, .rest-sheet td { vertical-align: middle; }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public RestHoursService.RestMonth Month { get; set; } = null!;
+
+    /// <summary>Where a date's name leads (for example to the page where the day is edited); none: plain text.</summary>
+    [Parameter] public Func<DateTime, string>? Link { get; set; }
+
+    private static int WorkIn(List<WorkSpan> spans, int hour)
+    {
+        int from = hour * 60, to = from + 60, total = 0;
+        foreach (var s in spans) total += Math.Max(0, Math.Min(s.End, to) - Math.Max(s.Start, from));
+        return total;
+    }
+
+    private static string Shade(int workMinutes) => workMinutes switch
+    {
+        < 0 => "background: repeating-linear-gradient(45deg, transparent 0 3px, var(--c-line) 3px 4px)",
+        0 => "background: var(--c-surface-2)",
+        >= 60 => "background: var(--accent-600)",
+        _ => $"background: color-mix(in srgb, var(--accent-600) {Math.Max(20, workMinutes * 100 / 60)}%, var(--c-surface-2))",
+    };
+}

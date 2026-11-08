@@ -314,3 +314,15 @@ public static class RestRules
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())))[..16].ToLowerInvariant();
     }
 }
+
+/// <summary>How a day's result is worded and toned on screen (one place, like the other status chips).</summary>
+public static class RestLook
+{
+    public static (string Label, string Tone) Describe(RestDayState state) => state switch
+    {
+        RestDayState.Ok => ("Complies", "success"),
+        RestDayState.OkByReduction => ("Complies (shorter rest)", "info"),
+        RestDayState.Breach => ("Breach", "danger"),
+        _ => ("Not recorded", "neutral"),
+    };
+}

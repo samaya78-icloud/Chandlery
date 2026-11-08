@@ -1,0 +1,118 @@
+@page "/rest/sheet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RestHoursService Svc
+
+<PageTitle>Month sheet · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Record of hours of work or rest"
+            Subtitle="One seafarer, one month, hour by hour. Dark is work, light is rest, hatched is a day not recorded. Click a date to open that day.">
+    <Actions>
+        <a href="@DayHref(DateTime.UtcNow.Date)" class="btn btn-secondary">Back to the day</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Rest hours are switched off" Message="The Rest Hours module has not been switched on for this vessel." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" value="@_vesselId" @onchange="OnVesselChanged">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Seafarer
+            <select class="select mt-1" value="@_crewId" @onchange="OnCrewChanged" disabled="@(!CanPickSeafarer)">
+                @foreach (var c in _crew) { <option value="@c.Id">@c.FullName · @c.Rank</option> }
+            </select>
+        </label>
+        <div class="flex items-end gap-1">
+            <button class="btn btn-secondary" @onclick="() => MoveMonth(-1)">&lsaquo;</button>
+            <label>Month
+                <input type="month" class="input mt-1 w-44" value="@_month.ToString("yyyy-MM")" @onchange="OnMonthChanged" />
+            </label>
+            <button class="btn btn-secondary" @onclick="() => MoveMonth(1)">&rsaquo;</button>
+        </div>
+    </div>
+
+    @if (_sheet is null)
+    {
+        <EmptyState Title="No seafarer to show" Message="No seafarer is signed on to this vessel." />
+    }
+    else
+    {
+        <div class="card p-5">
+            <div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+                <div>
+                    <h2 class="font-display text-xl font-bold text-ink">@_sheet.CrewName</h2>
+                    <p class="text-sm text-muted">@_sheet.Rank · @_month.ToString("MMMM yyyy") · @_vesselName</p>
+                </div>
+                <p class="text-sm text-muted">@_sheet.Recorded of @_sheet.Days.Count days recorded · @_sheet.Breaches with a breach@(_sheet.Reduced > 0 ? $" · {_sheet.Reduced} on the shorter rest" : "")</p>
+            </div>
+            <RestSheetGrid Month="_sheet" Link="DayHref" />
+            <p class="mt-3 text-xs text-muted">
+                Limits: at least @RestRules.Hm(_sheet.Limits.MinRest24) rest in any 24 hours and @RestRules.Hm(_sheet.Limits.MinRest7) in any 7 days; rest in no more than @_sheet.Limits.MaxPeriods periods, one of at least @RestRules.Hm(_sheet.Limits.MinLongest).
+                A ✎ marks a day that has been corrected; the earlier versions are kept.
+            </p>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "crew")] private Guid? CrewQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
+
+    private Guid _companyId, _vesselId, _crewId;
+    private CrewMember? _me;
+    private bool _loaded;
+    private DateTime _month = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<CrewMember> _crew = [];
+    private RestHoursService.RestMonth? _sheet;
+
+    private string _vesselName => _vessels.FirstOrDefault(v => v.Id == _vesselId).Name ?? "";
+    private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _me = await Svc.CrewOfUserAsync(_companyId, Actor.From(state.User).UserId);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
+        if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        await LoadVesselAsync(CrewQuery);
+        _loaded = true;
+    }
+
+    private async Task LoadVesselAsync(Guid? wanted = null)
+    {
+        _crew = _vesselId == Guid.Empty ? [] : await Svc.CrewAboardAsync(_companyId, _vesselId);
+        _crewId = wanted is { } w && _crew.Any(c => c.Id == w) && (CanPickSeafarer || w == _me?.Id) ? w
+            : _me is not null && _crew.Any(c => c.Id == _me.Id) ? _me.Id
+            : _crew.FirstOrDefault()?.Id ?? Guid.Empty;
+        await LoadSheetAsync();
+    }
+
+    private async Task LoadSheetAsync()
+        => _sheet = _crewId == Guid.Empty ? null : await Svc.MonthAsync(_companyId, _vesselId, _crewId, _month.Year, _month.Month);
+
+    private async Task OnVesselChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _vesselId = id; await LoadVesselAsync(); } }
+    private async Task OnCrewChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _crewId = id; await LoadSheetAsync(); } }
+    private async Task OnMonthChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString() + "-01", out var d)) { _month = new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc); await LoadSheetAsync(); } }
+    private async Task MoveMonth(int months) { _month = _month.AddMonths(months); await LoadSheetAsync(); }
+
+    private string DayHref(DateTime date) => $"/rest?crew={_crewId}&date={date:yyyy-MM-dd}";
+}

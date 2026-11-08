@@ -1,0 +1,355 @@
+@page "/rest"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RestHoursService Svc
+@inject NavigationManager Nav
+
+<PageTitle>Hours of rest · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Hours of work and rest"
+            Subtitle="Mark the hours you worked. Everything else in the day counts as rest. A day is never overwritten: a correction is added beside it, with its reason, and the limits are checked as you go.">
+    <Actions>
+        <a href="@SheetHref()" class="btn btn-secondary">Month sheet</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Rest hours are switched off" Message="@(NodeContext.Current.IsVessel ? "The office has not switched rest hours on for this vessel." : "Switch the Rest Hours module on for a vessel or a vessel group under Vessel groups and policy.")" />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" value="@_vesselId" @onchange="OnVesselChanged">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        @if (_crew.Count > 1 && (CanPickSeafarer))
+        {
+            <label>Seafarer
+                <select class="select mt-1" value="@_crewId" @onchange="OnCrewChanged">
+                    @foreach (var c in _crew) { <option value="@c.Id">@c.FullName · @c.Rank</option> }
+                </select>
+            </label>
+        }
+        else if (_crew.FirstOrDefault(c => c.Id == _crewId) is { } only)
+        {
+            <p class="pb-2 font-medium text-ink">@only.FullName <span class="font-normal text-muted">· @only.Rank</span></p>
+        }
+        <div class="flex items-end gap-1">
+            <button class="btn btn-secondary" title="The day before" @onclick="() => MoveDay(-1)">&lsaquo;</button>
+            <label>Date
+                <input type="date" class="input mt-1 w-44" value="@_date.ToString("yyyy-MM-dd")" max="@DateTime.UtcNow.Date.AddDays(1).ToString("yyyy-MM-dd")" @onchange="OnDateChanged" />
+            </label>
+            <button class="btn btn-secondary" title="The day after" disabled="@(_date >= DateTime.UtcNow.Date.AddDays(1))" @onclick="() => MoveDay(1)">&rsaquo;</button>
+        </div>
+        <div class="pb-2 text-muted">@_date.ToString("dddd d MMMM yyyy")</div>
+    </div>
+
+    @if (_crewId == Guid.Empty)
+    {
+        <EmptyState Title="No seafarer to show" Message="@(NodeContext.Current.IsVessel ? "You are not signed on to this vessel as a seafarer, so there are no hours of yours to record." : "No seafarer is signed on to this vessel.")" />
+    }
+    else
+    {
+        <div class="grid gap-5 lg:grid-cols-3">
+            <div class="space-y-5 lg:col-span-2">
+                <div class="card p-5">
+                    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <h2 class="font-display text-lg font-bold text-ink">The day</h2>
+                        <div class="flex flex-wrap items-center gap-2 text-sm">
+                            <span class="flex items-center gap-1.5"><span class="inline-block h-3 w-3 rounded-sm" style="background:var(--accent-600)"></span> work</span>
+                            <span class="flex items-center gap-1.5"><span class="inline-block h-3 w-3 rounded-sm border border-line" style="background:var(--c-surface-2)"></span> rest</span>
+                            @if (_saved is null) { <StatusChip Label="Not recorded yet" Tone="neutral" /> }
+                            else if (_spans != _saved) { <StatusChip Label="Changed, not saved" Tone="warning" /> }
+                            else { <StatusChip Label="Recorded" Tone="success" /> }
+                        </div>
+                    </div>
+
+                    <RestDayGrid Spans="@_spans" ReadOnly="@(!CanEdit)" SpansChanged="OnGridChanged" />
+
+                    <div class="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                        <p><span class="text-muted">Work</span> <strong class="text-ink">@RestRules.Hm(WorkMinutes)</strong></p>
+                        <p><span class="text-muted">Rest</span> <strong class="text-ink">@RestRules.Hm(RestSpans.DayMinutes - WorkMinutes)</strong></p>
+                        <p class="text-muted">@(string.IsNullOrEmpty(_spans) ? "No work marked" : _spans.Replace(",", "  ·  "))</p>
+                    </div>
+
+                    @if (CanEdit)
+                    {
+                        <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+                            <button class="btn btn-secondary btn-sm" disabled="@(_yesterday is null)" @onclick="UseYesterday" title="@(_yesterday is null ? "Nothing is recorded for the day before" : _yesterday)">Same as the day before</button>
+                            <button class="btn btn-secondary btn-sm" disabled="@(_suggestion is null)" @onclick="UseTable" title="@(_suggestion?.Basis ?? "There is no working-arrangements table for your rank")">From the working table</button>
+                            <button class="btn btn-ghost btn-sm" @onclick="ClearDay">All rest</button>
+                            @if (_suggestion is not null) { <span class="text-xs text-muted">@_suggestion.Basis</span> }
+                        </div>
+
+                        @if (NeedsReason)
+                        {
+                            <label class="mt-4 block text-sm">Why is this day being changed?
+                                <input class="input mt-1 w-full" maxlength="500" placeholder="For example: worked through the lunch break to finish the repair" @bind="_reason" @bind:event="oninput" />
+                            </label>
+                        }
+                        @if (_error is not null) { <p class="mt-3 text-sm text-rose-700">@_error</p> }
+                        @if (_message is not null) { <p class="mt-3 text-sm text-emerald-700">@_message</p> }
+                        <div class="mt-4 flex items-center gap-3">
+                            <button class="btn btn-primary" disabled="@(_busy || _spans == _saved)" @onclick="SaveAsync">@(_saved is null ? "Save the day" : "Save the correction")</button>
+                            @if (_spans != _saved && _saved is not null) { <button class="btn btn-ghost" @onclick="Revert">Undo my changes</button> }
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="mt-4 border-t border-line pt-4 text-sm text-muted">@ReadOnlyReason</p>
+                    }
+                </div>
+
+                <div class="card p-5">
+                    <h2 class="mb-3 font-display text-lg font-bold text-ink">The limits</h2>
+                    @if (_preview.Count == 0)
+                    {
+                        <p class="text-sm text-muted">Nothing to check yet: mark the day's work to see how it stands against the limits.</p>
+                    }
+                    @foreach (var r in _preview)
+                    {
+                        var (label, tone) = RestLook.Describe(r.State);
+                        <div class="mb-3 rounded-xl border border-line p-3 last:mb-0">
+                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                <p class="font-medium text-ink">@(r.Date == _date ? "This day" : "The day after")</p>
+                                <StatusChip Label="@label" Tone="@tone" />
+                                <p class="text-xs text-muted">
+                                    Least rest in any 24 hours ending that day: <strong class="text-ink">@(r.Worst24 is { } w ? RestRules.Hm(w) : "not enough days recorded")</strong>
+                                    · in any 7 days: <strong class="text-ink">@(r.Worst7 is { } w7 ? RestRules.Hm(w7) : "not enough days recorded")</strong>
+                                </p>
+                            </div>
+                            @foreach (var f in r.Findings) { <p class="mt-1.5 text-sm text-rose-700">@f.Message</p> }
+                            @if (r.State == RestDayState.OkByReduction) { <p class="mt-1.5 text-sm text-muted">Within the shorter rest the rule set allows. It can be used on only a few days a week.</p> }
+                        </div>
+                    }
+                    @if (_window is not null)
+                    {
+                        <p class="mt-2 text-xs text-muted">Limits: at least @RestRules.Hm(_window.Limits.MinRest24) rest in any 24 hours and @RestRules.Hm(_window.Limits.MinRest7) in any 7 days, in no more than @_window.Limits.MaxPeriods periods, one of at least @RestRules.Hm(_window.Limits.MinLongest).</p>
+                    }
+                </div>
+
+                @if (_history.Count > 0)
+                {
+                    <div class="card p-5">
+                        <h2 class="mb-3 font-display text-lg font-bold text-ink">History of this day</h2>
+                        <table class="w-full text-left text-sm">
+                            <thead><tr class="border-b border-line text-xs text-muted"><th class="py-1.5 font-medium">When</th><th class="py-1.5 font-medium">By</th><th class="py-1.5 font-medium">Work</th><th class="py-1.5 font-medium">Reason</th></tr></thead>
+                            <tbody>
+                            @foreach (var h in _history)
+                            {
+                                <tr class="border-b border-line/50 align-top">
+                                    <td class="py-1.5 whitespace-nowrap">@h.EnteredAt.ToString("dd MMM HH:mm")</td>
+                                    <td class="py-1.5">@h.EnteredByName @if (h.OnBehalf) { <span class="chip chip-plain" data-tone="info">for them</span> }</td>
+                                    <td class="py-1.5">@(h.WorkSpans.Length == 0 ? "all rest" : h.WorkSpans.Replace(",", " · "))</td>
+                                    <td class="py-1.5 text-muted">@h.Reason</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
+            <div class="space-y-5">
+                <div class="card p-5">
+                    <h2 class="mb-1 font-display text-lg font-bold text-ink">The vessel on this day</h2>
+                    <p class="mb-3 text-xs text-muted">It decides which row of the working table starts your day.</p>
+                    <p class="mb-3 text-sm">@StatusText()</p>
+                    @if (NodeContext.Current.IsVessel && _me is not null)
+                    {
+                        <div class="flex flex-wrap items-end gap-2">
+                            <button class="btn btn-secondary btn-sm" @onclick="() => SetStatusAsync(VesselDayKind.AtSea)">At sea</button>
+                            <button class="btn btn-secondary btn-sm" @onclick="() => SetStatusAsync(VesselDayKind.Anchored)">At anchor</button>
+                            <input class="input w-36" placeholder="Port" maxlength="120" @bind="_port" />
+                            <button class="btn btn-secondary btn-sm" disabled="@string.IsNullOrWhiteSpace(_port)" @onclick="() => SetStatusAsync(VesselDayKind.InPort)">In port</button>
+                        </div>
+                        @if (_statusError is not null) { <p class="mt-2 text-sm text-rose-700">@_statusError</p> }
+                    }
+                </div>
+
+                <div class="card p-5">
+                    <div class="mb-3 flex items-center justify-between">
+                        <h2 class="font-display text-lg font-bold text-ink">@_date.ToString("MMMM yyyy")</h2>
+                        <div class="flex gap-1">
+                            <button class="btn btn-secondary btn-sm" @onclick="() => MoveMonth(-1)">&lsaquo;</button>
+                            <button class="btn btn-secondary btn-sm" @onclick="() => MoveMonth(1)">&rsaquo;</button>
+                        </div>
+                    </div>
+                    @if (_month is not null)
+                    {
+                        <p class="mb-3 text-xs text-muted">@_month.Recorded recorded · @_month.Breaches with a breach@(_month.Missing(DateTime.UtcNow.Date) > 0 ? $" · {_month.Missing(DateTime.UtcNow.Date)} not recorded yet" : "")</p>
+                        <div class="max-h-[34rem] overflow-y-auto">
+                        <table class="w-full text-left text-sm">
+                            <tbody>
+                            @foreach (var d in _month.Days)
+                            {
+                                var (label, tone) = RestLook.Describe(d.Result.State);
+                                <tr class="cursor-pointer border-b border-line/50 hover:bg-accent-50 @(d.Date == _date ? "bg-accent-50" : "")" @onclick="() => GoTo(d.Date)">
+                                    <td class="py-1.5 pr-2 whitespace-nowrap">@d.Date.ToString("ddd d")</td>
+                                    <td class="py-1.5 pr-2 text-xs text-muted">@(d.Spans is null ? "" : RestRules.Hm(d.Result.RestMinutes) + " rest")</td>
+                                    <td class="py-1.5 text-right">@if (d.Result.State != RestDayState.NotRecorded) { <StatusChip Label="@label" Tone="@tone" /> }</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "crew")] private Guid? CrewQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "date")] private string? DateQuery { get; set; }
+
+    private Guid _companyId, _vesselId, _crewId;
+    private Actor _actor = Actor.System;
+    private CrewMember? _me;
+    private bool _loaded, _busy, _touched;
+    private DateTime _date = DateTime.SpecifyKind(DateTime.UtcNow.Date, DateTimeKind.Utc);
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<CrewMember> _crew = [];
+
+    private string _spans = "";                 // what is on the grid now
+    private string? _saved;                     // what is recorded for the day (null: nothing yet)
+    private string? _yesterday;
+    private string _reason = "";
+    private string? _error, _message, _statusError;
+    private string _port = "";
+    private RestHoursService.RestWindow? _window;
+    private List<RestDayResult> _preview = [];
+    private RestHoursService.RestMonth? _month;
+    private List<RestEntry> _history = [];
+    private RestHoursService.RestSuggestion? _suggestion;
+    private VesselDayStatus? _status;
+
+    private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
+    private bool CanEdit => NodeContext.Current.IsVessel && _me is not null && _me.VesselId == _vesselId && (_crewId == _me.Id || _me.IsMaster || _me.IsCrewAdmin);
+    private bool NeedsReason => _saved is not null && _spans != _saved;
+    private int WorkMinutes => RestSpans.Minutes(RestSpans.Normalize(SafeParse(_spans)));
+
+    private string ReadOnlyReason => !NodeContext.Current.IsVessel
+        ? "Hours are recorded onboard. This is the vessel's record, as it reached the office."
+        : _me is null ? "Only the seafarers of the vessel record hours." : "You can record your own hours. The Master or a crew admin can record them for someone else.";
+
+    private static List<WorkSpan> SafeParse(string text) { try { return RestSpans.Parse(text); } catch (FormatException) { return []; } }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0)
+            _vesselId = _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
+        if (DateTime.TryParse(DateQuery, out var asked) && asked.Date <= DateTime.UtcNow.Date.AddDays(1)) _date = DateTime.SpecifyKind(asked.Date, DateTimeKind.Utc);
+        await LoadVesselAsync(CrewQuery);
+        _loaded = true;
+    }
+
+    private async Task LoadVesselAsync(Guid? wanted = null)
+    {
+        _crew = _vesselId == Guid.Empty ? [] : await Svc.CrewAboardAsync(_companyId, _vesselId);
+        _crewId = wanted is { } w && _crew.Any(c => c.Id == w) ? w
+            : _me is not null && _crew.Any(c => c.Id == _me.Id) ? _me.Id
+            : _crew.FirstOrDefault()?.Id ?? Guid.Empty;
+        await LoadDayAsync();
+    }
+
+    private async Task LoadDayAsync()
+    {
+        _error = _message = _statusError = null;
+        _reason = "";
+        _month = null; _history = []; _preview = []; _suggestion = null; _status = null; _window = null; _saved = null; _yesterday = null; _spans = ""; _touched = false;
+        if (_crewId == Guid.Empty) return;
+
+        _window = await Svc.WindowAsync(_companyId, _vesselId, _crewId, _date);
+        _saved = _window.Days.FirstOrDefault(d => d.Date.Date == _date.Date) is { } today ? RestSpans.Format(today.Work) : null;
+        _yesterday = _window.Days.FirstOrDefault(d => d.Date.Date == _date.AddDays(-1).Date) is { } before ? RestSpans.Format(before.Work) : null;
+        _spans = _saved ?? "";
+        _history = await Svc.HistoryAsync(_companyId, _crewId, _date, _date);
+        _suggestion = await Svc.SuggestAsync(_companyId, _vesselId, _crewId, _date);
+        _status = await Svc.DayStatusAsync(_companyId, _vesselId, _date);
+        _month = await Svc.MonthAsync(_companyId, _vesselId, _crewId, _date.Year, _date.Month);
+        Refresh();
+    }
+
+    /// <summary>Checks the day as it is on the grid against the days around it.</summary>
+    private void Refresh() => _preview = _window is null ? [] : _window.Check(_date, _saved is not null || _touched ? _spans : null);
+
+    private async Task OnGridChanged(string spans)
+    {
+        _spans = spans;
+        _touched = true;
+        _error = _message = null;
+        Refresh();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Set(string spans) { _spans = spans; _touched = true; _message = null; _error = null; Refresh(); }
+    private void UseYesterday() => Set(_yesterday ?? "");
+    private void UseTable() => Set(_suggestion?.Spans ?? _spans);
+    private void ClearDay() => Set("");
+    private void Revert() { _spans = _saved ?? ""; _touched = false; _reason = ""; _error = null; Refresh(); }
+
+    private async Task SaveAsync()
+    {
+        _error = _message = null; _busy = true;
+        try
+        {
+            await Svc.RecordAsync(_companyId, _vesselId, _actor, _crewId, _date, _spans, _reason);
+            var wasNew = _saved is null;
+            await LoadDayAsync();
+            _message = wasNew ? "The day is recorded." : "The correction is recorded. The earlier version stays in the history.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task SetStatusAsync(VesselDayKind kind)
+    {
+        _statusError = null;
+        try
+        {
+            await Svc.SetStatusAsync(_companyId, _vesselId, _actor, _date, kind, _port);
+            _status = await Svc.DayStatusAsync(_companyId, _vesselId, _date);
+            _suggestion = await Svc.SuggestAsync(_companyId, _vesselId, _crewId, _date);
+            _month = await Svc.MonthAsync(_companyId, _vesselId, _crewId, _date.Year, _date.Month);
+        }
+        catch (InvalidOperationException ex) { _statusError = ex.Message; }
+    }
+
+    private string StatusText() => _status is null
+        ? "Not set for this day. The status of the day before is assumed."
+        : _status.Kind switch { VesselDayKind.InPort => $"In port{(_status.PortName.Length > 0 ? ": " + _status.PortName : "")}", VesselDayKind.Anchored => "At anchor", _ => "At sea" } + $" (set by {_status.SetByName})";
+
+    private async Task OnVesselChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _vesselId = id; await LoadVesselAsync(); } }
+    private async Task OnCrewChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _crewId = id; await LoadDayAsync(); } }
+    private async Task OnDateChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d) && d.Date <= DateTime.UtcNow.Date.AddDays(1)) await GoTo(DateTime.SpecifyKind(d.Date, DateTimeKind.Utc)); }
+    private Task MoveDay(int days) => GoTo(_date.AddDays(days));
+    private Task MoveMonth(int months) => GoTo(new DateTime(_date.Year, _date.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(months));
+
+    private async Task GoTo(DateTime date)
+    {
+        if (date.Date > DateTime.UtcNow.Date.AddDays(1)) return;
+        _date = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+        await LoadDayAsync();
+    }
+
+    private string SheetHref() => $"/rest/sheet?crew={_crewId}&month={_date:yyyy-MM}";
+}
