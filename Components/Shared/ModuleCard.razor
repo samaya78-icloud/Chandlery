@@ -1,0 +1,45 @@
+<section class="card flex flex-col overflow-hidden">
+    <header class="flex items-center justify-between gap-3 px-5 pt-4 pb-2">
+        <a href="@Module.Href" class="flex min-w-0 items-center gap-2.5 text-ink no-underline">
+            <span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background:@DotColour" aria-hidden="true"></span>
+            <h2 class="truncate font-display text-base font-bold">@Module.Title</h2>
+        </a>
+        <span class="chip chip-plain" data-tone="@StatusTone">@StatusText</span>
+    </header>
+
+    <ul class="divide-y divide-line/60 px-2 pb-2">
+        @foreach (var s in Module.Stats)
+        {
+            <li>
+                <a href="@s.Href" class="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm text-ink no-underline transition hover:bg-surface-2">
+                    <span class="min-w-0">
+                        <span class="block">@s.Label</span>
+                        @if (!string.IsNullOrWhiteSpace(s.Hint))
+                        {
+                            <span class="block truncate text-xs text-muted" title="@s.Hint">@s.Hint</span>
+                        }
+                    </span>
+                    @if (IsQuiet(s))
+                    {
+                        <span class="shrink-0 font-display text-lg font-bold text-muted">@s.Value</span>
+                    }
+                    else
+                    {
+                        <span class="chip chip-plain shrink-0 text-sm font-bold" data-tone="@s.Tone">@s.Value</span>
+                    }
+                </a>
+            </li>
+        }
+    </ul>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public ModuleSummary Module { get; set; } = default!;
+
+    private string StatusText => Module.Severity switch { 2 => "Needs attention", 1 => "Waiting", _ => "All clear" };
+    private string StatusTone => Module.Severity switch { 2 => "danger", 1 => "warning", _ => "success" };
+    private string DotColour => Module.Severity switch { 2 => "var(--tone-danger-fg)", 1 => "var(--tone-warning-fg)", _ => "var(--tone-success-fg)" };
+
+    /// <summary>Zeros, dashes and plain figures (spend, open counts) stay as quiet text; only warning, danger and info numbers get a coloured chip.</summary>
+    private static bool IsQuiet(ModuleStat s) => s.Value is "0" or "—" || s.Tone is "success" or "accent";
+}

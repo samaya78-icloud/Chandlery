@@ -1,0 +1,25 @@
+@if (Items.Count == 0)
+{
+    <div class="mb-6 flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-sm">
+        <span class="chip chip-plain" data-tone="success">All clear</span>
+        <span class="text-muted">Nothing is overdue or waiting on you right now.</span>
+    </div>
+}
+else
+{
+    <div class="mb-6 rounded-xl border border-line bg-surface px-4 py-3" role="region" aria-label="Needs attention">
+        <p class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Needs attention</p>
+        <div class="flex flex-wrap gap-2">
+            @foreach (var i in Items)
+            {
+                <a href="@i.Href" class="chip chip-plain no-underline transition hover:-translate-y-0.5 hover:shadow-pop" data-tone="@(i.Urgent ? "danger" : "warning")">
+                    <strong>@i.Count.ToString("N0")</strong> @i.Text
+                </a>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AttentionItem> Items { get; set; } = [];
+}

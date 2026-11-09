@@ -22,18 +22,7 @@ else
         </div>
     }
 
-    <WorklistTiles />
-    <PmsTiles />
-    <TankTiles />
-    <RiskTiles />
-    <RestTiles />
-
-    <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard Label="Open requisitions" Value="@_data.OpenRequisitions.ToString("N0")" Hint="Not yet fully ordered" Href="/company/requisitions" />
-        <StatCard Label="RFQs awaiting quotes" Value="@_data.RfqsAwaitingQuotes.ToString("N0")" Hint="@($"{_data.QuotesToEvaluate} with quotes to compare")" Href="/vessel/rfqs" Tone="warning" />
-        <StatCard Label="Orders awaiting approval" Value="@((_data.AwaitingMaster + _data.AwaitingOffice).ToString("N0"))" Hint="@($"{_data.AwaitingMaster} with the Master · {_data.AwaitingOffice} with the office")" Href="/vessel/orders" Tone="info" />
-        <StatCard Label="Deliveries expected" Value="@_data.Deliveries.Count.ToString("N0")" Hint="Approved, not yet fully received" Href="/vessel/port-calls" Tone="success" />
-    </div>
+    <ModuleOverview Procurement="DashboardModuleService.Procurement(_data)" />
 
     <div class="grid gap-6 lg:grid-cols-2">
         @if (_data.NeedsMyApproval.Count > 0)

@@ -23,29 +23,7 @@ else if (_company is { } c)
         </Actions>
     </PageHeader>
 
-    <WorklistTiles />
-    <PmsTiles />
-    <TankTiles />
-    <RiskTiles />
-    <RestFleetTiles />
-
-    <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard Label="Open requisitions" Value="@c.OpenRequisitions.ToString("N0")" Hint="@($"{c.RequisitionsWithoutRfq.Count} not yet sent out")" Href="/company/requisitions?f.status=Open">
-            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="m9 13 2 2 4-4"/></svg></Icon>
-        </StatCard>
-        <StatCard Label="RFQs awaiting quotes" Value="@c.RfqsAwaitingQuotes.ToString("N0")" Hint="@($"{c.RfqsWithQuotes} with quotes to compare")" Tone="warning" Href="/company/rfqs?f.status=Sent">
-            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M9 16h6M9 8h1M7 3h10a2 2 0 0 1 2 2v14l-3-2-2 2-2-2-2 2-2-2-3 2V5a2 2 0 0 1 2-2Z"/></svg></Icon>
-        </StatCard>
-        <StatCard Label="Waiting for my approval" Value="@c.PendingMyApproval.ToString("N0")" Hint="Purchase orders and invoices" Tone="danger" Href="/company/approvals">
-            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></Icon>
-        </StatCard>
-        <StatCard Label="Awaiting delivery" Value="@c.AwaitingDelivery.ToString("N0")" Hint="Approved purchase orders" Tone="info" Href="/company/purchase-orders?f.status=Approved">
-            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg></Icon>
-        </StatCard>
-        <StatCard Label="Ordered, last 30 days" Value="@(c.Spend30Days == 0 ? "—" : Money.Format(c.Spend30Days, c.SpendCurrency))" Hint="Approved purchase orders" Tone="success" Href="/company/purchase-orders">
-            <Icon><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8M14 7h7v7"/></svg></Icon>
-        </StatCard>
-    </div>
+    <ModuleOverview Procurement="DashboardModuleService.Procurement(c)" />
 
     <div class="grid gap-6 xl:grid-cols-3">
         <div class="space-y-6 xl:col-span-2">

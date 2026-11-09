@@ -31,6 +31,7 @@ builder.Services.AddScoped<ApprovalService>();
 builder.Services.AddScoped<ToastService>();
 builder.Services.AddScoped<HubService>();
 builder.Services.AddScoped<DashboardService>();
+builder.Services.AddScoped<DashboardModuleService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<DeliveryService>();
 builder.Services.AddScoped<PoDocumentService>();

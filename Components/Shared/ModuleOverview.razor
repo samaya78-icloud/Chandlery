@@ -1,0 +1,32 @@
+@inject DashboardModuleService Modules
+@inject AuthenticationStateProvider Auth
+
+@if (_all is not null)
+{
+    <AttentionStrip Items="_attention" />
+
+    <div class="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        @foreach (var m in _all)
+        {
+            <ModuleCard Module="m" />
+        }
+    </div>
+}
+
+@code {
+    /// <summary>The purchasing card, built by the page from the numbers it already has.</summary>
+    [Parameter, EditorRequired] public ModuleSummary Procurement { get; set; } = default!;
+
+    private List<ModuleSummary>? _all;
+    private List<AttentionItem> _attention = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        var others = Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
+            ? await Modules.GetAsync(companyId, user, NodeContext.Current.IsVessel)
+            : [];
+        _all = [Procurement, .. others];
+        _attention = DashboardModuleService.Attention(_all);
+    }
+}
