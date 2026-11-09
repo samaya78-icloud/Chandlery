@@ -1,0 +1,99 @@
+@page "/rest/fleet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject RestFleetService Fleet
+
+<PageTitle>Fleet hours of rest · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Hours of rest across the fleet"
+            Subtitle="What each vessel recorded, signed and explained this month, worked out from the records the vessels send. The office reads this; it never edits a vessel's hours.">
+    <Actions>
+        <a href="/rest/reports?month=@_month.ToString("yyyy-MM")" class="btn btn-secondary">Reports</a>
+    </Actions>
+</PageHeader>
+
+<div class="card mb-5 flex flex-wrap items-end gap-1 p-4 text-sm">
+    <button class="btn btn-secondary" @onclick="() => MoveMonth(-1)">&lsaquo;</button>
+    <label>Month
+        <input type="month" class="input mt-1 w-44" value="@_month.ToString("yyyy-MM")" @onchange="OnMonthChanged" />
+    </label>
+    <button class="btn btn-secondary" @onclick="() => MoveMonth(1)">&rsaquo;</button>
+</div>
+
+@if (_vessels is null)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="No vessel records hours of rest" Message="Switch the Rest Hours module on for a vessel and its hours will appear here." />
+}
+else
+{
+    <div class="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatCard Label="Breaches not dealt with" Value="@_vessels.Sum(v => v.Unresolved).ToString("N0")" Hint="@($"{_vessels.Sum(v => v.Breaches)} in all")" Tone="@(_vessels.Sum(v => v.Unresolved) > 0 ? "danger" : "success")" />
+        <StatCard Label="Compensatory rest owed" Value="@_vessels.Sum(v => v.CompensatoryOutstanding).ToString("N0")" Hint="Exceptions not yet confirmed" Tone="@(_vessels.Sum(v => v.CompensatoryOutstanding) > 0 ? "warning" : "success")" />
+        <StatCard Label="Periods to sign" Value="@_vessels.Sum(v => v.ToSign).ToString("N0")" Hint="Over, and not fully signed" Tone="@(_vessels.Sum(v => v.ToSign) > 0 ? "warning" : "success")" />
+        <StatCard Label="Signatures out of date" Value="@_vessels.Sum(v => v.OutOfDate).ToString("N0")" Hint="A day was changed after signing" Tone="@(_vessels.Sum(v => v.OutOfDate) > 0 ? "danger" : "success")" />
+        <StatCard Label="Days not recorded" Value="@_vessels.Sum(v => v.Missing).ToString("N0")" Tone="@(_vessels.Sum(v => v.Missing) > 0 ? "warning" : "success")" />
+    </div>
+
+    <div class="card overflow-x-auto p-0">
+        <table class="w-full text-sm">
+            <thead class="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
+                <tr>
+                    <th class="px-3 py-2">Vessel</th>
+                    <th class="px-3 py-2 text-right">Seafarers</th>
+                    <th class="px-3 py-2 text-right">Recorded</th>
+                    <th class="px-3 py-2 text-right">Breaches</th>
+                    <th class="px-3 py-2 text-right">Not dealt with</th>
+                    <th class="px-3 py-2 text-right">Rest owed</th>
+                    <th class="px-3 py-2 text-right">To sign</th>
+                    <th class="px-3 py-2 text-right">Out of date</th>
+                    <th class="px-3 py-2">Standing</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var v in _vessels)
+                {
+                    <tr class="border-t border-line">
+                        <td class="px-3 py-2 font-medium"><a class="link" href="/rest/fleet/vessel?vessel=@v.VesselId&month=@_month.ToString("yyyy-MM")">@v.Name</a></td>
+                        <td class="px-3 py-2 text-right">@v.Crew.Count</td>
+                        <td class="px-3 py-2 text-right">@v.RecordedPercent%</td>
+                        <td class="px-3 py-2 text-right">@v.Breaches</td>
+                        <td class="px-3 py-2 text-right @(v.Unresolved > 0 ? "font-semibold text-rose-700" : "")">@v.Unresolved</td>
+                        <td class="px-3 py-2 text-right">@v.CompensatoryOutstanding</td>
+                        <td class="px-3 py-2 text-right">@v.ToSign</td>
+                        <td class="px-3 py-2 text-right @(v.OutOfDate > 0 ? "font-semibold text-rose-700" : "")">@v.OutOfDate</td>
+                        <td class="px-3 py-2"><StatusChip Label="@Standing(v)" Tone="@v.Tone" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
+
+    private Guid _companyId;
+    private DateTime _month = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    private List<RestVesselMonth>? _vessels;
+
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _vessels = await Fleet.FleetAsync(_companyId, _month.Year, _month.Month);
+
+    private async Task OnMonthChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString() + "-01", out var d)) { _month = new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc); await LoadAsync(); } }
+    private async Task MoveMonth(int months) { _month = _month.AddMonths(months); await LoadAsync(); }
+
+    private static string Standing(RestVesselMonth v) => v.Tone switch { "danger" => "Needs action", "warning" => "Catching up", _ => "In order" };
+}

@@ -9,7 +9,19 @@
 <PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Record of hours of work or rest"
             Subtitle="One seafarer, one month, hour by hour. Dark is work, light is rest, hatched is a day not recorded. Click a date to open that day.">
     <Actions>
-        <a href="@DayHref(DateTime.UtcNow.Date)" class="btn btn-secondary">Back to the day</a>
+        @if (_sheet is not null)
+        {
+            <button onclick="window.print()" class="btn btn-secondary">Print</button>
+            <a href="/rest/sheet/@_vesselId/@_crewId/@_month.ToString("yyyy-MM")/pdf" download class="btn btn-secondary">Download PDF</a>
+        }
+        @if (NodeContext.Current.IsVessel)
+        {
+            <a href="@DayHref(DateTime.UtcNow.Date)" class="btn btn-secondary">Back to the day</a>
+        }
+        else
+        {
+            <a href="/rest/fleet/vessel?vessel=@_vesselId&month=@_month.ToString("yyyy-MM")" class="btn btn-secondary">Back to the vessel</a>
+        }
     </Actions>
 </PageHeader>
 
@@ -23,7 +35,7 @@ else if (_vessels.Count == 0)
 }
 else
 {
-    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm print:hidden">
         @if (_vessels.Count > 1)
         {
             <label>Vessel
@@ -72,6 +84,7 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     [SupplyParameterFromQuery(Name = "crew")] private Guid? CrewQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
     [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
 
     private Guid _companyId, _vesselId, _crewId;
@@ -91,7 +104,7 @@ else
         _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
         _me = await Svc.CrewOfUserAsync(_companyId, Actor.From(state.User).UserId);
         _vessels = await Svc.EnabledVesselsAsync(_companyId);
-        if (_vessels.Count > 0) _vesselId = _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
+        if (_vessels.Count > 0) _vesselId = VesselQuery is { } wantedVessel && _vessels.Any(v => v.Id == wantedVessel) ? wantedVessel : _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
         if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         await LoadVesselAsync(CrewQuery);
         _loaded = true;

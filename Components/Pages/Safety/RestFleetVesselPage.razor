@@ -1,0 +1,175 @@
+@page "/rest/fleet/vessel"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject RestFleetService Fleet
+@inject WorkArrangementService Table
+
+<PageTitle>@(_vessel?.Name ?? "Vessel") hours of rest · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="@(_vessel?.Name ?? "Hours of rest")" Parent="@(new Crumb("Hours of rest", $"/rest/fleet?month={_month:yyyy-MM}"))"
+            Subtitle="One vessel, one month: each seafarer's records, breaches and signatures. Open a name for the trend, or the sheet for the hour-by-hour record.">
+    <Actions>
+        <a href="/rest/table?vessel=@_vesselId" class="btn btn-secondary">Working table</a>
+        <a href="/rest/reports?month=@_month.ToString("yyyy-MM")" class="btn btn-secondary">Reports</a>
+    </Actions>
+</PageHeader>
+
+<div class="card mb-5 flex flex-wrap items-end gap-1 p-4 text-sm">
+    <button class="btn btn-secondary" @onclick="() => MoveMonth(-1)">&lsaquo;</button>
+    <label>Month
+        <input type="month" class="input mt-1 w-44" value="@_month.ToString("yyyy-MM")" @onchange="OnMonthChanged" />
+    </label>
+    <button class="btn btn-secondary" @onclick="() => MoveMonth(1)">&rsaquo;</button>
+</div>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessel is null)
+{
+    <EmptyState Title="Vessel not found" Message="Hours of rest are not switched on for this vessel, or it belongs to another company." />
+}
+else
+{
+    @if (_table is not null)
+    {
+        <div class="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-line px-4 py-3 text-sm">
+            <span class="font-medium text-ink">Working table version @_table.Table.VersionNo</span>
+            @if (_table.Signed) { <StatusChip Label="Signed by the Master" Tone="success" /> } else { <StatusChip Label="Not signed by the Master" Tone="warning" /> }
+            @if (_table.Problems > 0) { <StatusChip Label="@($"{_table.Problems} row problem(s)")" Tone="danger" /> }
+        </div>
+    }
+    else
+    {
+        <p class="mb-5 rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 dark:bg-amber-500/10">This vessel has no working-arrangements table yet. <a class="link" href="/rest/table/edit?vessel=@_vesselId">Write one</a>.</p>
+    }
+
+    <div class="card mb-5 overflow-x-auto p-0">
+        <table class="w-full text-sm">
+            <thead class="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
+                <tr>
+                    <th class="px-3 py-2">Seafarer</th>
+                    <th class="px-3 py-2 text-right">Recorded</th>
+                    <th class="px-3 py-2 text-right">Breaches</th>
+                    <th class="px-3 py-2 text-right">Not dealt with</th>
+                    <th class="px-3 py-2 text-right">Least rest 24 h</th>
+                    <th class="px-3 py-2 text-right">Least rest 7 d</th>
+                    <th class="px-3 py-2 text-right">To sign</th>
+                    <th class="px-3 py-2 text-right">Out of date</th>
+                    <th class="px-3 py-2"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var c in _vessel.Crew)
+                {
+                    <tr class="border-t border-line">
+                        <td class="px-3 py-2"><a class="link font-medium" href="/rest/fleet/seafarer?vessel=@_vesselId&crew=@c.CrewId">@c.Name</a><span class="block text-xs text-muted">@c.Rank</span></td>
+                        <td class="px-3 py-2 text-right">@(c.NeverRecorded ? "No records yet" : $"{c.Elapsed - c.Missing} of {c.Elapsed}{(c.Missing > 0 ? $" ({c.Missing} missing)" : "")}")</td>
+                        <td class="px-3 py-2 text-right">@c.Breaches.Count</td>
+                        <td class="px-3 py-2 text-right @(c.Unresolved > 0 ? "font-semibold text-rose-700" : "")">@c.Unresolved</td>
+                        <td class="px-3 py-2 text-right">@(c.Worst24 is { } a ? RestRules.Hm(a) : "-")</td>
+                        <td class="px-3 py-2 text-right">@(c.Worst7 is { } b ? RestRules.Hm(b) : "-")</td>
+                        <td class="px-3 py-2 text-right">@c.ToSign</td>
+                        <td class="px-3 py-2 text-right @(c.OutOfDate > 0 ? "font-semibold text-rose-700" : "")">@c.OutOfDate</td>
+                        <td class="whitespace-nowrap px-3 py-2 text-right">
+                            <a class="link" href="/rest/sheet?vessel=@_vesselId&crew=@c.CrewId&month=@_month.ToString("yyyy-MM")">Sheet</a> ·
+                            <a class="link" href="/rest/sheet/@_vesselId/@c.CrewId/@_month.ToString("yyyy-MM")/pdf" download>PDF</a>
+                        </td>
+                    </tr>
+                }
+                @if (_vessel.Crew.Count == 0)
+                {
+                    <tr><td colspan="9" class="px-3 py-6 text-center text-muted">No seafarer is signed on to this vessel.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (_vessel.Crew.SelectMany(c => c.Breaches).Any())
+    {
+        <h2 class="mb-2 font-display text-lg font-bold text-ink">Breaches</h2>
+        <div class="card mb-5 divide-y divide-line p-0">
+            @foreach (var c in _vessel.Crew)
+            {
+                @foreach (var b in c.Breaches)
+                {
+                    <div class="flex flex-wrap items-start justify-between gap-3 px-4 py-3 text-sm">
+                        <div>
+                            <p class="font-medium text-ink">@c.Name, @b.Finding.Date.ToString("d MMM")</p>
+                            <p class="text-muted">@b.Finding.Message</p>
+                            @if (b.Explanation is { } e) { <p class="mt-1 text-ink">“@e.Text” <span class="text-xs text-muted">@e.ByName</span></p> }
+                            @if (b.Decision is { } d && !string.IsNullOrWhiteSpace(d.Text)) { <p class="mt-1 text-ink">Master: “@d.Text”</p> }
+                        </div>
+                        <div class="text-right">
+                            <StatusChip Label="@Words(b.Status)" Tone="@Tone(b.Status)" />
+                            @if (b.CompensatoryOutstanding) { <p class="mt-1 text-xs text-amber-700">Rest owed: @RestRules.Hm(b.OwedMinutes)</p> }
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    }
+
+    @if (_vessel.Crew.Any(c => c.Unsigned.Any()))
+    {
+        <h2 class="mb-2 font-display text-lg font-bold text-ink">Periods not fully signed</h2>
+        <div class="card divide-y divide-line p-0">
+            @foreach (var c in _vessel.Crew)
+            {
+                @foreach (var p in c.Unsigned)
+                {
+                    <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+                        <span><span class="font-medium text-ink">@c.Name</span> · @p.From.ToString("d MMM") – @p.To.ToString("d MMM")</span>
+                        <span class="flex gap-2">
+                            <StatusChip Label="@("Seafarer: " + SignWords(p.Seafarer))" Tone="@SignTone(p.Seafarer)" />
+                            <StatusChip Label="@("Master: " + SignWords(p.Master))" Tone="@SignTone(p.Master)" />
+                        </span>
+                    </div>
+                }
+            }
+        </div>
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private bool _loaded;
+    private DateTime _month = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    private RestVesselMonth? _vessel;
+    private ArrangementDocument? _table;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _vesselId = VesselQuery ?? Guid.Empty;
+        if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _vessel = (await Fleet.FleetAsync(_companyId, _month.Year, _month.Month, _vesselId)).FirstOrDefault();
+        _table = _vessel is null ? null : await Table.DocumentAsync(_companyId, _vesselId);
+    }
+
+    private async Task OnMonthChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString() + "-01", out var d)) { _month = new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc); await LoadAsync(); } }
+    private async Task MoveMonth(int months) { _month = _month.AddMonths(months); await LoadAsync(); }
+
+    private static string Words(BreachStatus s) => s switch
+    {
+        BreachStatus.Unexplained => "Not explained", BreachStatus.Explained => "Waiting for the Master", BreachStatus.Stale => "Changed since",
+        BreachStatus.Acknowledged => "Acknowledged", _ => "Exception",
+    };
+
+    private static string Tone(BreachStatus s) => s switch { BreachStatus.Acknowledged or BreachStatus.Excepted => "success", BreachStatus.Unexplained or BreachStatus.Stale => "danger", _ => "warning" };
+
+    private static string SignWords(SignView? s) => s is null ? "not signed" : s.Current ? "signed" : "out of date";
+    private static string SignTone(SignView? s) => s is null ? "neutral" : s.Current ? "success" : "warning";
+}

@@ -167,7 +167,7 @@ public class RestReviewService(IDbContextFactory<ChandleryDbContext> factory, Re
     // ---- loading ----
 
     /// <summary>The records of the seafarers of a vessel over a span of dates (with the week before it, which the 7-day rule needs), as books.</summary>
-    private async Task<List<CrewBook>> BooksAsync(ChandleryDbContext db, Guid companyId, Guid vesselId, DateTime from, DateTime to, Guid? onlyCrew = null)
+    internal static async Task<List<CrewBook>> BooksAsync(ChandleryDbContext db, Guid companyId, Guid vesselId, DateTime from, DateTime to, Guid? onlyCrew = null)
     {
         var start = DateTime.SpecifyKind(from.Date.AddDays(-8), DateTimeKind.Utc);
         var end = DateTime.SpecifyKind(to.Date, DateTimeKind.Utc);
@@ -203,7 +203,7 @@ public class RestReviewService(IDbContextFactory<ChandleryDbContext> factory, Re
         return books.OrderBy(b => b.Name).ToList();
     }
 
-    private static List<RestDayResult> DaysOf(CrewBook book, RestLimits limits, DateTime from, DateTime to) => RestRules.Evaluate(limits, book.Inputs, from, to, book.IsMinor);
+    internal static List<RestDayResult> DaysOf(CrewBook book, RestLimits limits, DateTime from, DateTime to) => RestRules.Evaluate(limits, book.Inputs, from, to, book.IsMinor);
 
     private async Task<(ChandleryDbContext Db, CrewMember Me)> ActingAsync(Guid companyId, Guid vesselId, Actor actor)
     {

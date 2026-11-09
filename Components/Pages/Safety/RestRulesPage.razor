@@ -1,0 +1,176 @@
+@page "/rest/rules"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@inject RestHoursService Svc
+
+<PageTitle>Hours of rest rules · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Hours of rest rules" Parent="@(new Crumb("Hours of rest", "/rest/fleet"))"
+            Subtitle="The limits a seafarer's hours are checked against. The defaults are the ILO Convention 180 and STCW values; a flag state or collective agreement may differ. A rule set for one vessel overrides the company's default for it.">
+    <Actions>
+        <button class="btn btn-primary" @onclick="NewSet">New rule set</button>
+    </Actions>
+</PageHeader>
+
+@if (_sets is null)
+{
+    <Skeleton Rows="3" />
+}
+else
+{
+    <div class="mb-5 grid gap-3">
+        @foreach (var s in _sets)
+        {
+            <div class="card flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
+                <div>
+                    <p class="font-medium text-ink">@s.Name @if (s.IsDefault) { <StatusChip Label="Company default" Tone="info" /> } @if (!s.IsActive) { <StatusChip Label="Switched off" Tone="neutral" /> }</p>
+                    <p class="text-muted">
+                        @(string.IsNullOrWhiteSpace(s.FlagState) ? "No flag state" : s.FlagState) · @(s.VesselId is { } v ? $"Vessel: {VesselName(v)}" : "All vessels") ·
+                        rest @RestRules.Hm(s.MinRest24Minutes) in 24 h, @RestRules.Hm(s.MinRest7Minutes) in 7 days · signed every @s.SignIntervalDays day(s)
+                    </p>
+                </div>
+                <button class="btn btn-secondary" @onclick="() => Edit(s)">Edit</button>
+            </div>
+        }
+    </div>
+
+    @if (_form is { } f)
+    {
+        <div class="card p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-bold text-ink">@(f.Id == Guid.Empty ? "New rule set" : "Edit rule set")</h2>
+            @if (_error is not null) { <p class="mb-3 rounded-xl border border-rose-300/50 bg-rose-50/60 px-4 py-3 text-rose-700 dark:bg-rose-500/10">@_error</p> }
+            <div class="grid gap-4 sm:grid-cols-3">
+                <label>Name<input class="input mt-1 w-full" @bind="f.Name" maxlength="120" /></label>
+                <label>Flag state<input class="input mt-1 w-full" @bind="f.FlagState" maxlength="120" /></label>
+                <label>Applies to
+                    <select class="select mt-1 w-full" @bind="f.VesselId">
+                        <option value="">All vessels (company default)</option>
+                        @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+                <label>Least rest in 24 hours (h)<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.MinRest24" /></label>
+                <label>Least rest in 7 days (h)<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.MinRest7" /></label>
+                <label>Rest in at most (periods)<input type="number" class="input mt-1 w-full" @bind="f.MaxPeriods" /></label>
+                <label>One period of at least (h)<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.MinLongest" /></label>
+                <label>No more than (h) between rests<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.MaxInterval" /></label>
+                <label>Signed every (days)<input type="number" class="input mt-1 w-full" @bind="f.SignIntervalDays" /></label>
+                <label>Records kept (months)<input type="number" class="input mt-1 w-full" @bind="f.RetentionMonths" /></label>
+            </div>
+            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                <div class="rounded-xl border border-line p-3">
+                    <label class="flex items-center gap-2"><input type="checkbox" @bind="f.ReductionAllowed" /> The shorter rest is allowed (STCW A-VIII/1.4)</label>
+                    <p class="mt-1 text-xs text-muted">Only where the flag state allows it: the 10 hours may fall to a shorter consecutive rest for a limited number of days.</p>
+                    @if (f.ReductionAllowed)
+                    {
+                        <div class="mt-2 grid gap-3 sm:grid-cols-3">
+                            <label>Consecutive rest (h)<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.ReductionConsecutive" /></label>
+                            <label>Most days in 7<input type="number" class="input mt-1 w-full" @bind="f.ReductionDays" /></label>
+                            <label>Rest in 7 days then (h)<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.Reduction7" /></label>
+                        </div>
+                    }
+                </div>
+                <div class="rounded-xl border border-line p-3">
+                    <label class="flex items-center gap-2"><input type="checkbox" @bind="f.MinorNight" /> No night work under 18</label>
+                    @if (f.MinorNight)
+                    {
+                        <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                            <label>Night starts (hour of day)<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.NightStart" /></label>
+                            <label>Night lasts (h)<input type="number" step="0.25" class="input mt-1 w-full" @bind="f.NightLength" /></label>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="mt-4 flex flex-wrap items-center gap-5">
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="f.IsDefault" disabled="@(f.VesselId is not null)" /> Company default</label>
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="f.IsActive" /> In use</label>
+                <span class="grow"></span>
+                <button class="btn btn-secondary" @onclick="() => _form = null">Cancel</button>
+                <button class="btn btn-primary" disabled="@_busy" @onclick="SaveAsync">Save</button>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed class Form
+    {
+        public Guid Id { get; set; }
+        public Guid? VesselId { get; set; }
+        public string Name { get; set; } = "";
+        public string FlagState { get; set; } = "";
+        public double MinRest24 { get; set; } = 10;
+        public double MinRest7 { get; set; } = 77;
+        public double MinLongest { get; set; } = 6;
+        public double MaxInterval { get; set; } = 14;
+        public int MaxPeriods { get; set; } = 2;
+        public int SignIntervalDays { get; set; } = 7;
+        public int RetentionMonths { get; set; } = 36;
+        public bool ReductionAllowed { get; set; }
+        public double ReductionConsecutive { get; set; } = 6;
+        public double Reduction7 { get; set; } = 70;
+        public int ReductionDays { get; set; } = 2;
+        public bool MinorNight { get; set; } = true;
+        public double NightStart { get; set; } = 21;
+        public double NightLength { get; set; } = 9;
+        public bool IsDefault { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+
+    private Guid _companyId;
+    private bool _busy;
+    private string? _error;
+    private List<RestRuleSet>? _sets;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private Form? _form;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _sets = await Svc.ListRuleSetsAsync(_companyId);
+
+    private string VesselName(Guid id) => _vessels.FirstOrDefault(v => v.Id == id).Name ?? "(not on this module)";
+
+    private static int Min(double hours) => (int)Math.Round(hours * 60);
+    private static double Hours(int minutes) => minutes / 60.0;
+
+    private void NewSet() { _error = null; _form = new Form(); }
+
+    private void Edit(RestRuleSet s)
+    {
+        _error = null;
+        _form = new Form
+        {
+            Id = s.Id, VesselId = s.VesselId, Name = s.Name, FlagState = s.FlagState, MinRest24 = Hours(s.MinRest24Minutes), MinRest7 = Hours(s.MinRest7Minutes), MaxPeriods = s.MaxRestPeriods,
+            MinLongest = Hours(s.MinLongestPeriodMinutes), MaxInterval = Hours(s.MaxIntervalMinutes), SignIntervalDays = s.SignIntervalDays, RetentionMonths = s.RetentionMonths,
+            ReductionAllowed = s.ReductionAllowed, ReductionConsecutive = Hours(s.ReductionMinConsecutiveMinutes), ReductionDays = s.ReductionMaxDays, Reduction7 = Hours(s.ReductionMin7Minutes),
+            MinorNight = s.MinorNightProtection, NightStart = Hours(s.MinorNightStartMinute), NightLength = Hours(s.MinorNightLengthMinutes), IsDefault = s.IsDefault, IsActive = s.IsActive,
+        };
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_form is not { } f) return;
+        _error = null; _busy = true;
+        try
+        {
+            await Svc.SaveRuleSetAsync(_companyId, new RestRuleSet
+            {
+                Id = f.Id, VesselId = f.VesselId, Name = f.Name, FlagState = f.FlagState, MinRest24Minutes = Min(f.MinRest24), MinRest7Minutes = Min(f.MinRest7), MaxRestPeriods = f.MaxPeriods,
+                MinLongestPeriodMinutes = Min(f.MinLongest), MaxIntervalMinutes = Min(f.MaxInterval), SignIntervalDays = f.SignIntervalDays, RetentionMonths = f.RetentionMonths,
+                ReductionAllowed = f.ReductionAllowed, ReductionMinConsecutiveMinutes = Min(f.ReductionConsecutive), ReductionMaxDays = f.ReductionDays, ReductionMin7Minutes = Min(f.Reduction7),
+                MinorNightProtection = f.MinorNight, MinorNightStartMinute = Min(f.NightStart), MinorNightLengthMinutes = Min(f.NightLength), IsDefault = f.IsDefault, IsActive = f.IsActive,
+            });
+            _form = null;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

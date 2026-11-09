@@ -1,0 +1,81 @@
+@page "/rest/fleet/seafarer"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject RestFleetService Fleet
+
+<PageTitle>@(_name.Length > 0 ? _name : "Seafarer") hours of rest · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="@(_name.Length > 0 ? _name : "Hours of rest")" Parent="@(new Crumb("Vessel", $"/rest/fleet/vessel?vessel={_vesselId}"))"
+            Subtitle="The last six months, to see whether the hours are getting better or worse. Repeated breaches are the sign that the working schedule, not the person, needs looking at." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_trend.Count == 0)
+{
+    <EmptyState Title="Nothing recorded" Message="No hours of rest are held for this seafarer on this vessel." />
+}
+else
+{
+    <p class="mb-3 text-sm text-muted">@_rank · @_trend[0].Vessel</p>
+    <div class="card overflow-x-auto p-0">
+        <table class="w-full text-sm">
+            <thead class="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
+                <tr>
+                    <th class="px-3 py-2">Month</th>
+                    <th class="px-3 py-2 text-right">Recorded</th>
+                    <th class="px-3 py-2">Breaches</th>
+                    <th class="px-3 py-2 text-right">Not dealt with</th>
+                    <th class="px-3 py-2 text-right">Least rest 24 h</th>
+                    <th class="px-3 py-2 text-right">Least rest 7 d</th>
+                    <th class="px-3 py-2 text-right">Signed</th>
+                    <th class="px-3 py-2"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var m in _trend)
+                {
+                    var ended = m.Periods.Count(p => p.Ended && p.Recorded > 0);
+                    <tr class="border-t border-line">
+                        <td class="px-3 py-2 font-medium">@m.First.ToString("MMM yyyy")</td>
+                        <td class="px-3 py-2 text-right">@(m.Elapsed - m.Missing) of @m.Elapsed</td>
+                        <td class="px-3 py-2">
+                            <span class="inline-block h-2 rounded bg-rose-500/80 align-middle" style="width:@(Math.Min(m.Breaches.Count, 12) * 8)px"></span>
+                            <span class="ml-1">@m.Breaches.Count</span>
+                        </td>
+                        <td class="px-3 py-2 text-right @(m.Unresolved > 0 ? "font-semibold text-rose-700" : "")">@m.Unresolved</td>
+                        <td class="px-3 py-2 text-right">@(m.Worst24 is { } a ? RestRules.Hm(a) : "-")</td>
+                        <td class="px-3 py-2 text-right">@(m.Worst7 is { } b ? RestRules.Hm(b) : "-")</td>
+                        <td class="px-3 py-2 text-right">@m.Periods.Count(p => p.Complete) of @ended</td>
+                        <td class="whitespace-nowrap px-3 py-2 text-right">
+                            <a class="link" href="/rest/sheet?vessel=@_vesselId&crew=@_crewId&month=@m.First.ToString("yyyy-MM")">Sheet</a> ·
+                            <a class="link" href="/rest/sheet/@_vesselId/@_crewId/@m.First.ToString("yyyy-MM")/pdf" download>PDF</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "crew")] private Guid? CrewQuery { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _vesselId, _crewId;
+    private bool _loaded;
+    private string _name = "", _rank = "";
+    private List<RestCrewMonth> _trend = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        (_vesselId, _crewId) = (VesselQuery ?? Guid.Empty, CrewQuery ?? Guid.Empty);
+        _trend = await Fleet.TrendAsync(companyId, _vesselId, _crewId);
+        if (_trend.Count > 0) (_name, _rank) = (_trend[^1].Name, _trend[^1].Rank);
+        _loaded = true;
+    }
+}

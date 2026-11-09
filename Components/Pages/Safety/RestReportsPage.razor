@@ -1,0 +1,50 @@
+@page "/rest/reports"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+
+<PageTitle>Hours of rest reports · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Hours of rest reports" Parent="@(new Crumb("Hours of rest", $"/rest/fleet?month={_month:yyyy-MM}"))"
+            Subtitle="Spreadsheet files for one month across the fleet, for audits and for the company's own follow-up. A seafarer's record for printing is on the vessel page (PDF per seafarer and month)." />
+
+<div class="card mb-5 flex flex-wrap items-end gap-1 p-4 text-sm">
+    <button class="btn btn-secondary" @onclick="() => _month = _month.AddMonths(-1)">&lsaquo;</button>
+    <label>Month
+        <input type="month" class="input mt-1 w-44" value="@_month.ToString("yyyy-MM")" @onchange="OnMonthChanged" />
+    </label>
+    <button class="btn btn-secondary" @onclick="() => _month = _month.AddMonths(1)">&rsaquo;</button>
+</div>
+
+<div class="grid gap-4 sm:grid-cols-2">
+    @foreach (var (kind, title, text) in Reports)
+    {
+        <div class="card flex items-start justify-between gap-4 p-5">
+            <div>
+                <h2 class="font-display text-base font-bold text-ink">@title</h2>
+                <p class="mt-1 text-sm text-muted">@text</p>
+            </div>
+            <a class="btn btn-secondary shrink-0" href="/rest/reports/@(kind).csv?month=@_month.ToString("yyyy-MM")" download>CSV</a>
+        </div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
+
+    private DateTime _month = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private static readonly (string Kind, string Title, string Text)[] Reports =
+    [
+        ("fleet", "Fleet compliance", "One row per vessel: records, breaches, periods to sign, signatures out of date."),
+        ("breaches", "Breaches", "Every breach with the explanation, the Master's decision, any exception and the compensatory rest owed."),
+        ("unsigned", "Unsigned periods", "Periods that are over but not fully signed, or whose signature no longer matches the days."),
+        ("daily", "Every day", "One row per seafarer and date: the work periods, hours of work and rest, the least rest found and the result."),
+    ];
+
+    protected override void OnInitialized()
+    {
+        if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    }
+
+    private void OnMonthChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString() + "-01", out var d)) _month = new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc); }
+}

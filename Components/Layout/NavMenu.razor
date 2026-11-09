@@ -85,7 +85,9 @@
                     _adminItems.Add(new NavItem("/company/pms-library", "Maintenance library", PmsIcon));
                 }
             }
-            if (await RestSvc.IsEnabledForCompanyAsync(companyId))
+            if (await RestSvc.IsEnabledForCompanyAsync(companyId) && !NodeContext.Current.IsVessel)
+                _safetyItems.AddRange([new NavItem("/rest/fleet", "Hours of rest", RestIcon), new NavItem("/rest/table", "Working table", RestIcon), new NavItem("/rest/reports", "Rest reports", RestIcon), new NavItem("/rest/rules", "Rest rules", RestIcon)]);
+            else if (await RestSvc.IsEnabledForCompanyAsync(companyId))
                 _safetyItems.AddRange([new NavItem("/rest", "Hours of rest", RestIcon), new NavItem("/rest/sheet", "Month sheet", RestIcon), new NavItem("/rest/sign", "Sign hours", RestIcon), new NavItem("/rest/breaches", "Breaches", RestIcon), new NavItem("/rest/table", "Working table", RestIcon)]);
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
                                 + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;

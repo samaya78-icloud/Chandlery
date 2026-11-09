@@ -114,6 +114,7 @@ else
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     [SupplyParameterFromQuery(Name = "crew")] private Guid? CrewQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
     [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
 
     private Guid _companyId, _vesselId, _crewId;
@@ -135,7 +136,7 @@ else
         _actor = Actor.From(state.User);
         _me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
         _vessels = await Svc.EnabledVesselsAsync(_companyId);
-        if (_vessels.Count > 0) _vesselId = _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
+        if (_vessels.Count > 0) _vesselId = VesselQuery is { } wantedVessel && _vessels.Any(v => v.Id == wantedVessel) ? wantedVessel : _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
         if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         await LoadVesselAsync(CrewQuery);
         _loaded = true;

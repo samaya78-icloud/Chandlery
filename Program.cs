@@ -48,6 +48,7 @@ builder.Services.AddScoped<TankInspectionService>();
 builder.Services.AddScoped<RestHoursService>();
 builder.Services.AddScoped<RestReviewService>();
 builder.Services.AddScoped<WorkArrangementService>();
+builder.Services.AddScoped<RestFleetService>();
 builder.Services.AddSingleton<SyncStatusService>();
 builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<OnboardRfqService>();
@@ -388,6 +389,43 @@ app.MapGet("/rest/table/{vesselId:guid}/pdf", async (Guid vesselId, int? version
     if (doc is null) return Results.NotFound();
     var name = new string($"working-arrangements-{doc.VesselName}-v{doc.Table.VersionNo}".Select(c => char.IsLetterOrDigit(c) || c == '-' ? c : '-').ToArray());
     return Results.File(ArrangementPdf.Build(doc), "application/pdf", name + ".pdf");
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// A seafarer's record of hours of work or rest for a month (appendix 4) as a PDF. Onboard a seafarer gets their own, the Master and crew admins anyone's; the office any.
+app.MapGet("/rest/sheet/{vesselId:guid}/{crewId:guid}/{month}/pdf", async (Guid vesselId, Guid crewId, string month, HttpContext http, RestHoursService rest, RestReviewService review) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    if (!DateTime.TryParseExact(month + "-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var first)) return Results.NotFound();
+    if (NodeContext.Current.IsVessel)
+    {
+        var me = await rest.CrewOfUserAsync(companyId, Actor.From(http.User).UserId);
+        if (me is null || me.VesselId != vesselId || (crewId != me.Id && !me.IsMaster && !me.IsCrewAdmin)) return Results.Forbid();
+    }
+    if (!(await rest.EnabledVesselsAsync(companyId)).Any(v => v.Id == vesselId)) return Results.NotFound();
+    var sheet = await rest.MonthAsync(companyId, vesselId, crewId, first.Year, first.Month);
+    if (sheet.CrewName.Length == 0) return Results.NotFound();
+    var doc = new RestSheetDocument(await rest.HeaderAsync(companyId, vesselId), sheet, await review.MonthAsync(companyId, vesselId, crewId, first.Year, first.Month));
+    var name = new string($"hours-of-rest-{sheet.CrewName}-{month}".Select(c => char.IsLetterOrDigit(c) || c == '-' ? c : '-').ToArray());
+    return Results.File(RestSheetPdf.Build(doc), "application/pdf", name + ".pdf");
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// Hours-of-rest reports as CSV (office only): fleet, breaches, unsigned, daily (?month=yyyy-MM, this month when left out).
+app.MapGet("/rest/reports/{kind}.csv", async (string kind, string? month, HttpContext http, RestFleetService fleet) =>
+{
+    if (NodeContext.Current.IsVessel || !Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var first = DateTime.UtcNow.Date;
+    if (month is not null && !DateTime.TryParseExact(month + "-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out first)) return Results.NotFound();
+    string? csv = kind switch
+    {
+        "fleet" => RestReports.FleetCsv(await fleet.FleetAsync(companyId, first.Year, first.Month)),
+        "breaches" => RestReports.BreachesCsv(await fleet.FleetAsync(companyId, first.Year, first.Month)),
+        "unsigned" => RestReports.UnsignedCsv(await fleet.FleetAsync(companyId, first.Year, first.Month)),
+        "daily" => RestReports.DailyCsv(await fleet.DailyAsync(companyId, first.Year, first.Month)),
+        _ => null,
+    };
+    if (csv is null) return Results.NotFound();
+    var utf8 = new System.Text.UTF8Encoding(true);
+    return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"hours-of-rest-{kind}-{first:yyyy-MM}.csv");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 // The order as a ready-to-open email message for the sender's own mail program: to the supplier, the office in copy, PDF attached.

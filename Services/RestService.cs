@@ -200,6 +200,17 @@ public class RestHoursService(IDbContextFactory<ChandleryDbContext> factory)
         return await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == userId && c.VesselId != null && c.IsActive);
     }
 
+    /// <summary>The names on the head of a printed record: company, vessel, flag state and the rules the hours are checked against.</summary>
+    public async Task<RestHeader> HeaderAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var company = await db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+        var vessel = await db.Vessels.AsNoTracking().FirstOrDefaultAsync(v => v.Id == vesselId && v.CompanyId == companyId);
+        var (set, _) = await RulesForAsync(db, companyId, vesselId);
+        return new RestHeader(company, vessel?.Name ?? "", vessel?.ImoNumber, set?.FlagState ?? "", set?.Name ?? "ILO 180 / STCW defaults");
+    }
+
     /// <summary>The seafarers signed on to a vessel.</summary>
     public async Task<List<CrewMember>> CrewAboardAsync(Guid companyId, Guid vesselId)
     {
