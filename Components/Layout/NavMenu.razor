@@ -15,12 +15,14 @@
                 @Group("Onboard", _vesselItems)
                 @if (_maintenanceItems.Count > 0) { @Group("Maintenance", _maintenanceItems) }
                 @if (_tankItems.Count > 0) { @Group("Tank inspection", _tankItems) }
+                @if (_riskItems.Count > 0) { @Group("Risk assessment", _riskItems) }
             }
             else
             {
                 @Group("Work", _workItems)
                 @if (_maintenanceItems.Count > 0) { @Group("Maintenance", _maintenanceItems) }
                 @if (_tankItems.Count > 0) { @Group("Tank inspection", _tankItems) }
+                @if (_riskItems.Count > 0) { @Group("Risk assessment", _riskItems) }
                 @Group("Procurement", _procurementItems)
                 @Group("Master data", _masterItems)
             }
@@ -101,8 +103,12 @@
                     _adminItems.Add(new NavItem("/company/tank-checklists", "Tank checklists", TankIcon));
                 }
             }
-            if (!NodeContext.Current.IsVessel && await RiskLibSvc.IsEnabledForCompanyAsync(companyId))
-                _adminItems.Add(new NavItem("/company/risk-library", "Risk library", RiskIcon));
+            if (await RiskLibSvc.IsEnabledForCompanyAsync(companyId))
+            {
+                _riskItems.Add(new NavItem("/risk", "Assessments", RiskIcon));
+                _riskItems.Add(new NavItem("/risk/new", "New assessment", RiskIcon));
+                if (!NodeContext.Current.IsVessel) _adminItems.Add(new NavItem("/company/risk-library", "Risk library", RiskIcon));
+            }
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
                                 + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;
         }
@@ -202,6 +208,7 @@
 
     private readonly List<NavItem> _maintenanceItems = new();
     private readonly List<NavItem> _tankItems = new();
+    private readonly List<NavItem> _riskItems = new();
 
     private readonly List<NavItem> _vesselItems = new()
     {

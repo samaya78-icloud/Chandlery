@@ -263,6 +263,15 @@ public class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory
         return copy;
     }
 
+    /// <summary>Everything that would stop this assessment from being submitted right now, so the writer can see it all at once. Empty means it is ready.</summary>
+    public async Task<List<string>> CheckAsync(Guid companyId, Guid id)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var a = await WithChildren(db).AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId) ?? throw new InvalidOperationException("Assessment not found.");
+        return RaChecks.SubmissionProblems(a, await MatrixAsync(db, companyId));
+    }
+
     // ---- reading ----
 
     public async Task<AssessmentDetail?> GetAsync(Guid companyId, Guid id)
