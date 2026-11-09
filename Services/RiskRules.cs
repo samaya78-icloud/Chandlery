@@ -27,6 +27,16 @@ public sealed class RiskMatrix
     /// <summary>Position of a band from lowest (0) up, to compare "High or worse".</summary>
     public int RankOf(string band) => Bands.ToList().FindIndex(b => b.Name == band);
 
+    /// <summary>The chip tone for a band, from green (the lowest) to red (the highest), however many bands the company has.</summary>
+    public string ToneOf(string band)
+    {
+        var rank = RankOf(band);
+        if (rank < 0) return "neutral";
+        if (Bands.Count == 1) return "success";
+        var share = rank / (double)(Bands.Count - 1);
+        return share < 0.25 ? "success" : share < 0.5 ? "neutral" : share < 0.75 ? "warning" : "danger";
+    }
+
     /// <summary>True when the band is one of the top two, which need a named control, owner and date.</summary>
     public bool IsSerious(string band) => Bands.Count >= 2 && RankOf(band) >= Bands.Count - 2;
 }

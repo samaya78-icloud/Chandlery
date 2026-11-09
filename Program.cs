@@ -46,6 +46,7 @@ builder.Services.AddScoped<PmsImportService>();
 builder.Services.AddScoped<TankService>();
 builder.Services.AddScoped<TankInspectionService>();
 builder.Services.AddScoped<RiskAssessmentService>();
+builder.Services.AddScoped<RiskLibraryService>();
 builder.Services.AddScoped<TankTrendService>();
 builder.Services.AddSingleton<SyncStatusService>();
 builder.Services.AddScoped<DispatchService>();
