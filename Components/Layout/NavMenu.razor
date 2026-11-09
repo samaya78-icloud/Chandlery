@@ -106,7 +106,7 @@
             }
             if (await RiskLibSvc.IsEnabledForCompanyAsync(companyId))
             {
-                _riskItems.Add(new NavItem("/risk", "Assessments", RiskIcon));
+                _riskItems.Add(new NavItem("/risk", "Assessments", RiskIcon, (await RiskSvc.CountsAsync(companyId))?.DueForReview ?? 0));
                 _riskItems.Add(new NavItem("/risk/new", "New assessment", RiskIcon));
                 _riskItems.Add(new NavItem("/risk/review", "Sign-off queue", RiskIcon, (await RiskSvc.SignOffQueueAsync(companyId)).Count));
                 if (!NodeContext.Current.IsVessel) _adminItems.Add(new NavItem("/company/risk-library", "Risk library", RiskIcon));

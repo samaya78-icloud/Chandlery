@@ -1,0 +1,148 @@
+@page "/risk/{Id:guid}/document"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RiskAssessmentService Svc
+@inject RiskLibraryService Library
+
+<PageTitle>@(_detail?.Assessment.Code ?? "Risk assessment") document · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Assessment not found" Message="It may belong to another vessel, or risk assessment is switched off." />
+}
+else
+{
+    var a = _detail.Assessment;
+    var m = _detail.Matrix;
+    <div class="mb-4 flex flex-wrap items-center gap-2 print:hidden">
+        <a href="/risk/@a.Id" class="btn btn-secondary">Back to the assessment</a>
+        <button onclick="window.print()" class="btn btn-primary">Print or save as PDF</button>
+        @if (_detail.Status != RaStatus.Signed) { <span class="text-sm text-amber-700">Not signed yet, so the document is marked as a draft.</span> }
+    </div>
+
+    <article class="card mx-auto max-w-5xl p-8 text-sm print:max-w-none print:border-0 print:p-0 print:shadow-none">
+        <header class="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-line pb-4">
+            <div>
+                <div class="text-xs font-bold uppercase tracking-wider text-muted">Risk assessment</div>
+                <h1 class="font-display text-2xl font-extrabold text-ink">@a.Code · version @a.Version</h1>
+                <p class="mt-1 text-base">@a.JobDescription</p>
+            </div>
+            <div class="text-right">
+                <div class="text-lg font-bold @(_detail.Status == RaStatus.Signed ? "text-emerald-700" : "text-amber-700")">@(_detail.Status == RaStatus.Signed ? "SIGNED" : _detail.Status.ToString().ToUpperInvariant() + " (DRAFT COPY)")</div>
+                @if (_detail.Superseded) { <div class="text-xs font-semibold text-rose-700">REPLACED BY A LATER VERSION</div> }
+                <div class="text-xs text-muted">@_vessel</div>
+            </div>
+        </header>
+
+        <dl class="mb-6 grid gap-x-6 gap-y-2 sm:grid-cols-3">
+            <div><dt class="text-xs text-muted">Category</dt><dd>@(a.CategoryName == "" ? "-" : a.CategoryName)</dd></div>
+            <div><dt class="text-xs text-muted">Assessed on</dt><dd>@a.AssessedOn.ToString("dd MMM yyyy")</dd></div>
+            <div><dt class="text-xs text-muted">Kind</dt><dd>@a.Kind.ToString()</dd></div>
+            <div><dt class="text-xs text-muted">Highest risk left</dt><dd>@(a.SubmissionCount == 0 ? "-" : $"{a.HighestResidualBand} ({a.HighestResidualFactor})")</dd></div>
+            <div><dt class="text-xs text-muted">Signed</dt><dd>@(_detail.SignedAt is { } at ? at.ToString("dd MMM yyyy") : "-")</dd></div>
+            <div><dt class="text-xs text-muted">Next review</dt><dd>@(_detail.NextReview is { } due ? due.ToString("dd MMM yyyy") : "-")</dd></div>
+            @if (a.SharedFromId is not null) { <div class="sm:col-span-3"><dt class="text-xs text-muted">Shared from</dt><dd>@a.SharedFromCode version @a.SharedFromVersion</dd></div> }
+        </dl>
+
+        <h2 class="mb-2 font-display text-base font-extrabold text-ink">Team</h2>
+        <p class="mb-6">@(a.Team.Count == 0 ? "-" : string.Join(", ", a.Team.Select(t => t.Rank == "" ? t.Name : $"{t.Name} ({t.Rank})")))</p>
+
+        @foreach (var activity in a.Activities.OrderBy(x => x.SortOrder))
+        {
+            <h2 class="mb-2 mt-6 font-display text-base font-extrabold text-ink">@activity.Title</h2>
+            <table class="w-full border-collapse text-xs">
+                <thead>
+                    <tr class="border-b border-line text-left text-muted">
+                        <th class="p-2">Hazard and effect</th><th class="p-2">Before</th><th class="p-2">Controls</th><th class="p-2">After</th><th class="p-2">Responsible, due</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var h in a.Hazards.Where(x => x.ActivityId == activity.Id).OrderBy(x => x.SortOrder))
+                    {
+                        <tr class="break-inside-avoid border-b border-line/60 align-top">
+                            <td class="p-2"><div class="font-semibold">@h.Hazard</div>@if (h.Effect != "") { <div class="text-muted">@h.Effect</div> }</td>
+                            <td class="p-2 whitespace-nowrap"><span class="chip" data-tone="@m.ToneOf(h.BandBefore)">@h.BandBefore @h.FactorBefore</span></td>
+                            <td class="p-2">
+                                @if (h.ExistingControls != "") { <div><span class="text-muted">Existing:</span> @h.ExistingControls</div> }
+                                @if (h.AdditionalControls != "") { <div><span class="text-muted">Additional:</span> @h.AdditionalControls</div> }
+                                @if (h.ResidualReason != "") { <div class="text-muted">Why not lower: @h.ResidualReason</div> }
+                            </td>
+                            <td class="p-2 whitespace-nowrap"><span class="chip" data-tone="@m.ToneOf(h.BandAfter)">@h.BandAfter @h.FactorAfter</span></td>
+                            <td class="p-2">@h.ResponsibleName@(h.DueDate is { } d ? $", {d:dd MMM yyyy}" : "")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        @if (a.Contingency != "")
+        {
+            <h2 class="mb-2 mt-6 font-display text-base font-extrabold text-ink">Contingency and recovery</h2>
+            <p class="whitespace-pre-line">@a.Contingency</p>
+        }
+
+        <h2 class="mb-2 mt-8 font-display text-base font-extrabold text-ink">Sign-off</h2>
+        @if (_detail.SignOffs.Count == 0) { <p class="text-muted">Not signed.</p> }
+        else
+        {
+            <table class="w-full border-collapse text-xs">
+                <thead><tr class="border-b border-line text-left text-muted"><th class="p-2">Decision</th><th class="p-2">By</th><th class="p-2">Date</th><th class="p-2">Comment</th></tr></thead>
+                <tbody>
+                    @foreach (var s in _detail.SignOffs)
+                    {
+                        <tr class="break-inside-avoid border-b border-line/60">
+                            <td class="p-2 font-semibold">@(s.Decision switch { RaDecision.Started => "Review started", RaDecision.Signed => "Signed", _ => "Returned" })</td>
+                            <td class="p-2">@s.ReviewerName@(s.ReviewerRank == "" ? "" : $", {s.ReviewerRank}")</td>
+                            <td class="p-2">@s.At.ToString("dd MMM yyyy HH:mm")</td>
+                            <td class="p-2">@s.Comment</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        @if (_versions.Count > 1)
+        {
+            <h2 class="mb-2 mt-8 font-display text-base font-extrabold text-ink">Version history</h2>
+            <table class="w-full border-collapse text-xs">
+                <thead><tr class="border-b border-line text-left text-muted"><th class="p-2">Version</th><th class="p-2">Kind</th><th class="p-2">Assessed</th><th class="p-2">Status</th></tr></thead>
+                <tbody>
+                    @foreach (var v in _versions)
+                    {
+                        <tr class="border-b border-line/60"><td class="p-2">@v.Assessment.Version@(v.Assessment.Id == a.Id ? " (this)" : "")</td><td class="p-2">@v.Assessment.Kind</td><td class="p-2">@v.Assessment.AssessedOn.ToString("dd MMM yyyy")</td><td class="p-2">@StatusChip.Describe(v.Status).Label</td></tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        <footer class="mt-8 border-t border-line pt-3 text-xs text-muted">Printed @DateTime.Now.ToString("dd MMM yyyy HH:mm"). @a.Code version @a.Version.</footer>
+    </article>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _loaded;
+    private AssessmentDetail? _detail;
+    private List<(RiskAssessment Assessment, RaStatus Status)> _versions = [];
+    private string _vessel = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _detail = await Svc.GetAsync(companyId, Id);
+        if (_detail is not null)
+        {
+            _versions = await Svc.VersionsAsync(companyId, _detail.Assessment.Code);
+            _vessel = (await Library.EnabledVesselsAsync(companyId)).FirstOrDefault(v => v.Id == _detail.Assessment.VesselId).Name ?? "";
+        }
+        _loaded = true;
+    }
+}

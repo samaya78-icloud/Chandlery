@@ -166,6 +166,11 @@ else
                 <input type="checkbox" class="mt-1" checked="@_byAnother" @onchange="e => SetByAnotherAsync(e.Value is true)" />
                 <span>Someone other than the writer must sign. Applies only when another reviewer is available on that side, so a vessel with a single reviewer is not blocked.</span>
             </label>
+            <h2 class="mb-1 mt-6 font-display text-base font-extrabold text-ink">Maintenance</h2>
+            <label class="flex items-start gap-2">
+                <input type="checkbox" class="mt-1" checked="@_criticalNeeds" @onchange="e => SetCriticalAsync(e.Value is true)" />
+                <span>Putting off a critical maintenance job needs a signed risk assessment of the vessel to be named on the request. The request form shows the vessel's signed assessments to choose from, Critical equipment first.</span>
+            </label>
         </div>
     }
     else if (_matrix is not null)
@@ -309,10 +314,18 @@ else
         _pWords = [.. _matrix.Probability];
         _bands = _matrix.Bands.Select(b => new BandDraft { Name = b.Name, Min = b.MinFactor }).ToList();
         _byAnother = await Svc.GetSignOffByAnotherPersonAsync(_companyId);
+        _criticalNeeds = await Svc.GetRequiredForCriticalDeferralAsync(_companyId);
         _tabs = [("templates", "Templates", _templates.Count), ("categories", "Categories", _categories.Count), ("matrix", "Risk matrix", null), ("signoff", "Sign-off", null)];
     }
 
-    private bool _byAnother;
+    private bool _byAnother, _criticalNeeds;
+
+    private async Task SetCriticalAsync(bool on)
+    {
+        _error = _notice = null;
+        try { await Svc.SetRequiredForCriticalDeferralAsync(_companyId, on); _criticalNeeds = on; _notice = on ? "A critical job now needs a risk assessment to be put off." : "A critical job can be put off without one again."; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
 
     private async Task SetByAnotherAsync(bool on)
     {

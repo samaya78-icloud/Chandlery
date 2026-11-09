@@ -24,6 +24,7 @@ else
     <PageHeader Eyebrow="@($"{a.Code} · version {a.Version}")" Title="@(Shorten(a.JobDescription, 90))" Subtitle="@($"{(a.CategoryName == "" ? "No category yet" : a.CategoryName)}{(a.Kind == RaKind.Initial ? "" : " · " + a.Kind.ToString().ToLowerInvariant())}")">
         <Actions>
             <a href="/risk" class="btn btn-secondary">All assessments</a>
+            <a href="/risk/@a.Id/document" class="btn btn-secondary">Print or PDF</a>
         </Actions>
     </PageHeader>
 
@@ -382,8 +383,10 @@ else
         try
         {
             await Svc.SaveAsync(_companyId, Id, CurrentEdit(), _actor);
-            await Svc.SubmitAsync(_companyId, Id, _actor);
+            var outcome = await Svc.SubmitAsync(_companyId, Id, _actor);
             _notes.Add("Submitted for sign-off.");
+            if (outcome.TasksRaised.Count > 0) _notes.Add($"Raised {outcome.TasksRaised.Count} worklist task(s) for the control actions: {string.Join(", ", outcome.TasksRaised.Select(t => t.Code))}.");
+            _notes.AddRange(outcome.Notes);
             _problems = null;
             await LoadAsync();
         }

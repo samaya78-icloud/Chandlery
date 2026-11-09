@@ -26,6 +26,7 @@ else if (_company is { } c)
     <WorklistTiles />
     <PmsTiles />
     <TankTiles />
+    <RiskTiles />
 
     <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard Label="Open requisitions" Value="@c.OpenRequisitions.ToString("N0")" Hint="@($"{c.RequisitionsWithoutRfq.Count} not yet sent out")" Href="/company/requisitions?f.status=Open">

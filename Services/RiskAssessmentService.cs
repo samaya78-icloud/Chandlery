@@ -23,7 +23,7 @@ public record AssessmentRow(RiskAssessment Assessment, RaStatus Status, bool Sup
 /// Risk assessments: written by one side, submitted, and signed off through sign-off records. A draft or a returned assessment can be changed by the side that made it;
 /// a submitted or signed one cannot. Changing a signed assessment is a new version. The status is always worked out, never stored.
 /// </summary>
-public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory)
+public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory, WorklistService? worklist = null)
 {
     public const int MaxActivities = 25;
     public const int MaxHazardsPerActivity = 20;
@@ -170,7 +170,7 @@ public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext>
     }
 
     /// <summary>Submits the assessment for sign-off, once it passes the checks.</summary>
-    public async Task SubmitAsync(Guid companyId, Guid id, Actor actor)
+    public async Task<RaSubmitOutcome> SubmitAsync(Guid companyId, Guid id, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -183,6 +183,7 @@ public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext>
         a.SubmittedAt = DateTime.UtcNow;
         (a.HighestResidualFactor, a.HighestResidualBand) = RaChecks.HighestResidual(a.Hazards);
         await db.SaveChangesAsync();
+        return await FollowUpAsync(db, companyId, a, actor);
     }
 
     // ---- sign-off ----
@@ -211,6 +212,7 @@ public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext>
         };
         db.RaSignOffs.Add(signOff);
         await db.SaveChangesAsync();
+        if (decision == RaDecision.Signed) await RemindAsync(db, companyId, a, signOff.At, actor);
         return signOff;
     }
 

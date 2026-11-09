@@ -221,6 +221,10 @@ public class JobDeferralRequest
     /// <summary>The job was critical when asked, so the request travels on the urgent lane.</summary>
     public bool IsCritical { get; set; }
     public string RequestedByName { get; set; } = "";
+
+    /// <summary>The signed risk assessment the request relies on, if one was chosen (its reference and version are kept as text so the link reads the same on both sides).</summary>
+    public Guid? RiskAssessmentId { get; set; }
+    public string RiskAssessmentLabel { get; set; } = "";
     public Guid? AuthorUserId { get; set; }
     public DateTime At { get; set; }
     public string OwnerStage { get; set; } = SyncStages.Office;

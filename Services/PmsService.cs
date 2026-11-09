@@ -456,7 +456,7 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- deferrals ----
 
     /// <summary>Asks to put a job off to a later date. It changes nothing until it is approved.</summary>
-    public async Task<JobDeferralRequest> RequestDeferralAsync(Guid companyId, Guid jobId, DateTime requestedDue, string reason, Actor actor)
+    public async Task<JobDeferralRequest> RequestDeferralAsync(Guid companyId, Guid jobId, DateTime requestedDue, string reason, Actor actor, Guid? riskAssessmentId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -473,10 +473,20 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         if (sameCycle.Count > 0 && await db.JobDeferralDecisions.AsNoTracking().CountAsync(d => sameCycle.Contains(d.RequestId)) < sameCycle.Count)
             throw new InvalidOperationException("A request for this job is already waiting for a decision.");
 
+        // A signed risk assessment of this vessel may be named (the company can insist on one for a critical job).
+        var riskLabel = "";
+        if (riskAssessmentId is { } riskId)
+        {
+            var risk = await RiskAssessmentService.InForceByIdAsync(db, companyId, job.VesselId, riskId) ?? throw new InvalidOperationException("The risk assessment has to be signed, not replaced, and for this vessel.");
+            riskLabel = $"{risk.Code} v{risk.Version}";
+        }
+        else if (job.IsCritical && await RiskAssessmentService.RequiredForCriticalDeferralAsync(db, companyId, job.VesselId))
+            throw new InvalidOperationException("This is a critical job: name the signed risk assessment that covers putting it off.");
+
         var request = new JobDeferralRequest
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = job.VesselId, PlannedJobId = jobId, CurrentDueDate = Day(due), RequestedDueDate = requested,
-            LastDoneAtRequest = job.LastDoneDate, Reason = reason.Trim(), IsCritical = job.IsCritical, RequestedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
+            LastDoneAtRequest = job.LastDoneDate, Reason = reason.Trim(), IsCritical = job.IsCritical, RiskAssessmentId = riskAssessmentId, RiskAssessmentLabel = riskLabel, RequestedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.JobDeferralRequests.Add(request);
         await db.SaveChangesAsync();

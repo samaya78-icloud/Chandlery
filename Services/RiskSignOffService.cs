@@ -164,6 +164,7 @@ public partial class RiskAssessmentService
             made.Add(copy);
         }
         await db.SaveChangesAsync();
+        foreach (var shared in made) await RemindAsync(db, companyId, shared, signing.At, actor);
         return made;
     }
 }

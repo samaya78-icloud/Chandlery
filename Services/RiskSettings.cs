@@ -24,6 +24,24 @@ public partial class RiskLibraryService
         await db.SaveChangesAsync();
     }
 
+    public async Task<bool> GetRequiredForCriticalDeferralAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.RiskRequiredForCriticalDeferral).FirstOrDefaultAsync();
+    }
+
+    /// <summary>When on, a critical maintenance job can only be put off with a signed risk assessment of the vessel named on the request.</summary>
+    public async Task SetRequiredForCriticalDeferralAsync(Guid companyId, bool on)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        var company = await db.Companies.FirstOrDefaultAsync(c => c.Id == companyId) ?? throw new InvalidOperationException("Company not found.");
+        company.RiskRequiredForCriticalDeferral = on;
+        await db.SaveChangesAsync();
+    }
+
     /// <summary>Names (or removes) an office user as a risk reviewer. A company admin is always one, so the flag changes nothing for them.</summary>
     public async Task SetRiskReviewerAsync(Guid companyId, Guid userId, bool isReviewer)
     {

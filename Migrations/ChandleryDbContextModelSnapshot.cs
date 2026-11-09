@@ -369,6 +369,9 @@ namespace Chandlery.Migrations
                     b.Property<string>("RegistrationNumber")
                         .HasColumnType("text");
 
+                    b.Property<bool>("RiskRequiredForCriticalDeferral")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("RiskSignOffByAnotherPerson")
                         .HasColumnType("boolean");
 
@@ -1401,6 +1404,13 @@ namespace Chandlery.Migrations
 
                     b.Property<DateTime>("RequestedDueDate")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RiskAssessmentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RiskAssessmentLabel")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("SyncCreatedAt")
                         .ValueGeneratedOnAdd()

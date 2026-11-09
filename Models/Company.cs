@@ -22,4 +22,7 @@ public class Company
 
     /// <summary>When on, whoever wrote a risk assessment cannot be the one to sign it, if another reviewer is available on that side.</summary>
     public bool RiskSignOffByAnotherPerson { get; set; }
+
+    /// <summary>When on, putting off a critical maintenance job needs a signed risk assessment of the vessel to be named.</summary>
+    public bool RiskRequiredForCriticalDeferral { get; set; }
 }
