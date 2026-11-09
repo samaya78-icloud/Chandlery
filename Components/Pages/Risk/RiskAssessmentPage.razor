@@ -33,6 +33,10 @@ else
     {
         <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span class="font-semibold">Returned by @lastReturn.ReviewerName:</span> @lastReturn.Comment</div>
     }
+    @if (a.SharedFromId is not null)
+    {
+        <div class="mb-4 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-800">Shared by the office: a copy of <span class="font-mono font-semibold">@a.SharedFromCode</span> version @a.SharedFromVersion, signed there.</div>
+    }
     @if (_detail.Superseded)
     {
         <div class="mb-4 rounded-xl border border-line bg-surface-2/60 px-4 py-3 text-sm text-ink-2">A later version of this assessment has been signed, so this one has been replaced. It stays readable.</div>
@@ -184,10 +188,13 @@ else
         </div>
     }
 
+    <RiskSignOffPanel CompanyId="_companyId" Detail="_detail" OnChanged="PanelChangedAsync" />
+    <RiskVersionPanel CompanyId="_companyId" Detail="_detail" OnChanged="PanelChangedAsync" />
+
     @if (_detail.SignOffs.Count > 0)
     {
         <div class="card mb-5 p-5 text-sm">
-            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Sign-off</h2>
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Sign-off history</h2>
             <ol class="space-y-3">
                 @foreach (var s in _detail.SignOffs)
                 {
@@ -288,6 +295,8 @@ else
         await LoadAsync();
         _loaded = true;
     }
+
+    private async Task PanelChangedAsync() { _notes = []; _error = null; await LoadAsync(); }
 
     private async Task LoadAsync()
     {

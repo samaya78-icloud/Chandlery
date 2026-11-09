@@ -32,6 +32,9 @@ public class AppUser
     /// <summary>The next sign-in must be followed by choosing a new password (a temporary one was handed over).</summary>
     public bool MustChangePassword { get; set; }
 
+    /// <summary>May start a review of, sign or return a risk assessment ashore. A company admin always may.</summary>
+    public bool IsRiskReviewer { get; set; }
+
     public bool IsCompanyRole => Role is UserRole.CompanyAdmin or UserRole.CompanyUser;
     public bool IsSupplierRole => Role is UserRole.SupplierAdmin or UserRole.SupplierUser;
 }

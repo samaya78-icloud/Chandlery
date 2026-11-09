@@ -682,7 +682,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasMany(a => a.Team).WithOne().HasForeignKey(t => t.AssessmentId).OnDelete(DeleteBehavior.Cascade);
             b.HasMany(a => a.Activities).WithOne().HasForeignKey(t => t.AssessmentId).OnDelete(DeleteBehavior.Cascade);
             b.HasMany(a => a.Hazards).WithOne().HasForeignKey(t => t.AssessmentId).OnDelete(DeleteBehavior.Cascade);
-            b.HasIndex(a => new { a.CompanyId, a.Code, a.Version }).IsUnique();
+            b.HasIndex(a => new { a.CompanyId, a.Code, a.Version });   // not unique: the office and a vessel may each start the next version while apart, and both are kept
             b.HasIndex(a => new { a.VesselId, a.CreatedAt });
             b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
         });

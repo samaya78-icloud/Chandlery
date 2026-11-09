@@ -157,6 +157,17 @@ else
             </div>
         </div>
     }
+    else if (_tab == "signoff")
+    {
+        <div class="card max-w-2xl p-5 text-sm">
+            <h2 class="mb-1 font-display text-base font-extrabold text-ink">Who signs</h2>
+            <p class="mb-3 text-muted">Ashore, company admins and the users you name on the Team page sign assessments. Onboard, the crew you mark as risk reviewers on the Crew page do.</p>
+            <label class="flex items-start gap-2">
+                <input type="checkbox" class="mt-1" checked="@_byAnother" @onchange="e => SetByAnotherAsync(e.Value is true)" />
+                <span>Someone other than the writer must sign. Applies only when another reviewer is available on that side, so a vessel with a single reviewer is not blocked.</span>
+            </label>
+        </div>
+    }
     else if (_matrix is not null)
     {
         <div class="grid gap-6 lg:grid-cols-2">
@@ -297,7 +308,17 @@ else
         _cWords = [.. _matrix.Consequence];
         _pWords = [.. _matrix.Probability];
         _bands = _matrix.Bands.Select(b => new BandDraft { Name = b.Name, Min = b.MinFactor }).ToList();
-        _tabs = [("templates", "Templates", _templates.Count), ("categories", "Categories", _categories.Count), ("matrix", "Risk matrix", null)];
+        _byAnother = await Svc.GetSignOffByAnotherPersonAsync(_companyId);
+        _tabs = [("templates", "Templates", _templates.Count), ("categories", "Categories", _categories.Count), ("matrix", "Risk matrix", null), ("signoff", "Sign-off", null)];
+    }
+
+    private bool _byAnother;
+
+    private async Task SetByAnotherAsync(bool on)
+    {
+        _error = _notice = null;
+        try { await Svc.SetSignOffByAnotherPersonAsync(_companyId, on); _byAnother = on; _notice = on ? "Someone other than the writer must now sign." : "The writer may sign their own assessment again."; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
     }
 
     private void SetTab(string tab) { _tab = tab; _error = _notice = null; }

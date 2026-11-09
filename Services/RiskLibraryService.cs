@@ -21,7 +21,7 @@ public record RaTemplateRow(RaTemplate Template, string CategoryName, int Activi
 /// The risk assessment library, kept by the office: categories, the risk matrix (its wording and bands) and the templates assessments start from. All of it is master
 /// data, so vessels receive it read-only. Changing a template raises its version; assessments already made keep their own copy.
 /// </summary>
-public class RiskLibraryService(IDbContextFactory<ChandleryDbContext> factory)
+public partial class RiskLibraryService(IDbContextFactory<ChandleryDbContext> factory)
 {
     private static void RequireOffice(ChandleryDbContext db)
     {

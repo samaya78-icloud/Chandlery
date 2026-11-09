@@ -35,6 +35,7 @@ public class RiskEditorTests : IAsyncLifetime
 {
     private readonly TwoSites _s = new();
     private RiskAssessmentService _shore = null!, _vessel = null!;
+    private Actor _reviewer = null!;
     private RiskLibraryService _library = null!;
     private static DateTime Today => DateTime.UtcNow.Date;
 
@@ -43,6 +44,7 @@ public class RiskEditorTests : IAsyncLifetime
         await _s.InitializeAsync();
         _shore = new RiskAssessmentService(_s.ShoreFactory);
         _vessel = new RiskAssessmentService(_s.VesselFactory);
+        _reviewer = await RiskTestSupport.MakeReviewersAsync(_s);
         _library = new RiskLibraryService(_s.ShoreFactory);
         await using var db = await _s.ShoreFactory.CreateDbContextAsync();
         db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = PolicyModules.RiskAssessment, Enabled = true });
@@ -89,7 +91,7 @@ public class RiskEditorTests : IAsyncLifetime
         await _vessel.SaveAsync(_s.CompanyId, first.Id, new AssessmentEdit("Mooring", category.Id, Today, "", [new RaTeamInput("Bosun")],
             [new RaActivityInput(null, "Heaving", [new RaHazardInput(null, "Snap-back", "", 4, 3, "Zone marked", "", 2, 2)])]), _s.User);
         await _vessel.SubmitAsync(_s.CompanyId, first.Id, _s.User);
-        await _vessel.SignOffAsync(_s.CompanyId, first.Id, RaDecision.Signed, "", _s.User, "Master");
+        await _vessel.SignOffAsync(_s.CompanyId, first.Id, RaDecision.Signed, "", _reviewer, "Master");
 
         var row = Assert.Single(await _vessel.ListAsync(_s.CompanyId));
         Assert.Equal((RaStatus.Signed, false, "Low", 4), (row.Status, row.Superseded, row.Assessment.HighestResidualBand, row.Assessment.HighestResidualFactor));
@@ -99,7 +101,7 @@ public class RiskEditorTests : IAsyncLifetime
 
         var second = await _vessel.NewVersionAsync(_s.CompanyId, first.Id, RaKind.Annual, _s.User);
         await _vessel.SubmitAsync(_s.CompanyId, second.Id, _s.User);
-        await _vessel.SignOffAsync(_s.CompanyId, second.Id, RaDecision.Signed, "", _s.User, "Master");
+        await _vessel.SignOffAsync(_s.CompanyId, second.Id, RaDecision.Signed, "", _reviewer, "Master");
         var rows = (await _vessel.ListAsync(_s.CompanyId)).OrderBy(r => r.Assessment.Version).ToList();
         Assert.Equal([true, false], rows.Select(r => r.Superseded));                                    // the page hides replaced versions unless asked
         Assert.Single(await _vessel.ListAsync(_s.CompanyId, _s.VesselId), r => !r.Superseded);

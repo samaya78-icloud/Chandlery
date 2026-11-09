@@ -6,6 +6,7 @@
 @inject TankInspectionService TankReviewSvc
 @inject TankTrendService TankTrendSvc
 @inject RiskLibraryService RiskLibSvc
+@inject RiskAssessmentService RiskSvc
 
 <nav class="flex flex-col pt-1">
     <AuthorizeView Roles="CompanyAdmin,CompanyUser">
@@ -107,6 +108,7 @@
             {
                 _riskItems.Add(new NavItem("/risk", "Assessments", RiskIcon));
                 _riskItems.Add(new NavItem("/risk/new", "New assessment", RiskIcon));
+                _riskItems.Add(new NavItem("/risk/review", "Sign-off queue", RiskIcon, (await RiskSvc.SignOffQueueAsync(companyId)).Count));
                 if (!NodeContext.Current.IsVessel) _adminItems.Add(new NavItem("/company/risk-library", "Risk library", RiskIcon));
             }
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)

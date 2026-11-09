@@ -23,7 +23,7 @@ public record AssessmentRow(RiskAssessment Assessment, RaStatus Status, bool Sup
 /// Risk assessments: written by one side, submitted, and signed off through sign-off records. A draft or a returned assessment can be changed by the side that made it;
 /// a submitted or signed one cannot. Changing a signed assessment is a new version. The status is always worked out, never stored.
 /// </summary>
-public class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory)
+public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory)
 {
     public const int MaxActivities = 25;
     public const int MaxHazardsPerActivity = 20;
@@ -69,7 +69,7 @@ public class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory
             Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = input.VesselId, Code = await DocumentNumbers.NextAsync(db, companyId, input.VesselId, DocType.RiskAssessment),
             Version = 1, Kind = RaKind.Initial, CategoryId = category?.Id, CategoryName = category?.Name ?? "", CategoryCode = category?.Code ?? "",
             TemplateId = template?.Id, TemplateVersion = template?.Version ?? 0, JobDescription = description, AssessedOn = Day(input.AssessedOn),
-            Contingency = template?.Contingency ?? "", ReviewPeriodMonths = RaStandard.DefaultReviewMonths, CreatedByName = actor.Name, CreatedAt = DateTime.UtcNow,
+            Contingency = template?.Contingency ?? "", ReviewPeriodMonths = RaStandard.DefaultReviewMonths, CreatedByName = actor.Name, CreatedByUserId = actor.UserId, CreatedAt = DateTime.UtcNow,
         };
         if (template is not null) await CopyTemplateAsync(db, template, assessment);
         db.RiskAssessments.Add(assessment);
@@ -201,6 +201,8 @@ public class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory
         if (status == RaStatus.Signed) throw new InvalidOperationException("This assessment has already been signed.");
         if (decision == RaDecision.Started && status == RaStatus.InReview) throw new InvalidOperationException("The review has already been started.");
         if (decision == RaDecision.Returned && string.IsNullOrWhiteSpace(comment)) throw new InvalidOperationException("Say what needs correcting.");
+        var right = await RightAsync(db, companyId, a, decision, actor);
+        if (!right.May) throw new InvalidOperationException(right.Why);
 
         var signOff = new RaSignOff
         {
@@ -240,7 +242,7 @@ public class RiskAssessmentService(IDbContextFactory<ChandleryDbContext> factory
             Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = source.VesselId, Code = source.Code, Version = chain.Max(c => c.Version) + 1, PreviousVersionId = source.Id, Kind = kind,
             CategoryId = source.CategoryId, CategoryName = source.CategoryName, CategoryCode = source.CategoryCode, TemplateId = source.TemplateId, TemplateVersion = source.TemplateVersion,
             JobDescription = source.JobDescription, AssessedOn = Day(DateTime.UtcNow), Contingency = source.Contingency, ReviewPeriodMonths = source.ReviewPeriodMonths,
-            CreatedByName = actor.Name, CreatedAt = DateTime.UtcNow,
+            CreatedByName = actor.Name, CreatedByUserId = actor.UserId, CreatedAt = DateTime.UtcNow,
         };
         foreach (var m in source.Team) copy.Team.Add(new RaTeamMember { Id = Guid.CreateVersion7(), Name = m.Name, Rank = m.Rank, UserId = m.UserId });
         var activityIds = new Dictionary<Guid, Guid>();

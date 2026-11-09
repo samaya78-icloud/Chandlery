@@ -41,6 +41,9 @@ public class CrewMember
     /// <summary>The Master: approves purchase orders onboard within the limit the office sets for the vessel.</summary>
     public bool IsMaster { get; set; }
 
+    /// <summary>May start a review of, sign or return a risk assessment onboard (the Master or Chief Engineer, named by the office).</summary>
+    public bool IsRiskReviewer { get; set; }
+
     /// <summary>The local sign-in account (<see cref="AppUser"/>) onboard. The id is fixed here so both sides agree.</summary>
     public Guid UserId { get; set; }
 

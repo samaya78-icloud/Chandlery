@@ -122,6 +122,12 @@ public class RiskAssessment
     public int HighestResidualFactor { get; set; }
     public string HighestResidualBand { get; set; } = "";
     public string CreatedByName { get; set; } = "";
+    public Guid? CreatedByUserId { get; set; }
+
+    /// <summary>Set on a copy made by sharing: the assessment it was copied from, so the vessel can see where it came from.</summary>
+    public Guid? SharedFromId { get; set; }
+    public string SharedFromCode { get; set; } = "";
+    public int SharedFromVersion { get; set; }
     public DateTime CreatedAt { get; set; }
     public string OwnerStage { get; set; } = SyncStages.Vessel;
 

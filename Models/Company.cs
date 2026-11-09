@@ -19,4 +19,7 @@ public class Company
 
     /// <summary>Words the office reviewer is shown highlighted in tank inspection comments, separated by commas. Blank uses the standard list. Set by the office; vessels receive it with the rest of the company record and cannot change it.</summary>
     public string TankReviewKeywords { get; set; } = "";
+
+    /// <summary>When on, whoever wrote a risk assessment cannot be the one to sign it, if another reviewer is available on that side.</summary>
+    public bool RiskSignOffByAnotherPerson { get; set; }
 }

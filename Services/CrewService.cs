@@ -7,7 +7,7 @@ namespace Chandlery.Services;
 
 public record CrewInput(Guid? Id, string CrewCode, string FullName, string Rank, string Nationality, DateTime? DateOfBirth,
     string IdType, string? IdNumber, DateTime? IdExpiry, string Phone, string Email, Guid? VesselId, DateTime? SignOnDate,
-    bool IsActive, bool IsCrewAdmin, bool IsMaster = false);
+    bool IsActive, bool IsCrewAdmin, bool IsMaster = false, bool IsRiskReviewer = false);
 
 public record CrewRow(CrewMember Crew, string? VesselName);
 
@@ -107,6 +107,7 @@ public class CrewService(IDbContextFactory<ChandleryDbContext> factory, CrewCryp
         crew.IsActive = input.IsActive;
         crew.IsCrewAdmin = input.IsCrewAdmin;
         crew.IsMaster = input.IsMaster;
+        crew.IsRiskReviewer = input.IsRiskReviewer;
         if (isNew) db.CrewMembers.Add(crew);
 
         var after = $"{crew.FullName}/{crew.Rank}/{crew.VesselId}/{crew.IsActive}/{crew.IsCrewAdmin}";
@@ -127,6 +128,7 @@ public class CrewService(IDbContextFactory<ChandleryDbContext> factory, CrewCryp
         crew.SignOffDate = DateTime.UtcNow.Date;
         crew.IsCrewAdmin = false;
         crew.IsMaster = false;
+        crew.IsRiskReviewer = false;
         AuditLog.Add(db, companyId, AuditEntityTypes.CrewMember, crew.Id, actor, $"SIGNED OFF {crew.CrewCode}");
         await db.SaveChangesAsync();
     }

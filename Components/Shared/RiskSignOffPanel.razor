@@ -1,0 +1,93 @@
+@inject RiskAssessmentService Svc
+@inject AuthenticationStateProvider Auth
+
+@if (Detail.Status is RaStatus.Submitted or RaStatus.InReview)
+{
+    var serious = Detail.Assessment.Hazards.Where(h => h.FactorAfter > 0 && Detail.Matrix.IsSerious(h.BandAfter)).OrderByDescending(h => h.FactorAfter).ToList();
+
+    <div class="card mb-5 p-5 text-sm">
+        <h2 class="mb-1 font-display text-lg font-extrabold text-ink">For the reviewer</h2>
+        <p class="mb-3 text-xs text-muted">The hazards that are still @SeriousBand or worse after controls.</p>
+        @if (serious.Count == 0) { <p class="text-muted">None: every risk is below @SeriousBand after controls.</p> }
+        <ul class="divide-y divide-line/60">
+            @foreach (var h in serious)
+            {
+                <li class="py-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="chip" data-tone="@Detail.Matrix.ToneOf(h.BandAfter)">@h.BandAfter · @h.FactorAfter</span>
+                        <span class="font-medium">@h.Hazard</span>
+                        <span class="text-xs text-muted">was @h.BandBefore · @h.FactorBefore</span>
+                    </div>
+                    <p class="mt-1 text-ink-2">@(h.ExistingControls == "" ? h.AdditionalControls : h.ExistingControls) <span class="text-muted">· @h.ResponsibleName@(h.DueDate is { } due ? $", due {due:dd MMM yyyy}" : "")</span></p>
+                </li>
+            }
+        </ul>
+    </div>
+
+    <div class="card mb-5 p-5 text-sm">
+        <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Sign-off</h2>
+        @if (_error is not null) { <div class="mb-3 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-rose-800">@_error</div> }
+        @if (!_right.May)
+        {
+            <p class="text-muted">@(_right.Why == "" ? "Waiting for a risk reviewer." : _right.Why)</p>
+        }
+        else if (Detail.Status == RaStatus.Submitted)
+        {
+            <p class="mb-3 text-muted">Nobody has started reviewing this yet. Starting lets the writer see it is being looked at.</p>
+            <button class="btn btn-secondary" disabled="@_busy" @onclick="() => DecideAsync(RaDecision.Started)">Start the review</button>
+        }
+        else
+        {
+            <div class="grid gap-3 md:grid-cols-3">
+                <label class="md:col-span-2">Comment <textarea class="textarea mt-1" rows="3" @bind="_comment" placeholder="Required when returning the assessment: say what needs correcting."></textarea></label>
+                <label>Your rank or position <input class="input mt-1" @bind="_rank" placeholder="Master, Superintendent..." /></label>
+            </div>
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+                @if (!_confirmSign)
+                {
+                    <button class="btn btn-primary" disabled="@_busy" @onclick="() => _confirmSign = true">Sign</button>
+                }
+                else
+                {
+                    <span class="text-muted">Signing locks the assessment for good. A later change is made as a new version.</span>
+                    <button class="btn btn-primary" disabled="@_busy" @onclick="() => DecideAsync(RaDecision.Signed)">Yes, sign and lock</button>
+                    <button class="btn btn-ghost" @onclick="() => _confirmSign = false">Not yet</button>
+                }
+                <button class="btn btn-secondary" disabled="@_busy" @onclick="() => DecideAsync(RaDecision.Returned)">Return to the writer</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public AssessmentDetail Detail { get; set; } = null!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private string SeriousBand => Detail.Matrix.Bands.Count >= 2 ? Detail.Matrix.Bands[^2].Name : Detail.Matrix.Bands[0].Name;
+    private Actor _actor = Actor.System;
+    private SignOffRight _right = new(false);
+    private string _comment = "", _rank = "";
+    private string? _error;
+    private bool _busy, _confirmSign;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _actor = Actor.From((await Auth.GetAuthenticationStateAsync()).User);
+        _right = Detail.Status is RaStatus.Submitted or RaStatus.InReview ? await Svc.MaySignOffAsync(CompanyId, Detail.Assessment.Id, _actor) : new SignOffRight(false);
+    }
+
+    private async Task DecideAsync(RaDecision decision)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            await Svc.SignOffAsync(CompanyId, Detail.Assessment.Id, decision, _comment, _actor, _rank);
+            _comment = ""; _confirmSign = false;
+            await OnChanged.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; _confirmSign = false; }
+        finally { _busy = false; }
+    }
+}

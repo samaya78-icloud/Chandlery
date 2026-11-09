@@ -46,6 +46,9 @@ namespace Chandlery.Migrations
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsRiskReviewer")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("LoginName")
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
@@ -366,6 +369,9 @@ namespace Chandlery.Migrations
                     b.Property<string>("RegistrationNumber")
                         .HasColumnType("text");
 
+                    b.Property<bool>("RiskSignOffByAnotherPerson")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("SyncCreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
@@ -524,6 +530,9 @@ namespace Chandlery.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<bool>("IsMaster")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsRiskReviewer")
                         .HasColumnType("boolean");
 
                     b.Property<bool>("LoginEnabled")
@@ -3581,6 +3590,9 @@ namespace Chandlery.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)");
 
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("HighestResidualBand")
                         .IsRequired()
                         .HasMaxLength(40)
@@ -3611,6 +3623,16 @@ namespace Chandlery.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<int>("ReviewPeriodMonths")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("SharedFromCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("SharedFromId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SharedFromVersion")
                         .HasColumnType("integer");
 
                     b.Property<int>("SubmissionCount")
@@ -3650,8 +3672,7 @@ namespace Chandlery.Migrations
 
                     b.HasIndex("VesselId", "CreatedAt");
 
-                    b.HasIndex("CompanyId", "Code", "Version")
-                        .IsUnique();
+                    b.HasIndex("CompanyId", "Code", "Version");
 
                     b.ToTable("RiskAssessments");
                 });

@@ -111,6 +111,7 @@ public class RiskSyncTests : IAsyncLifetime
 {
     private readonly TwoSites _s = new();
     private RiskAssessmentService _shore = null!, _vessel = null!;
+    private Actor _reviewer = null!;
     private static DateTime Today => DateTime.UtcNow.Date;
 
     public async Task InitializeAsync()
@@ -118,6 +119,7 @@ public class RiskSyncTests : IAsyncLifetime
         await _s.InitializeAsync();
         _shore = new RiskAssessmentService(_s.ShoreFactory);
         _vessel = new RiskAssessmentService(_s.VesselFactory);
+        _reviewer = await RiskTestSupport.MakeReviewersAsync(_s);
     }
 
     public Task DisposeAsync() => _s.DisposeAsync();
@@ -306,7 +308,7 @@ public class RiskSyncTests : IAsyncLifetime
         var notYours = await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveAsync(_s.CompanyId, started.Id, Edit(onboard.Assessment, template.CategoryId!.Value, "Changed onboard"), _s.User));
         Assert.Contains("submitted", notYours.Message);
 
-        await _vessel.SignOffAsync(_s.CompanyId, started.Id, RaDecision.Signed, "Signed by the Master", _s.User, "Master");     // the Master signs onboard
+        await _vessel.SignOffAsync(_s.CompanyId, started.Id, RaDecision.Signed, "Signed by the Master", _reviewer, "Master");     // the Master signs onboard
         await _s.SettleUntilQuietAsync();
         var atOffice = (await _shore.GetAsync(_s.CompanyId, started.Id))!;
         Assert.Equal((RaStatus.Signed, "Master"), (atOffice.Status, atOffice.SignOffs.Single(s => s.Decision == RaDecision.Signed).ReviewerRank));
