@@ -1,0 +1,109 @@
+@page "/risk/new"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RiskLibraryService Library
+@inject RiskAssessmentService Svc
+@inject NavigationManager Nav
+
+<PageTitle>New risk assessment · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Risk assessment" Title="New assessment" Subtitle="Start from a template, or from nothing. A template is copied into the assessment, so later changes to it never alter this one.">
+    <Actions>
+        <a href="/risk" class="btn btn-secondary">All assessments</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Risk assessment is switched off" Message="The module has not been switched on for this vessel." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    <div class="card max-w-2xl p-5 text-sm">
+        <div class="grid gap-4 md:grid-cols-2">
+            @if (_vessels.Count > 1)
+            {
+                <label class="md:col-span-2">Vessel
+                    <select class="select mt-1" @bind="_vesselId">
+                        @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+            }
+            <label class="md:col-span-2">Template
+                <select class="select mt-1" @bind="_templateId" @bind:after="ChangeTemplate">
+                    <option value="@Guid.Empty">Start from nothing</option>
+                    @foreach (var t in _templates) { <option value="@t.Template.Id">@t.Template.Name@(t.CategoryName == "" ? "" : $" · {t.CategoryName}") (@t.Activities activities, @t.Hazards hazards)</option> }
+                </select>
+            </label>
+            <label>Category
+                <select class="select mt-1" @bind="_categoryId">
+                    <option value="@Guid.Empty">Choose…</option>
+                    @foreach (var c in _categories) { <option value="@c.Id">@c.Name</option> }
+                </select>
+            </label>
+            <label>Date of assessment <input type="date" class="input mt-1" max="@DateTime.UtcNow.ToString("yyyy-MM-dd")" @bind="_date" /></label>
+            <label class="md:col-span-2">Job or activity
+                <textarea class="textarea mt-1" rows="3" @bind="_job" placeholder="@(_templateJob == "" ? "For example: hot work on the main deck" : _templateJob)"></textarea>
+                @if (_templateJob != "") { <span class="text-xs text-muted">Leave empty to use the template's wording.</span> }
+            </label>
+        </div>
+        <div class="mt-5 flex gap-2">
+            <button class="btn btn-primary" @onclick="StartAsync">Start the assessment</button>
+            <a href="/risk" class="btn btn-ghost">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId, _templateId, _categoryId;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private string? _error;
+    private DateTime? _date = DateTime.UtcNow.Date;
+    private string _job = "", _templateJob = "";
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<RaCategory> _categories = [];
+    private List<RaTemplateRow> _templates = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Library.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _vessels[0].Id;
+        _categories = await Library.ListCategoriesAsync(_companyId, includeInactive: false);
+        _templates = await Library.ListTemplatesAsync(_companyId, includeInactive: false);
+        _loaded = true;
+    }
+
+    /// <summary>Choosing a template fills in its category and shows its job wording as the suggestion.</summary>
+    private void ChangeTemplate()
+    {
+        var t = _templates.FirstOrDefault(x => x.Template.Id == _templateId);
+        _templateJob = t?.Template.JobDescription ?? "";
+        if (t?.Template.CategoryId is { } category) _categoryId = category;
+    }
+
+    private async Task StartAsync()
+    {
+        _error = null;
+        try
+        {
+            if (_date is null) throw new InvalidOperationException("Enter the date of the assessment.");
+            if (_templateId == Guid.Empty && string.IsNullOrWhiteSpace(_job)) throw new InvalidOperationException("Describe the job or activity, or choose a template.");
+            var made = await Svc.StartAsync(_companyId, new NewAssessment(_vesselId, _job, _date.Value, _categoryId == Guid.Empty ? null : _categoryId, _templateId == Guid.Empty ? null : _templateId), _actor);
+            Nav.NavigateTo($"/risk/{made.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

@@ -198,6 +198,8 @@ public class RequisitionSyncTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         await _s.SettleUntilAsync(async () => await _s.FindAsync(_s.ShoreFactory, made.Id) is not null);
+        // The office's acceptance travels back down as a separate step, so wait for it rather than checking the instant the office has the requisition.
+        await _s.SettleUntilAsync(async () => (await _s.FindAsync(_s.VesselFactory, made.Id))?.OwnerStage == SyncStages.Office);
 
         Assert.Equal(SyncStages.Office, (await _s.FindAsync(_s.VesselFactory, made.Id))!.OwnerStage);
         Assert.Empty(await _s.ShoreSyncStore.GetQuarantineAsync());

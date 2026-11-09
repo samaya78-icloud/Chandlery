@@ -1,0 +1,73 @@
+@page "/risk/review"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RiskLibraryService Library
+@inject RiskAssessmentService Svc
+
+<PageTitle>Risk sign-off · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Waiting for sign-off" Subtitle="Submitted assessments, the highest risk left first. Open one to start the review, sign it, or return it.">
+    <Actions>
+        <a href="/risk" class="btn btn-secondary">All assessments</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Risk assessment is switched off" Message="The module has not been switched on for this vessel." />
+}
+else if (_rows.Count == 0)
+{
+    <EmptyState Title="Nothing is waiting" Message="Every submitted assessment has been signed or returned." />
+}
+else
+{
+    <div class="card overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                <tr><th class="p-3">Assessment</th><th class="p-3">Job</th><th class="p-3">Vessel</th><th class="p-3">Written by</th><th class="p-3">Waiting</th><th class="p-3">Status</th><th class="p-3">Highest risk left</th></tr>
+            </thead>
+            <tbody class="divide-y divide-line/60">
+                @foreach (var r in _rows)
+                {
+                    var a = r.Assessment;
+                    var days = a.SubmittedAt is { } at ? Math.Max(0, (int)(DateTime.UtcNow - at).TotalDays) : 0;
+                    <tr>
+                        <td class="p-3"><a href="/risk/@a.Id" class="link font-mono text-xs font-semibold">@a.Code v@(a.Version)</a></td>
+                        <td class="p-3">@(a.JobDescription.Length > 70 ? a.JobDescription[..70] + "…" : a.JobDescription)</td>
+                        <td class="p-3">@r.VesselName</td>
+                        <td class="p-3">@a.CreatedByName</td>
+                        <td class="p-3">@(days == 0 ? "today" : $"{days} day(s)")</td>
+                        <td class="p-3"><StatusChip Value="@r.Status" /></td>
+                        <td class="p-3"><span class="chip" data-tone="@_matrix.ToneOf(a.HighestResidualBand)">@a.HighestResidualBand · @a.HighestResidualFactor</span></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _loaded;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<SignOffRow> _rows = [];
+    private RiskMatrix _matrix = RiskMatrix.Default;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _vessels = await Library.EnabledVesselsAsync(companyId);
+        var enabled = _vessels.Select(v => v.Id).ToHashSet();
+        _matrix = (await Library.GetMatrixAsync(companyId)).Matrix;
+        _rows = (await Svc.SignOffQueueAsync(companyId)).Where(r => enabled.Contains(r.Assessment.VesselId)).ToList();
+        _loaded = true;
+    }
+}

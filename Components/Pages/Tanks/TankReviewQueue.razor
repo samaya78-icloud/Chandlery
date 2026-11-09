@@ -1,0 +1,91 @@
+@page "/tanks/review"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject TankInspectionService Svc
+
+<PageTitle>Tank inspections to review · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Tank inspections to review" Subtitle="What the vessels have submitted and nobody has finished looking at. A Bad rating goes to the top.">
+    <Actions>
+        <a href="/tanks/inspections" class="btn btn-secondary">All inspections</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else
+{
+    var shown = Shown();
+    var bad = _queue.Count(q => q.Row.Inspection.HasBadRating);
+    @if (bad > 0)
+    {
+        <div class="mb-4 flex items-center gap-3 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <span class="chip" data-tone="danger">Urgent</span>
+            <span>@bad inspection(s) with a Bad rating are waiting for the office.</span>
+        </div>
+    }
+
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        <label>Vessel
+            <select class="select mt-1" @bind="_vesselId">
+                <option value="@Guid.Empty">All vessels</option>
+                @foreach (var v in _queue.Select(q => (q.Row.Inspection.VesselId, q.VesselName)).Distinct().OrderBy(v => v.VesselName)) { <option value="@v.VesselId">@v.VesselName</option> }
+            </select>
+        </label>
+        <label class="flex items-center gap-2 pb-2"><input type="checkbox" @bind="_badOnly" /> Bad rating only</label>
+        <span class="ml-auto pb-2 text-muted">@shown.Count of @_queue.Count waiting</span>
+    </div>
+
+    @if (shown.Count == 0)
+    {
+        <EmptyState Title="Nothing waiting" Message="Every submitted inspection has been reviewed or sent back to its vessel." />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="p-3">Inspection</th><th class="p-3">Vessel</th><th class="p-3">Tank</th><th class="p-3">Inspected</th><th class="p-3">Submitted</th><th class="p-3">Status</th><th class="p-3">Result</th></tr>
+                </thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var q in shown)
+                    {
+                        var i = q.Row.Inspection;
+                        <tr class="@(i.HasBadRating ? "bg-rose-50/40" : "")">
+                            <td class="p-3"><a href="/tanks/inspections/@i.Id" class="link font-mono text-xs font-semibold">@i.Code</a></td>
+                            <td class="p-3">@q.VesselName</td>
+                            <td class="p-3">@q.Row.TankCode · @q.Row.TankName</td>
+                            <td class="p-3">@i.InspectedOn.ToString("dd MMM yyyy")</td>
+                            <td class="p-3">@(i.SubmittedAt?.ToString("dd MMM yyyy HH:mm"))</td>
+                            <td class="p-3"><StatusChip Value="@q.Row.Status" /></td>
+                            <td class="p-3">
+                                @if (i.ExceptionCount == 0) { <span class="chip" data-tone="success">no exceptions</span> }
+                                else { <span class="chip" data-tone="@(i.HasBadRating ? "danger" : "warning")">@(i.HasBadRating ? "Bad rating · " : "")@i.ExceptionCount exception(s)</span> }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private bool _loaded, _badOnly;
+    private List<ReviewQueueRow> _queue = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _queue = await Svc.ReviewQueueAsync(_companyId);
+        _loaded = true;
+    }
+
+    private List<ReviewQueueRow> Shown() => _queue.Where(q => (_vesselId == Guid.Empty || q.Row.Inspection.VesselId == _vesselId) && (!_badOnly || q.Row.Inspection.HasBadRating)).ToList();
+}

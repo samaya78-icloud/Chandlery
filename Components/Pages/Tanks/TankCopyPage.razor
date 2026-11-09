@@ -1,0 +1,97 @@
+@page "/tanks/copy"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject TankService Svc
+
+<PageTitle>Copy tanks · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Copy tanks to sister vessels"
+            Subtitle="Copy one vessel's tank list, with its plan positions and structural data, to others. A tank is matched by its code; what is missing is added and nothing the vessel already has is changed.">
+    <Actions>
+        <a href="/tanks" class="btn btn-secondary">Back to tanks</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_vessels.Count < 2)
+{
+    <EmptyState Title="Two vessels are needed" Message="Switch tank inspection on for at least two vessels to copy a tank list." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    <div class="card max-w-xl p-5 text-sm">
+        <label class="block">Copy from
+            <select class="select mt-1" @bind="_source">
+                @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+            </select>
+        </label>
+        <label class="mt-3 block">Copy to
+            <select class="select mt-1" @bind="_targetGroup">
+                <option value="@Guid.Empty">A single vessel…</option>
+                @foreach (var g in _groups) { <option value="@g.Id">All vessels of @g.Name</option> }
+            </select>
+        </label>
+        @if (_targetGroup == Guid.Empty)
+        {
+            <label class="mt-3 block">Vessel
+                <select class="select mt-1" @bind="_target">
+                    <option value="@Guid.Empty">Choose…</option>
+                    @foreach (var v in _vessels.Where(v => v.Id != _source)) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <button class="btn btn-primary mt-4" @onclick="CopyAsync">Copy the tanks</button>
+
+        @if (_results.Count > 0)
+        {
+            <ul class="mt-4 space-y-1 text-xs">
+                @foreach (var r in _results)
+                {
+                    <li class="rounded-lg bg-surface-2/60 px-3 py-2"><span class="font-semibold">@r.Vessel</span>:
+                        @(r.Problem ?? $"added {r.Added} tank(s), {r.Skipped} already there")</li>
+                }
+            </ul>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _source, _target, _targetGroup;
+    private Actor _actor = Actor.System;
+    private bool _loaded;
+    private string? _error;
+    private List<(Guid Id, string Name, Guid? GroupId)> _vessels = [];
+    private List<VesselGroup> _groups = [];
+    private List<TankCopyResult> _results = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        (_vessels, _groups) = await Svc.VesselChoicesAsync(_companyId);
+        if (_vessels.Count > 0) _source = _vessels[0].Id;
+        _loaded = true;
+    }
+
+    private async Task CopyAsync()
+    {
+        _error = null; _results = [];
+        try
+        {
+            var targets = _targetGroup == Guid.Empty
+                ? (_target == Guid.Empty ? throw new InvalidOperationException("Choose the vessel to copy to.") : new List<Guid> { _target })
+                : _vessels.Where(v => PolicyResolver.GroupChain(_groups, v.GroupId).Contains(_targetGroup) && v.Id != _source).Select(v => v.Id).ToList();
+            if (targets.Count == 0) throw new InvalidOperationException("There is no other vessel to copy to.");
+            _results = await Svc.CopyTanksAsync(_companyId, _source, targets, _actor);
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

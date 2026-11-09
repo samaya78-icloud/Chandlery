@@ -1,0 +1,402 @@
+@page "/risk/{Id:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RiskAssessmentService Svc
+@inject RiskLibraryService Library
+
+<PageTitle>@(_detail?.Assessment.Code ?? "Risk assessment") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Assessment not found" Message="It may belong to another vessel, or risk assessment is switched off." />
+}
+else
+{
+    var a = _detail.Assessment;
+    var editable = RaStatusRules.IsEditable(_detail.Status);
+    var lastReturn = _detail.SignOffs.LastOrDefault(s => s.Decision == RaDecision.Returned && s.ForSubmission == a.SubmissionCount);
+
+    <PageHeader Eyebrow="@($"{a.Code} · version {a.Version}")" Title="@(Shorten(a.JobDescription, 90))" Subtitle="@($"{(a.CategoryName == "" ? "No category yet" : a.CategoryName)}{(a.Kind == RaKind.Initial ? "" : " · " + a.Kind.ToString().ToLowerInvariant())}")">
+        <Actions>
+            <a href="/risk" class="btn btn-secondary">All assessments</a>
+            <a href="/risk/@a.Id/document" class="btn btn-secondary">Print or PDF</a>
+        </Actions>
+    </PageHeader>
+
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @foreach (var note in _notes) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@note</div> }
+    @if (lastReturn is not null && editable)
+    {
+        <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span class="font-semibold">Returned by @lastReturn.ReviewerName:</span> @lastReturn.Comment</div>
+    }
+    @if (a.SharedFromId is not null)
+    {
+        <div class="mb-4 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-sm text-sky-800">Shared by the office: a copy of <span class="font-mono font-semibold">@a.SharedFromCode</span> version @a.SharedFromVersion, signed there.</div>
+    }
+    @if (_detail.Superseded)
+    {
+        <div class="mb-4 rounded-xl border border-line bg-surface-2/60 px-4 py-3 text-sm text-ink-2">A later version of this assessment has been signed, so this one has been replaced. It stays readable.</div>
+    }
+    else if (!editable)
+    {
+        <div class="mb-4 rounded-xl border border-line bg-surface-2/60 px-4 py-3 text-sm text-ink-2">
+            @(_detail.Status == RaStatus.Signed ? "This assessment has been signed and is locked. A change is made as a new version." : "This assessment has been submitted and is waiting for sign-off. It can be changed again only if it is returned.")
+        </div>
+    }
+
+    <div class="mb-5 flex flex-wrap items-center gap-2">
+        <StatusChip Value="@_detail.Status" />
+        @if (a.SubmissionCount > 0) { <span class="chip" data-tone="@_detail.Matrix.ToneOf(a.HighestResidualBand)">highest risk left: @a.HighestResidualBand · @a.HighestResidualFactor</span> }
+        @if (a.SubmissionCount > 1) { <span class="chip chip-plain" data-tone="neutral">submitted @a.SubmissionCount times</span> }
+        @if (_detail.NextReview is { } due && !_detail.Superseded)
+        {
+            <span class="text-sm text-muted">next review @due.ToString("dd MMM yyyy")</span>
+            <StatusChip Value="@RaReview.StateOf(due, DateTime.UtcNow.Date)" />
+        }
+    </div>
+
+    <div class="mb-5"><Tabs Items="Steps()" Active="@_step" ActiveChanged="OpenStepAsync" /></div>
+
+    @if (_step == "details")
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <div class="grid gap-4 md:grid-cols-3">
+                <label class="md:col-span-3">Job or activity <textarea class="textarea mt-1" rows="3" @bind="_job" disabled="@(!editable)"></textarea></label>
+                <label>Category
+                    <select class="select mt-1" @bind="_categoryId" disabled="@(!editable)">
+                        <option value="@Guid.Empty">Choose…</option>
+                        @foreach (var c in _categories.Where(c => c.IsActive || c.Id == _categoryId)) { <option value="@c.Id">@c.Name</option> }
+                    </select>
+                </label>
+                <label>Date of assessment <input type="date" class="input mt-1" max="@DateTime.UtcNow.ToString("yyyy-MM-dd")" @bind="_date" disabled="@(!editable)" /></label>
+                <div class="text-muted">@(a.TemplateId is null ? "Started from nothing." : $"From a template (version {a.TemplateVersion}); it is now this assessment's own copy.")</div>
+                <label class="md:col-span-3">Contingency and recovery <textarea class="textarea mt-1" rows="2" @bind="_contingency" disabled="@(!editable)"></textarea></label>
+            </div>
+        </div>
+    }
+    else if (_step == "team")
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <p class="mb-3 text-xs text-muted">Who took part in making this assessment, with their rank.</p>
+            @foreach (var member in _team)
+            {
+                var m = member;
+                <div class="mb-2 flex items-center gap-2">
+                    <input class="input" placeholder="Name" @bind="m.Name" disabled="@(!editable)" />
+                    <input class="input w-48" placeholder="Rank" @bind="m.Rank" disabled="@(!editable)" />
+                    @if (editable) { <button class="btn btn-ghost btn-sm" @onclick="() => _team.Remove(m)">Remove</button> }
+                </div>
+            }
+            @if (_team.Count == 0) { <p class="text-muted">Nobody added yet.</p> }
+            @if (editable) { <button class="btn btn-secondary btn-sm mt-2" @onclick="() => _team.Add(new TeamDraft())">+ Team member</button> }
+        </div>
+    }
+    else if (_step == "hazards")
+    {
+        @if (editable) { <div class="mb-3"><button class="btn btn-secondary btn-sm" @onclick="AddActivity">+ Work activity</button></div> }
+        @foreach (var activity in _activities)
+        {
+            var act = activity;
+            <div class="card mb-5 p-4 text-sm">
+                <div class="flex items-center gap-2">
+                    <input class="input font-semibold" placeholder="Work activity" @bind="act.Title" disabled="@(!editable)" />
+                    @if (editable)
+                    {
+                        <button class="btn btn-ghost btn-sm" @onclick="() => act.Hazards.Add(new HazardDraft())">+ Hazard</button>
+                        <button class="btn btn-ghost btn-sm" @onclick="() => _activities.Remove(act)">Remove</button>
+                    }
+                </div>
+                @foreach (var hz in act.Hazards)
+                {
+                    var h = hz;
+                    var before = Factor(h.CB, h.PB);
+                    var after = Factor(h.CA, h.PA);
+                    var afterBand = _detail.Matrix.BandOf(after);
+                    var serious = after > 0 && _detail.Matrix.IsSerious(afterBand);
+                    <div class="mt-3 rounded-xl bg-surface-2/60 p-3">
+                        <div class="grid gap-2 md:grid-cols-2">
+                            <label>Hazard <input class="input mt-1" @bind="h.Hazard" disabled="@(!editable)" /></label>
+                            <label>Effect <input class="input mt-1" @bind="h.Effect" disabled="@(!editable)" /></label>
+                        </div>
+                        <div class="mt-3 grid gap-3 md:grid-cols-2">
+                            <div>
+                                <div class="text-xs font-bold uppercase tracking-wider text-muted">Risk before controls</div>
+                                <div class="mt-1 flex flex-wrap items-center gap-2">
+                                    <select class="select" @bind="h.CB" disabled="@(!editable)">@ScoreOptions(_consequence)</select>
+                                    <select class="select" @bind="h.PB" disabled="@(!editable)">@ScoreOptions(_probability)</select>
+                                    @BandChip(before)
+                                </div>
+                            </div>
+                            <div>
+                                <div class="text-xs font-bold uppercase tracking-wider text-muted">Risk after controls</div>
+                                <div class="mt-1 flex flex-wrap items-center gap-2">
+                                    <select class="select" @bind="h.CA" disabled="@(!editable)">@ScoreOptions(_consequence)</select>
+                                    <select class="select" @bind="h.PA" disabled="@(!editable)">@ScoreOptions(_probability)</select>
+                                    @BandChip(after)
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3 grid gap-2 md:grid-cols-2">
+                            <label>Existing controls <textarea class="textarea mt-1" rows="2" @bind="h.Existing" disabled="@(!editable)"></textarea></label>
+                            <label>Additional controls <textarea class="textarea mt-1" rows="2" @bind="h.Additional" disabled="@(!editable)"></textarea></label>
+                        </div>
+                        @if (before > 0 && after > 0 && after >= before)
+                        {
+                            <label class="mt-2 block text-amber-700">The risk after controls is not lower than before: say why
+                                <input class="input mt-1" @bind="h.Reason" disabled="@(!editable)" /></label>
+                        }
+                        <div class="mt-2 grid gap-2 md:grid-cols-3">
+                            <label>Responsible person@(serious ? " (needed)" : "") <input class="input mt-1" @bind="h.Responsible" disabled="@(!editable)" /></label>
+                            <label>Due date@(serious ? " (needed)" : "") <input type="date" class="input mt-1" @bind="h.Due" disabled="@(!editable)" /></label>
+                            <label>Contingency and recovery <input class="input mt-1" @bind="h.Contingency" disabled="@(!editable)" /></label>
+                        </div>
+                        @if (h.TaskId is not null) { <a href="/worklist/@h.TaskId" class="link mt-2 inline-block text-xs">worklist task</a> }
+                        @if (editable) { <button class="btn btn-ghost btn-sm mt-2" @onclick="() => act.Hazards.Remove(h)">Remove this hazard</button> }
+                    </div>
+                }
+                @if (act.Hazards.Count == 0) { <p class="mt-3 text-xs text-muted">No hazards yet.</p> }
+            </div>
+        }
+        @if (_activities.Count == 0) { <EmptyState Title="No work activities" Message="@(editable ? "Add the first work activity, then its hazards." : "This assessment has none.")" /> }
+    }
+    else
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-2 font-display text-lg font-extrabold text-ink">Before submitting</h2>
+            @if (!editable) { <p class="text-muted">This assessment is no longer being written.</p> }
+            else if (_problems is null) { <p class="text-muted">Choose "Check it" to save your work and see what is left to put right.</p> }
+            else if (_problems.Count == 0) { <p class="font-medium text-emerald-700">Everything is in place. It is ready to submit.</p> }
+            else
+            {
+                <p class="mb-2 font-medium text-amber-700">@_problems.Count thing(s) to put right:</p>
+                <ul class="list-disc space-y-1 pl-5">@foreach (var p in _problems) { <li>@p</li> }</ul>
+            }
+            @if (editable) { <button class="btn btn-secondary btn-sm mt-3" @onclick="CheckAsync" disabled="@_busy">Check it</button> }
+        </div>
+    }
+
+    @if (editable)
+    {
+        <div class="sticky bottom-0 z-10 -mx-1 mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface/95 p-3 shadow-lg backdrop-blur">
+            <button class="btn btn-secondary" @onclick="SaveAsync" disabled="@_busy">Save draft</button>
+            <button class="btn btn-primary" @onclick="SubmitAsync" disabled="@_busy">Submit for sign-off</button>
+            @if (_savedAt is { } saved) { <span class="ml-auto text-xs text-muted">Saved @saved.ToString("HH:mm")</span> }
+        </div>
+    }
+
+    <RiskSignOffPanel CompanyId="_companyId" Detail="_detail" OnChanged="PanelChangedAsync" />
+    <RiskVersionPanel CompanyId="_companyId" Detail="_detail" OnChanged="PanelChangedAsync" />
+
+    @if (_detail.SignOffs.Count > 0)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Sign-off history</h2>
+            <ol class="space-y-3">
+                @foreach (var s in _detail.SignOffs)
+                {
+                    <li class="border-l-2 border-line pl-4">
+                        <div class="flex flex-wrap items-baseline gap-2 text-xs text-muted">
+                            <span class="chip" data-tone="@(s.Decision == RaDecision.Signed ? "success" : s.Decision == RaDecision.Returned ? "danger" : "info")">@(s.Decision switch { RaDecision.Started => "review started", RaDecision.Signed => "signed", _ => "returned" })</span>
+                            <span class="font-semibold text-ink">@s.ReviewerName@(s.ReviewerRank == "" ? "" : $" ({s.ReviewerRank})")</span><span>@s.At.ToString("dd MMM yyyy HH:mm")</span><span>submission @s.ForSubmission</span>
+                        </div>
+                        @if (s.Comment != "") { <p class="mt-1 whitespace-pre-line">@s.Comment</p> }
+                    </li>
+                }
+            </ol>
+        </div>
+    }
+
+    @if (_versions.Count > 1)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Versions</h2>
+            <ul class="divide-y divide-line/60">
+                @foreach (var v in _versions)
+                {
+                    <li class="flex flex-wrap items-center gap-2 py-2">
+                        <a href="/risk/@v.Assessment.Id" class="link font-mono text-xs font-semibold">version @v.Assessment.Version</a>
+                        <span class="text-muted">@v.Assessment.Kind.ToString().ToLowerInvariant() · @v.Assessment.AssessedOn.ToString("dd MMM yyyy")</span>
+                        <StatusChip Value="@v.Status" />
+                        @if (v.Assessment.Id == Id) { <span class="text-xs text-muted">(this one)</span> }
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+
+    <LinkedTasks CompanyId="_companyId" LinkType="riskassessment" TargetId="a.Id" />
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed class TeamDraft
+    {
+        public string Name { get; set; } = "";
+        public string Rank { get; set; } = "";
+    }
+
+    private sealed class HazardDraft
+    {
+        public Guid? Id { get; set; }
+        public Guid? TaskId { get; set; }
+        public string Hazard { get; set; } = "";
+        public string Effect { get; set; } = "";
+        public string Existing { get; set; } = "";
+        public string Additional { get; set; } = "";
+        public string Reason { get; set; } = "";
+        public string Responsible { get; set; } = "";
+        public string Contingency { get; set; } = "";
+        public DateTime? Due { get; set; }
+        public int CB { get; set; }
+        public int PB { get; set; }
+        public int CA { get; set; }
+        public int PA { get; set; }
+    }
+
+    private sealed class ActivityDraft
+    {
+        public Guid? Id { get; set; }
+        public string Title { get; set; } = "";
+        public List<HazardDraft> Hazards { get; } = [];
+    }
+
+    private Guid _companyId, _categoryId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _busy;
+    private string? _error;
+    private List<string> _notes = [];
+    private string _step = "details";
+    private AssessmentDetail? _detail;
+    private List<(RiskAssessment Assessment, RaStatus Status)> _versions = [];
+    private List<RaCategory> _categories = [];
+    private List<string> _consequence = [], _probability = [];
+    private List<string>? _problems;
+    private DateTime? _savedAt;
+
+    private string _job = "", _contingency = "";
+    private DateTime? _date;
+    private List<TeamDraft> _team = [];
+    private List<ActivityDraft> _activities = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _categories = await Library.ListCategoriesAsync(_companyId);
+        var matrix = await Library.GetMatrixAsync(_companyId);
+        (_consequence, _probability) = (matrix.Consequence, matrix.Probability);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task PanelChangedAsync() { _notes = []; _error = null; await LoadAsync(); }
+
+    private async Task LoadAsync()
+    {
+        _detail = await Svc.GetAsync(_companyId, Id);
+        if (_detail is null) return;
+        var a = _detail.Assessment;
+        _versions = await Svc.VersionsAsync(_companyId, a.Code);
+        (_job, _categoryId, _date, _contingency) = (a.JobDescription, a.CategoryId ?? Guid.Empty, a.AssessedOn, a.Contingency);
+        _team = a.Team.Select(t => new TeamDraft { Name = t.Name, Rank = t.Rank }).ToList();
+        _activities = [];
+        foreach (var act in a.Activities.OrderBy(x => x.SortOrder))
+        {
+            var d = new ActivityDraft { Id = act.Id, Title = act.Title };
+            foreach (var h in a.Hazards.Where(x => x.ActivityId == act.Id).OrderBy(x => x.SortOrder))
+                d.Hazards.Add(new HazardDraft
+                {
+                    Id = h.Id, TaskId = h.WorklistTaskId, Hazard = h.Hazard, Effect = h.Effect, Existing = h.ExistingControls, Additional = h.AdditionalControls, Reason = h.ResidualReason,
+                    Responsible = h.ResponsibleName, Contingency = h.Contingency, Due = h.DueDate, CB = h.ConsequenceBefore, PB = h.ProbabilityBefore, CA = h.ConsequenceAfter, PA = h.ProbabilityAfter,
+                });
+            _activities.Add(d);
+        }
+    }
+
+    private IReadOnlyList<(string Key, string Label, int? Count)> Steps()
+        => [("details", "1 · Details", null), ("team", "2 · Team", _team.Count), ("hazards", "3 · Activities and hazards", _activities.Sum(a => a.Hazards.Count)), ("review", "4 · Review", null)];
+
+    private async Task OpenStepAsync(string step)
+    {
+        _step = step;
+        if (step == "review" && RaStatusRules.IsEditable(_detail!.Status)) await CheckAsync();
+    }
+
+    private static int Factor(int c, int p) => RiskMatrix.IsLevel(c) && RiskMatrix.IsLevel(p) ? RiskMatrix.Factor(c, p) : 0;
+
+    private RenderFragment ScoreOptions(IReadOnlyList<string> words) => __builder =>
+    {
+        <option value="0">(not scored)</option>
+        @for (var i = 0; i < words.Count; i++) { <option value="@(i + 1)">@(i + 1) · @words[i]</option> }
+    };
+
+    private RenderFragment BandChip(int factor) => __builder =>
+    {
+        if (factor > 0)
+        {
+            var band = _detail!.Matrix.BandOf(factor);
+            <span class="chip" data-tone="@_detail.Matrix.ToneOf(band)">@band · @factor</span>
+        }
+    };
+
+    private static string Shorten(string text, int max) => string.IsNullOrWhiteSpace(text) ? "Risk assessment" : text.Length > max ? text[..max] + "…" : text;
+
+    private void AddActivity() => _activities.Add(new ActivityDraft());
+
+    private AssessmentEdit CurrentEdit() => new(_job, _categoryId == Guid.Empty ? null : _categoryId, _date ?? DateTime.UtcNow.Date, _contingency,
+        _team.Select(t => new RaTeamInput(t.Name, t.Rank)).ToList(),
+        _activities.Select(a => new RaActivityInput(a.Id, a.Title, a.Hazards.Select(h =>
+            new RaHazardInput(h.Id, h.Hazard, h.Effect, h.CB, h.PB, h.Existing, h.Additional, h.CA, h.PA, h.Reason, h.Responsible, h.Due, h.Contingency)).ToList())).ToList());
+
+    private async Task SaveAsync()
+    {
+        _error = null; _notes = [];
+        _busy = true;
+        try
+        {
+            await Svc.SaveAsync(_companyId, Id, CurrentEdit(), _actor);
+            _savedAt = DateTime.Now;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task CheckAsync()
+    {
+        await SaveAsync();
+        if (_error is null) _problems = await Svc.CheckAsync(_companyId, Id);
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null; _notes = [];
+        _busy = true;
+        try
+        {
+            await Svc.SaveAsync(_companyId, Id, CurrentEdit(), _actor);
+            var outcome = await Svc.SubmitAsync(_companyId, Id, _actor);
+            _notes.Add("Submitted for sign-off.");
+            if (outcome.TasksRaised.Count > 0) _notes.Add($"Raised {outcome.TasksRaised.Count} worklist task(s) for the control actions: {string.Join(", ", outcome.TasksRaised.Select(t => t.Code))}.");
+            _notes.AddRange(outcome.Notes);
+            _problems = null;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; _step = "review"; await LoadAsync(); _problems = await SafeCheckAsync(); }
+        finally { _busy = false; }
+    }
+
+    private async Task<List<string>?> SafeCheckAsync()
+    {
+        try { return await Svc.CheckAsync(_companyId, Id); }
+        catch (InvalidOperationException) { return null; }
+    }
+}

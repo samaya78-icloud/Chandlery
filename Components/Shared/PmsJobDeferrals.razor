@@ -1,4 +1,5 @@
 @inject PmsService Svc
+@inject RiskAssessmentService Risk
 @inject AuthenticationStateProvider Auth
 
 <div class="card p-5 text-sm">
@@ -23,6 +24,7 @@
                 else { <span class="chip" data-tone="danger">refused by @v.Decision.DecidedByName</span> }
             </div>
             <p class="mt-1 text-ink-2">@v.Request.Reason</p>
+            @if (v.Request.RiskAssessmentId is { } riskLink) { <p class="mt-1 text-xs"><a href="/risk/@riskLink" class="link">Risk assessment @v.Request.RiskAssessmentLabel</a></p> }
             @if (v.Decision is { Comment: { Length: > 0 } c }) { <p class="mt-1 text-xs text-muted">“@c”</p> }
             @if (v.Decision is null && current && _mayDecide)
             {
@@ -45,6 +47,15 @@
         <div class="space-y-2">
             <label class="block">Put off until <input type="date" class="input mt-1" @bind="_date" /></label>
             <label class="block">Why <textarea class="textarea mt-1" rows="2" @bind="_reason"></textarea></label>
+            @if (_risk.Count > 0 || _riskRequired)
+            {
+                <label class="block">Risk assessment@(_riskRequired ? " (needed for a critical job)" : " (optional)")
+                    <select class="select mt-1" @bind="_riskId">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var r in _risk) { <option value="@r.Assessment.Id">@r.Assessment.Code v@(r.Assessment.Version) · @r.Assessment.JobDescription</option> }
+                    </select>
+                </label>
+            }
             <button class="btn btn-secondary" @onclick="RequestAsync">Ask to put it off</button>
         </div>
     }
@@ -62,6 +73,9 @@
     private string? _error;
     private DateTime? _date;
     private string _reason = "";
+    private List<AssessmentRow> _risk = [];
+    private bool _riskRequired;
+    private Guid _riskId;
     private readonly Dictionary<Guid, string> _grant = [], _comment = [];
 
     protected override async Task OnParametersSetAsync()
@@ -71,6 +85,8 @@
         _mayDecide = await Svc.MayDecideDeferralsAsync(CompanyId, Job.VesselId, _actor);
         _waiting = _views.Any(v => v.Decision is null && v.Request.LastDoneAtRequest == Job.LastDoneDate);
         _date ??= (Job.NextDueDate ?? DateTime.UtcNow.Date).AddDays(7);
+        _risk = await Risk.IsEnabledAsync(CompanyId, Job.VesselId) ? await Risk.InForceAsync(CompanyId, Job.VesselId) : [];
+        _riskRequired = Job.IsCritical && await Risk.RequiredForCriticalDeferralAsync(CompanyId, Job.VesselId);
     }
 
     private async Task RequestAsync()
@@ -79,7 +95,8 @@
         try
         {
             if (_date is null) throw new InvalidOperationException("Choose the date to put the job off to.");
-            await Svc.RequestDeferralAsync(CompanyId, Job.Id, _date.Value, _reason, _actor);
+            await Svc.RequestDeferralAsync(CompanyId, Job.Id, _date.Value, _reason, _actor, _riskId == Guid.Empty ? null : _riskId);
+            _riskId = Guid.Empty;
             _reason = "";
             await OnChanged.InvokeAsync();
         }

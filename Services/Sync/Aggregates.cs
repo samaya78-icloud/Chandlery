@@ -50,13 +50,15 @@ public static class Aggregates
         new(nameof(VesselDayStatus), typeof(VesselDayStatus)),
         new(nameof(WorkArrangementTable), typeof(WorkArrangementTable)),
         new(nameof(WorkArrangementSignOff), typeof(WorkArrangementSignOff)),
+        new(nameof(RiskAssessment), typeof(RiskAssessment)),
+        new(nameof(RaSignOff), typeof(RaSignOff)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
     public static bool IsAppendOnly(Type clr) => clr == typeof(WorklistTask) || clr == typeof(WorklistEntry)
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
-        || clr == typeof(TankInspectionReview)
+        || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
@@ -114,6 +116,8 @@ public static class Aggregates
         VesselDayStatus vs => vs.OwnerStage,
         WorkArrangementTable wa => wa.OwnerStage,
         WorkArrangementSignOff ws => ws.OwnerStage,
+        RiskAssessment ra => ra.OwnerStage,
+        RaSignOff rs => rs.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -144,6 +148,8 @@ public static class Aggregates
         else if (root is VesselDayStatus dayStatus) dayStatus.OwnerStage = stage;
         else if (root is WorkArrangementTable arrangement) arrangement.OwnerStage = stage;
         else if (root is WorkArrangementSignOff arrangementSign) arrangementSign.OwnerStage = stage;
+        else if (root is RiskAssessment assessment) assessment.OwnerStage = stage;
+        else if (root is RaSignOff signOff) signOff.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>
@@ -218,7 +224,13 @@ public static class Aggregates
                 if (id is null) continue;
                 keep.Add(id);
                 if (held.TryGetValue(id, out var current)) Build(nav, item, current);
-                else list.Add(Build(nav, item, Activator.CreateInstance(nav.TargetEntityType.ClrType)!));
+                else
+                {
+                    // A new child that arrives with its id already set (a risk assessment hazard) must be told it is new, or the save would try to update a row that is not there.
+                    var fresh = Build(nav, item, Activator.CreateInstance(nav.TargetEntityType.ClrType)!);
+                    list.Add(fresh);
+                    if (id is Guid newKey && newKey != Guid.Empty) entry.Context.Entry(fresh).State = EntityState.Added;
+                }
             }
             for (var i = list.Count - 1; i >= 0; i--)
                 if (!keep.Contains(keyProperty.PropertyInfo!.GetValue(list[i])!)) list.RemoveAt(i);

@@ -76,6 +76,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<RestBreachNote> RestBreachNotes => Set<RestBreachNote>();
     public DbSet<VesselDayStatus> VesselDayStatuses => Set<VesselDayStatus>();
     public DbSet<WorkArrangementTable> WorkArrangementTables => Set<WorkArrangementTable>();
+    public DbSet<RaCategory> RaCategories => Set<RaCategory>();
+    public DbSet<RaMatrixLabel> RaMatrixLabels => Set<RaMatrixLabel>();
+    public DbSet<RaMatrixBand> RaMatrixBands => Set<RaMatrixBand>();
+    public DbSet<RaTemplate> RaTemplates => Set<RaTemplate>();
+    public DbSet<RaTemplateActivity> RaTemplateActivities => Set<RaTemplateActivity>();
+    public DbSet<RaTemplateHazard> RaTemplateHazards => Set<RaTemplateHazard>();
+    public DbSet<RiskAssessment> RiskAssessments => Set<RiskAssessment>();
+    public DbSet<RaTeamMember> RaTeamMembers => Set<RaTeamMember>();
+    public DbSet<RaActivity> RaActivities => Set<RaActivity>();
+    public DbSet<RaHazard> RaHazards => Set<RaHazard>();
+    public DbSet<RaSignOff> RaSignOffs => Set<RaSignOff>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -701,6 +712,110 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
         });
 
+        // ---- risk assessment: the library is the office's master data; an assessment is one document with its team, activities and hazards ----
+        modelBuilder.Entity<RaCategory>(b =>
+        {
+            b.Property(c => c.Name).HasMaxLength(100);
+            b.Property(c => c.Code).HasMaxLength(10);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<RaMatrixLabel>(b =>
+        {
+            b.Property(l => l.Label).HasMaxLength(60);
+            b.HasOne<Company>().WithMany().HasForeignKey(l => l.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(l => CurrentCompanyId == null || l.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<RaMatrixBand>(b =>
+        {
+            b.Property(x => x.Name).HasMaxLength(40);
+            b.HasOne<Company>().WithMany().HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(x => CurrentCompanyId == null || x.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<RaTemplate>(b =>
+        {
+            b.Property(t => t.Name).HasMaxLength(200);
+            b.Property(t => t.JobDescription).HasMaxLength(2000);
+            b.Property(t => t.Contingency).HasMaxLength(2000);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<RaTemplateActivity>(b =>
+        {
+            b.Property(a => a.Title).HasMaxLength(300);
+            b.HasOne<Company>().WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<RaTemplate>().WithMany().HasForeignKey(a => a.TemplateId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(a => a.TemplateId);
+            b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<RaTemplateHazard>(b =>
+        {
+            b.Property(h => h.Hazard).HasMaxLength(500);
+            b.Property(h => h.Effect).HasMaxLength(1000);
+            b.Property(h => h.ExistingControls).HasMaxLength(2000);
+            b.Property(h => h.AdditionalControls).HasMaxLength(2000);
+            b.Property(h => h.Contingency).HasMaxLength(2000);
+            b.HasOne<Company>().WithMany().HasForeignKey(h => h.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<RaTemplate>().WithMany().HasForeignKey(h => h.TemplateId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(h => h.TemplateId);
+            b.HasQueryFilter(h => CurrentCompanyId == null || h.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<RiskAssessment>(b =>
+        {
+            b.Property(a => a.Code).HasMaxLength(40);
+            b.Property(a => a.CategoryName).HasMaxLength(100);
+            b.Property(a => a.CategoryCode).HasMaxLength(10);
+            b.Property(a => a.JobDescription).HasMaxLength(2000);
+            b.Property(a => a.Contingency).HasMaxLength(2000);
+            b.Property(a => a.HighestResidualBand).HasMaxLength(40);
+            b.Property(a => a.CreatedByName).HasMaxLength(120);
+            b.Property(a => a.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(a => a.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(a => a.Team).WithOne().HasForeignKey(t => t.AssessmentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(a => a.Activities).WithOne().HasForeignKey(t => t.AssessmentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(a => a.Hazards).WithOne().HasForeignKey(t => t.AssessmentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(a => new { a.CompanyId, a.Code, a.Version });   // not unique: the office and a vessel may each start the next version while apart, and both are kept
+            b.HasIndex(a => new { a.VesselId, a.CreatedAt });
+            b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<RaTeamMember>(b =>
+        {
+            b.Property(t => t.Name).HasMaxLength(120);
+            b.Property(t => t.Rank).HasMaxLength(80);
+            b.HasIndex(t => t.AssessmentId);
+        });
+        modelBuilder.Entity<RaActivity>(b =>
+        {
+            b.Property(t => t.Title).HasMaxLength(300);
+            b.HasIndex(t => t.AssessmentId);
+        });
+        modelBuilder.Entity<RaHazard>(b =>
+        {
+            b.Property(h => h.Hazard).HasMaxLength(500);
+            b.Property(h => h.Effect).HasMaxLength(1000);
+            b.Property(h => h.ExistingControls).HasMaxLength(2000);
+            b.Property(h => h.AdditionalControls).HasMaxLength(2000);
+            b.Property(h => h.ResidualReason).HasMaxLength(500);
+            b.Property(h => h.ResponsibleName).HasMaxLength(120);
+            b.Property(h => h.Contingency).HasMaxLength(2000);
+            b.Property(h => h.BandBefore).HasMaxLength(40);
+            b.Property(h => h.BandAfter).HasMaxLength(40);
+            b.HasIndex(h => h.AssessmentId);
+        });
+        modelBuilder.Entity<RaSignOff>(b =>
+        {
+            b.Property(s => s.Comment).HasMaxLength(1000);
+            b.Property(s => s.ReviewerName).HasMaxLength(120);
+            b.Property(s => s.ReviewerRank).HasMaxLength(80);
+            b.Property(s => s.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(s => s.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(s => s.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<RiskAssessment>().WithMany().HasForeignKey(s => s.AssessmentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(s => s.AssessmentId);
+            b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<PoDispatch>(b =>
         {
             b.Property(d => d.AcknowledgedByName).HasMaxLength(120);
@@ -939,7 +1054,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -1002,6 +1117,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         MachinerySpare sp => sp.Id.ToString(),
         Tank tk => tk.Name,
         TankInspection ti => ti.Code,
+        RiskAssessment ra => ra.Code,
         _ => "",
     };
 
@@ -1021,6 +1137,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<Requisition>().FirstOrDefault(e => e.Entity.Id == requisitionId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A requisition line was changed without loading its requisition; load the requisition with its lines.");
+        return parent;
+    }
+
+    /// <summary>A team member, activity or hazard is its own table but part of the assessment: changing one moves the assessment's version.</summary>
+    private EntityEntry? AssessmentOf(EntityEntry child)
+    {
+        var property = child.Property("AssessmentId");
+        var assessmentId = (Guid)(child.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<RiskAssessment>().FirstOrDefault(e => e.Entity.Id == assessmentId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of a risk assessment was changed without loading the assessment; load it with its team, activities and hazards.");
         return parent;
     }
 

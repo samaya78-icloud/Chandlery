@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
 @inject VesselGroupService Groups
+@inject RiskLibraryService RiskLibrary
 
 <PageTitle>Team · Chandlery</PageTitle>
 
@@ -51,6 +52,7 @@
                 <th class="px-4 py-3 font-medium">Email</th>
                 <th class="px-4 py-3 font-medium">Role</th>
                 <th class="px-4 py-3 font-medium">Vessel groups</th>
+                <th class="px-4 py-3 font-medium">Risk reviewer</th>
             </tr>
         </thead>
         <tbody>
@@ -81,6 +83,10 @@
                             <button @onclick="() => EditScope(u)" class="ml-2 text-xs font-medium text-indigo-600 hover:underline">Edit</button>
                         }
                     </td>
+                    <td class="px-4 py-3 text-slate-600">
+                        @if (u.Role == UserRole.CompanyAdmin) { <span class="text-xs text-slate-400">always (admin)</span> }
+                        else { <label class="flex items-center gap-2 text-xs"><input type="checkbox" checked="@u.IsRiskReviewer" @onchange="e => SetReviewerAsync(u, e.Value is true)" /> signs risk assessments</label> }
+                    </td>
                 </tr>
             }
         </tbody>
@@ -109,6 +115,13 @@
     private Guid? _scopeUserId;
     private HashSet<Guid> _scopeValues = new();
     private Actor _actor = Actor.System;
+
+    private async Task SetReviewerAsync(AppUser user, bool on)
+    {
+        _error = null;
+        try { await RiskLibrary.SetRiskReviewerAsync(_companyId, user.Id, on); user.IsRiskReviewer = on; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
 
     protected override async Task OnInitializedAsync()
     {

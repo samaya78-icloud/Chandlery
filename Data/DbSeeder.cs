@@ -233,6 +233,7 @@ public static class DbSeeder
             await Chandlery.Services.WorklistLists.EnsureDefaultsAsync(db, companyId);
             await Chandlery.Services.TankDefaults.EnsureDefaultsAsync(db, companyId);
             await Chandlery.Services.RestDefaults.EnsureDefaultsAsync(db, companyId);
+            await Chandlery.Services.RaDefaults.EnsureDefaultsAsync(db, companyId);
         }
         await db.SaveChangesAsync();
     }

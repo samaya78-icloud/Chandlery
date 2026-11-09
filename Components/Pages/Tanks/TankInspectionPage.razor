@@ -1,0 +1,232 @@
+@page "/tanks/inspections/{Id:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject TankInspectionService Svc
+
+<PageTitle>@(_detail?.Inspection.Code ?? "Inspection") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Inspection not found" Message="It may belong to another vessel, or tank inspection is switched off." />
+}
+else
+{
+    var insp = _detail.Inspection;
+    var tank = _detail.Tank;
+    var editable = TankStatus.IsEditable(_detail.Status);
+    var answered = insp.Results.Count(r => Value(r) != "");
+    var lastReturn = _detail.Reviews.LastOrDefault(r => r.Decision == ReviewDecision.Returned && r.ForSubmission == insp.SubmissionCount);
+
+    <PageHeader Eyebrow="@insp.Code" Title="@($"{tank.Code} · {tank.Name}")" Subtitle="@($"{TankLook.Label(tank.Type)} tank · {insp.TemplateName} (version {insp.TemplateVersion})")">
+        <Actions>
+            <a href="/tanks/inspections" class="btn btn-secondary">All inspections</a>
+            <a href="/tanks/@tank.Id/trend" class="btn btn-secondary">Trend</a>
+            <a href="/tanks" class="btn btn-secondary">Tank plan</a>
+        </Actions>
+    </PageHeader>
+
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @foreach (var note in _notes) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@note</div> }
+    @if (lastReturn is not null && editable)
+    {
+        <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span class="font-semibold">Returned by @lastReturn.ReviewerName:</span> @lastReturn.Comment</div>
+    }
+    @if (!editable)
+    {
+        <div class="mb-4 rounded-xl border border-line bg-surface-2/60 px-4 py-3 text-sm text-ink-2">
+            @(_detail.Status == InspectionStatus.Reviewed ? "This inspection has been reviewed and is locked. To correct it, record a new inspection." : "This inspection has been submitted and is waiting for the office. It can be changed again only if the office returns it.")
+        </div>
+    }
+
+    <div class="mb-5 flex flex-wrap items-center gap-2">
+        <StatusChip Value="@_detail.Status" />
+        <span class="text-sm text-muted">@answered of @insp.Results.Count answered</span>
+        @if (insp.ExceptionCount > 0) { <span class="chip" data-tone="@(insp.HasBadRating ? "danger" : "warning")">@insp.ExceptionCount exception(s)</span> }
+        @if (insp.SubmissionCount > 1) { <span class="chip chip-plain" data-tone="neutral">submitted @insp.SubmissionCount times</span> }
+        @if (insp.PlannedJobId is not null) { <a href="/pms/jobs/@insp.PlannedJobId" class="link text-sm">maintenance job</a> }
+    </div>
+
+    <div class="card mb-5 p-5 text-sm">
+        <div class="grid gap-4 md:grid-cols-3">
+            <label>Date of inspection <input type="date" class="input mt-1" max="@DateTime.UtcNow.ToString("yyyy-MM-dd")" @bind="_date" disabled="@(!editable)" /></label>
+            <label>Where <input class="input mt-1" @bind="_place" disabled="@(!editable)" placeholder="At sea, or the port" /></label>
+            <label>Inspected by <input class="input mt-1" @bind="_inspector" disabled="@(!editable)" /></label>
+            <label class="md:col-span-3">Work done <textarea class="textarea mt-1" rows="2" @bind="_workDone" disabled="@(!editable)"></textarea></label>
+            <label class="md:col-span-3">General comments <textarea class="textarea mt-1" rows="2" @bind="_general" disabled="@(!editable)"></textarea></label>
+        </div>
+    </div>
+
+    @foreach (var group in insp.Results.GroupBy(r => r.Group).OrderBy(g => g.Key))
+    {
+        <div class="card mb-5 p-4">
+            <h2 class="mb-1 flex items-baseline justify-between font-display text-lg font-extrabold text-ink">
+                <span>@TankLook.Label(group.Key)</span>
+                <span class="text-xs font-normal text-muted">@group.Count(r => Value(r) != "") of @group.Count()</span>
+            </h2>
+            @foreach (var r in group)
+            {
+                var value = Value(r);
+                var isException = value != "" && TankScales.IsException(r.Scale, r.ExceptionValues, value);
+                var comment = Comment(r);
+                <div class="border-t border-line/60 py-3 first:border-t-0">
+                    <div class="mb-2 flex flex-wrap items-center gap-2">
+                        <span class="font-medium text-ink">@r.CriterionName</span>
+                        @if (isException) { <span class="chip" data-tone="@(r.Scale == ScaleKind.Rating && value == "Bad" ? "danger" : "warning")">exception</span> }
+                        @if (r.WorklistTaskId is { } taskId) { <a href="/worklist/@taskId" class="link text-xs">worklist task</a> }
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        @foreach (var option in TankScales.Values(r.Scale))
+                        {
+                            var picked = value == option;
+                            <button type="button" title="@TankLook.Meaning(option)" disabled="@(!editable)" class="@OptionClass(r, option, picked)" @onclick="() => Pick(r, option)">@option</button>
+                        }
+                    </div>
+                    @if (editable || comment != "")
+                    {
+                        @if (isException || comment != "" || _commentOpen.Contains(r.Id))
+                        {
+                            <textarea class="textarea mt-2 w-full" rows="2" disabled="@(!editable)" placeholder="@(isException ? "Describe what was found" : "Comment")" value="@comment" @onchange="e => SetComment(r, e.Value as string)"></textarea>
+                        }
+                        else
+                        {
+                            <button type="button" class="link mt-1 text-xs" @onclick="() => _commentOpen.Add(r.Id)">+ Add a comment</button>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    @if (editable)
+    {
+        <div class="sticky bottom-0 z-10 -mx-1 mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface/95 p-3 shadow-lg backdrop-blur">
+            <button class="btn btn-secondary" @onclick="SaveAsync" disabled="@_busy">Save draft</button>
+            <button class="btn btn-primary" @onclick="SubmitAsync" disabled="@_busy">Submit for review</button>
+            <span class="text-sm text-muted">@(answered == insp.Results.Count ? "Everything is answered." : $"{insp.Results.Count - answered} still to answer (NI and NA count as answers).")</span>
+            @if (_savedAt is { } saved) { <span class="ml-auto text-xs text-muted">Saved @saved.ToString("HH:mm")</span> }
+        </div>
+    }
+
+    @if (!NodeContext.Current.IsVessel)
+    {
+        <TankReviewPanel CompanyId="_companyId" Detail="_detail" OnChanged="LoadAsync" />
+    }
+
+    @if (_detail.Reviews.Count > 0)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Office review</h2>
+            <ol class="space-y-3">
+                @foreach (var review in _detail.Reviews)
+                {
+                    <li class="border-l-2 border-line pl-4">
+                        <div class="flex flex-wrap items-baseline gap-2 text-xs text-muted">
+                            <span class="chip" data-tone="@(review.Decision == ReviewDecision.Accepted ? "success" : review.Decision == ReviewDecision.Returned ? "danger" : "info")">@(review.Decision switch { ReviewDecision.Started => "review started", ReviewDecision.Accepted => "accepted", _ => "returned" })</span>
+                            <span class="font-semibold text-ink">@review.ReviewerName</span><span>@review.At.ToString("dd MMM yyyy HH:mm")</span><span>submission @review.ForSubmission</span>
+                        </div>
+                        @if (review.Comment != "") { <p class="mt-1 whitespace-pre-line">@review.Comment</p> }
+                    </li>
+                }
+            </ol>
+        </div>
+    }
+
+    <LinkedTasks CompanyId="_companyId" LinkType="tankinspection" TargetId="insp.Id" />
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _busy;
+    private string? _error;
+    private List<string> _notes = [];
+    private InspectionDetail? _detail;
+    private DateTime? _date;
+    private string _place = "", _workDone = "", _general = "", _inspector = "";
+    private DateTime? _savedAt;
+    private readonly Dictionary<Guid, string> _values = new();
+    private readonly Dictionary<Guid, string> _comments = new();
+    private readonly HashSet<Guid> _commentOpen = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _detail = await Svc.GetAsync(_companyId, Id);
+        if (_detail is null) return;
+        var i = _detail.Inspection;
+        (_date, _place, _workDone, _general, _inspector) = (i.InspectedOn, i.Place, i.WorkDone, i.GeneralComments, i.InspectorName);
+        _values.Clear(); _comments.Clear();
+        foreach (var r in i.Results) { _values[r.Id] = r.Value; _comments[r.Id] = r.Comment; }
+    }
+
+    private string Value(TankInspectionResult r) => _values.GetValueOrDefault(r.Id, r.Value);
+    private string Comment(TankInspectionResult r) => _comments.GetValueOrDefault(r.Id, r.Comment);
+
+    private void Pick(TankInspectionResult r, string option)
+    {
+        if (!TankStatus.IsEditable(_detail!.Status)) return;
+        _values[r.Id] = Value(r) == option ? "" : option;
+    }
+
+    private void SetComment(TankInspectionResult r, string? text) => _comments[r.Id] = text ?? "";
+
+    private static string OptionClass(TankInspectionResult r, string option, bool picked)
+    {
+        const string baseClass = "min-h-[44px] min-w-[64px] rounded-xl border px-4 text-sm font-semibold transition disabled:cursor-default ";
+        if (!picked) return baseClass + "border-line bg-surface text-ink hover:bg-surface-2";
+        if (TankScales.IsException(r.Scale, r.ExceptionValues, option))
+            return baseClass + (r.Scale == ScaleKind.Rating && option == "Bad" ? "border-rose-600 bg-rose-600 text-white" : "border-amber-500 bg-amber-500 text-white");
+        return baseClass + "border-emerald-600 bg-emerald-600 text-white";
+    }
+
+    private InspectionEdit CurrentEdit() => new(_date ?? DateTime.UtcNow.Date, _place, _workDone, _general, _inspector,
+        _detail!.Inspection.Results.Select(r => new InspectionAnswer(r.Id, Value(r), Comment(r))).ToList());
+
+    private async Task SaveAsync()
+    {
+        _error = null; _notes = [];
+        _busy = true;
+        try
+        {
+            await Svc.SaveAsync(_companyId, Id, CurrentEdit(), _actor);
+            _savedAt = DateTime.Now;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null; _notes = [];
+        _busy = true;
+        try
+        {
+            await Svc.SaveAsync(_companyId, Id, CurrentEdit(), _actor);
+            var outcome = await Svc.SubmitAsync(_companyId, Id, _actor);
+            _notes.Add("Submitted for review.");
+            if (outcome.TasksRaised.Count > 0) _notes.Add($"Raised {outcome.TasksRaised.Count} worklist task(s) for the exceptions: {string.Join(", ", outcome.TasksRaised.Select(t => t.Code))}.");
+            if (outcome.JobCompleted) _notes.Add("The maintenance job has been completed.");
+            _notes.AddRange(outcome.Notes);
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; await LoadAsync(); }
+        finally { _busy = false; }
+    }
+}

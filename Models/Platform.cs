@@ -36,7 +36,8 @@ public enum DocType
     Delivery,
     Invoice,
     Worklist,
-    TankInspection
+    TankInspection,
+    RiskAssessment
 }
 
 /// <summary>
@@ -116,6 +117,7 @@ public static class VesselRules
         typeof(AppUser), typeof(NumberSequence), typeof(NodeInfo), typeof(CrewMember), typeof(DeliveryOrder), typeof(DeliveryOrderLine), typeof(WorklistTask), typeof(WorklistEntry),
         typeof(MachineryItem), typeof(PlannedJob), typeof(RunningHoursReading), typeof(JobCompletion), typeof(JobVerification),
         typeof(JobDeferralRequest), typeof(JobDeferralDecision), typeof(PlanChangeRequest), typeof(PlanChangeDecision), typeof(MachinerySpare), typeof(Tank), typeof(TankInspection), typeof(TankInspectionResult),
+        typeof(RiskAssessment), typeof(RaTeamMember), typeof(RaActivity), typeof(RaHazard), typeof(RaSignOff),
         typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine), typeof(PoApproval), typeof(PurchaseOrder), typeof(PoLine),
         typeof(RestEntry), typeof(RestSignOff), typeof(RestBreachNote), typeof(VesselDayStatus), typeof(WorkArrangementSignOff),      // the office's WorkArrangementTable is received, not written, onboard
     ];

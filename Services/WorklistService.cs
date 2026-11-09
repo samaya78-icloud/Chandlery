@@ -28,6 +28,8 @@ public static class WorklistLinkTypes
     public const string Order = "order";
     public const string Task = "task";
     public const string PmsJob = "pmsjob";
+    public const string TankInspection = "tankinspection";
+    public const string RiskAssessment = "riskassessment";
     public const string RestBreach = "restbreach";
 
     /// <summary>Where the link opens, on the office or on a vessel.</summary>
@@ -37,6 +39,8 @@ public static class WorklistLinkTypes
         Order => onVessel ? $"/vessel/orders/{target}" : $"/company/purchase-orders/{target}",
         Task => $"/worklist/{target}",
         PmsJob => $"/pms/jobs/{target}",
+        TankInspection => $"/tanks/inspections/{target}",
+        RiskAssessment => $"/risk/{target}",
         RestBreach => $"/rest/breaches?note={target}",
         _ => "#",
     };

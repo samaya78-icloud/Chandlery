@@ -1,0 +1,143 @@
+@page "/risk"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RiskLibraryService Library
+@inject RiskAssessmentService Svc
+
+<PageTitle>Risk assessments · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Risk assessments" Subtitle="Every assessment, newest first. Open one to write it, or to read what was signed.">
+    <Actions>
+        <a href="/risk/new" class="btn btn-primary">+ New assessment</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Risk assessment is switched off" Message="The module has not been switched on for this vessel." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Category
+            <select class="select mt-1" @bind="_category">
+                <option value="">All categories</option>
+                @foreach (var c in _categories) { <option value="@c.Code">@c.Name</option> }
+            </select>
+        </label>
+        <label>Search <input class="input mt-1" @bind="_search" @bind:event="oninput" placeholder="Reference or job" /></label>
+        <label class="flex items-center gap-2 pb-2"><input type="checkbox" @bind="_dueOnly" /> Due for review</label>
+        <label class="flex items-center gap-2 pb-2"><input type="checkbox" @bind="_showSuperseded" /> Show replaced versions</label>
+        <div class="w-full">
+            <div class="mb-1">Status</div>
+            <div class="flex flex-wrap gap-2">
+                <button class="btn btn-sm @(_status is null ? "btn-primary" : "btn-secondary")" @onclick="() => _status = null">All (@_rows.Count(r => Base(r)))</button>
+                @foreach (var s in Enum.GetValues<RaStatus>())
+                {
+                    var count = _rows.Count(r => Base(r) && r.Status == s);
+                    <button class="btn btn-sm @(_status == s ? "btn-primary" : "btn-secondary")" @onclick="() => _status = s">@StatusChip.Describe(s).Label (@count)</button>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (Shown().Count == 0)
+    {
+        <EmptyState Title="No assessments" Message="Nothing matches. Start a new assessment, or clear the filters." />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="p-3">Assessment</th><th class="p-3">Job</th><th class="p-3">Category</th><th class="p-3">Vessel</th><th class="p-3">Status</th><th class="p-3">Highest risk left</th><th class="p-3">Next review</th></tr>
+                </thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var r in Shown())
+                    {
+                        var a = r.Assessment;
+                        var review = RaReview.StateOf(r.NextReview, Today);
+                        <tr class="@(r.Superseded ? "opacity-60" : "")">
+                            <td class="p-3"><a href="/risk/@a.Id" class="link font-mono text-xs font-semibold">@a.Code v@(a.Version)</a>
+                                @if (a.Kind != RaKind.Initial) { <span class="ml-1 text-xs text-muted">@a.Kind.ToString().ToLowerInvariant()</span> }</td>
+                            <td class="p-3">@Trim(a.JobDescription)</td>
+                            <td class="p-3">@a.CategoryName</td>
+                            <td class="p-3">@VesselName(a.VesselId)</td>
+                            <td class="p-3"><StatusChip Value="@r.Status" />@if (r.Superseded) { <span class="chip ml-1" data-tone="neutral">replaced</span> }</td>
+                            <td class="p-3">
+                                @if (a.SubmissionCount == 0) { <span class="text-muted">not submitted</span> }
+                                else { <span class="chip" data-tone="@_matrix.ToneOf(a.HighestResidualBand)">@a.HighestResidualBand · @a.HighestResidualFactor</span> }
+                            </td>
+                            <td class="p-3">
+                                @if (r.NextReview is { } due && !r.Superseded)
+                                {
+                                    <span>@due.ToString("dd MMM yyyy")</span> <StatusChip Value="@review" />
+                                }
+                                else { <span class="text-muted">-</span> }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static DateTime Today => DateTime.UtcNow.Date;
+
+    private Guid _companyId, _vesselId;
+    private bool _loaded, _dueOnly, _showSuperseded;
+    private RaStatus? _status;
+    private string _category = "", _search = "";
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<RaCategory> _categories = [];
+    private List<AssessmentRow> _rows = [];
+    private RiskMatrix _matrix = RiskMatrix.Default;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _vessels = await Library.EnabledVesselsAsync(_companyId);
+        var enabled = _vessels.Select(v => v.Id).ToHashSet();
+        _categories = await Library.ListCategoriesAsync(_companyId);
+        _matrix = (await Library.GetMatrixAsync(_companyId)).Matrix;
+        _rows = (await Svc.ListAsync(_companyId)).Where(r => enabled.Contains(r.Assessment.VesselId)).ToList();
+        _loaded = true;
+    }
+
+    /// <summary>The filters that do not include the status, so the status buttons can show how many each would give.</summary>
+    private bool Base(AssessmentRow r)
+    {
+        var a = r.Assessment;
+        if (_vesselId != Guid.Empty && a.VesselId != _vesselId) return false;
+        if (_category != "" && a.CategoryCode != _category) return false;
+        if (!_showSuperseded && r.Superseded) return false;
+        if (_search.Trim() is { Length: > 0 } text && !a.Code.Contains(text, StringComparison.OrdinalIgnoreCase) && !a.JobDescription.Contains(text, StringComparison.OrdinalIgnoreCase)) return false;
+        if (_dueOnly && RaReview.StateOf(r.NextReview, Today) is not (RaReviewState.DueSoon or RaReviewState.Overdue)) return false;
+        return true;
+    }
+
+    private List<AssessmentRow> Shown() => _rows.Where(r => Base(r) && (_status is null || r.Status == _status)).ToList();
+
+    private string VesselName(Guid id) => _vessels.FirstOrDefault(v => v.Id == id).Name ?? "";
+
+    private static string Trim(string text) => text.Length > 80 ? text[..80] + "…" : text;
+}

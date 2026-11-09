@@ -336,12 +336,22 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         return reading;
     }
 
-    public async Task<JobCompletion> CompleteJobAsync(Guid companyId, NewCompletion input, Actor actor)
+    public Task<JobCompletion> CompleteJobAsync(Guid companyId, NewCompletion input, Actor actor) => CompleteCoreAsync(companyId, input, actor, byInspection: false)!;
+
+    /// <summary>
+    /// Completes an inspection job because its tank inspection was submitted. Returns null when planned maintenance is off for the vessel (the inspection stands on its own then).
+    /// </summary>
+    public Task<JobCompletion?> CompleteJobByInspectionAsync(Guid companyId, Guid jobId, DateTime doneDate, string comments, Actor actor)
+        => CompleteCoreAsync(companyId, new NewCompletion(jobId, doneDate, Comments: comments), actor, byInspection: true);
+
+    private async Task<JobCompletion?> CompleteCoreAsync(Guid companyId, NewCompletion input, Actor actor, bool byInspection)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var job = await db.PlannedJobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == input.PlannedJobId && j.CompanyId == companyId) ?? throw new InvalidOperationException("Job not found.");
+        if (byInspection && !await ModuleGate.IsEnabledAsync(db, companyId, job.VesselId, PolicyModules.Pms)) return null;
         await RequireEnabledAsync(db, companyId, job.VesselId);
+        if (job.TankId is not null && !byInspection) throw new InvalidOperationException("This job is done by inspecting the tank: complete it by submitting the tank inspection.");
         if (!job.IsActive) throw new InvalidOperationException("This job is no longer on the plan.");
         if (input.DoneDate.Date > DateTime.UtcNow.Date) throw new InvalidOperationException("A job cannot be done in the future.");
         if (input.HoursAtDone is < 0) throw new InvalidOperationException("Running hours cannot be negative.");
@@ -446,7 +456,7 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- deferrals ----
 
     /// <summary>Asks to put a job off to a later date. It changes nothing until it is approved.</summary>
-    public async Task<JobDeferralRequest> RequestDeferralAsync(Guid companyId, Guid jobId, DateTime requestedDue, string reason, Actor actor)
+    public async Task<JobDeferralRequest> RequestDeferralAsync(Guid companyId, Guid jobId, DateTime requestedDue, string reason, Actor actor, Guid? riskAssessmentId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -463,10 +473,20 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         if (sameCycle.Count > 0 && await db.JobDeferralDecisions.AsNoTracking().CountAsync(d => sameCycle.Contains(d.RequestId)) < sameCycle.Count)
             throw new InvalidOperationException("A request for this job is already waiting for a decision.");
 
+        // A signed risk assessment of this vessel may be named (the company can insist on one for a critical job).
+        var riskLabel = "";
+        if (riskAssessmentId is { } riskId)
+        {
+            var risk = await RiskAssessmentService.InForceByIdAsync(db, companyId, job.VesselId, riskId) ?? throw new InvalidOperationException("The risk assessment has to be signed, not replaced, and for this vessel.");
+            riskLabel = $"{risk.Code} v{risk.Version}";
+        }
+        else if (job.IsCritical && await RiskAssessmentService.RequiredForCriticalDeferralAsync(db, companyId, job.VesselId))
+            throw new InvalidOperationException("This is a critical job: name the signed risk assessment that covers putting it off.");
+
         var request = new JobDeferralRequest
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = job.VesselId, PlannedJobId = jobId, CurrentDueDate = Day(due), RequestedDueDate = requested,
-            LastDoneAtRequest = job.LastDoneDate, Reason = reason.Trim(), IsCritical = job.IsCritical, RequestedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
+            LastDoneAtRequest = job.LastDoneDate, Reason = reason.Trim(), IsCritical = job.IsCritical, RiskAssessmentId = riskAssessmentId, RiskAssessmentLabel = riskLabel, RequestedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.JobDeferralRequests.Add(request);
         await db.SaveChangesAsync();
@@ -585,6 +605,24 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
         job.FixedAnchorDate = job.Anchor == PmsAnchor.FixedCalendar ? job.FixedAnchorDate ?? job.StartDate : null;
         await db.SaveChangesAsync();
         await PmsProjection.RefreshJobAsync(db, job.Id);
+    }
+
+    /// <summary>Says which tank an inspection job is done on (or clears it). The tank must be on the same vessel; only the side that made the job may change it.</summary>
+    public async Task SetJobTankAsync(Guid companyId, Guid jobId, Guid? tankId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var job = await db.PlannedJobs.FirstOrDefaultAsync(j => j.Id == jobId && j.CompanyId == companyId) ?? throw new InvalidOperationException("Job not found.");
+        await RequireEnabledAsync(db, companyId, job.VesselId);
+        if (tankId is { } t)
+        {
+            if (job.Type != PmsJobType.Inspection) throw new InvalidOperationException("Only an inspection job can be done on a tank.");
+            var tank = await db.Tanks.AsNoTracking().FirstOrDefaultAsync(x => x.Id == t && x.CompanyId == companyId) ?? throw new InvalidOperationException("Tank not found.");
+            if (tank.VesselId != job.VesselId) throw new InvalidOperationException("That tank is on another vessel.");
+            if (!tank.IsActive) throw new InvalidOperationException("That tank is no longer in use.");
+        }
+        job.TankId = tankId;
+        await db.SaveChangesAsync();
     }
 
     public async Task UpdateMachineryAsync(Guid companyId, Guid itemId, MachineryEdit edit)

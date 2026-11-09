@@ -26,6 +26,18 @@ public class TankService(IDbContextFactory<ChandleryDbContext> factory)
         return await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.TankInspection);
     }
 
+    /// <summary>The vessels tank inspection is on for (with their group, for "all vessels of a group") and the company's vessel groups.</summary>
+    public async Task<(List<(Guid Id, string Name, Guid? GroupId)> Vessels, List<VesselGroup> Groups)> VesselChoicesAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var enabled = (await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.TankInspection)).Select(v => v.Id).ToHashSet();
+        var vessels = (await db.Vessels.AsNoTracking().Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).ToListAsync())
+            .Where(v => enabled.Contains(v.Id)).Select(v => (v.Id, v.Name, v.GroupId)).ToList();
+        var groups = await db.VesselGroups.AsNoTracking().Where(g => g.CompanyId == companyId).OrderBy(g => g.Level).ThenBy(g => g.Name).ToListAsync();
+        return (vessels, groups);
+    }
+
     public async Task<bool> IsEnabledForCompanyAsync(Guid companyId) => (await EnabledVesselsAsync(companyId)).Count > 0;
 
     // ---- tanks ----
@@ -77,6 +89,13 @@ public class TankService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
+    public async Task<Tank?> GetTankAsync(Guid companyId, Guid tankId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.Tanks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == tankId && t.CompanyId == companyId);
+    }
+
     public async Task<List<Tank>> ListTanksAsync(Guid companyId, Guid vesselId, bool includeInactive = false)
     {
         await using var db = await factory.CreateDbContextAsync();
@@ -84,6 +103,84 @@ public class TankService(IDbContextFactory<ChandleryDbContext> factory)
         var query = db.Tanks.AsNoTracking().Where(t => t.CompanyId == companyId && t.VesselId == vesselId);
         if (!includeInactive) query = query.Where(t => t.IsActive);
         return await query.OrderBy(t => t.Code).ToListAsync();
+    }
+
+    /// <summary>The vessel's tanks, each with what its latest submitted inspection found (the newest by inspection date).</summary>
+    public async Task<List<TankPlanRow>> PlanAsync(Guid companyId, Guid vesselId, bool includeInactive = false)
+    {
+        var tanks = await ListTanksAsync(companyId, vesselId, includeInactive);
+        if (tanks.Count == 0) return [];
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var ids = tanks.Select(t => t.Id).ToList();
+        var submitted = (await db.TankInspections.AsNoTracking().Where(i => ids.Contains(i.TankId) && i.SubmissionCount > 0)
+            .Select(i => new { i.TankId, i.InspectedOn, i.CreatedAt, i.ExceptionCount, i.HasBadRating }).ToListAsync()).ToLookup(i => i.TankId);
+        return tanks.Select(t =>
+        {
+            var mine = submitted[t.Id].ToList();
+            var latest = mine.OrderByDescending(i => i.InspectedOn).ThenByDescending(i => i.CreatedAt).FirstOrDefault();
+            return new TankPlanRow(t, mine.Count, latest?.InspectedOn, latest?.ExceptionCount ?? 0, latest?.HasBadRating ?? false);
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Copies one vessel's tanks to others: a tank is matched by its code and added when the target has none with that code (active or not), with the same type, plan position and
+    /// structural data. Nothing the target already has is changed, so it can be repeated; each target is copied all or nothing. Office only.
+    /// </summary>
+    public async Task<List<TankCopyResult>> CopyTanksAsync(Guid companyId, Guid sourceVesselId, IEnumerable<Guid> targetVesselIds, Actor actor)
+    {
+        await using var check = await factory.CreateDbContextAsync();
+        check.CurrentCompanyId = companyId;
+        if (check.Node.IsVessel) throw new InvalidOperationException("Tank lists are copied by the office.");
+        var enabled = (await ModuleGate.EnabledVesselsAsync(check, companyId, PolicyModules.TankInspection)).ToDictionary(v => v.Id, v => v.Name);
+        if (!enabled.ContainsKey(sourceVesselId)) throw new InvalidOperationException("Tank inspection is not switched on for the vessel to copy from.");
+        var source = await check.Tanks.AsNoTracking().Where(t => t.VesselId == sourceVesselId && t.IsActive).OrderBy(t => t.Code).ToListAsync();
+        var results = new List<TankCopyResult>();
+        foreach (var target in targetVesselIds.Distinct().Where(t => t != sourceVesselId))
+        {
+            var name = enabled.GetValueOrDefault(target) ?? (await check.Vessels.AsNoTracking().FirstOrDefaultAsync(v => v.Id == target))?.Name ?? target.ToString();
+            if (!enabled.ContainsKey(target)) { results.Add(new TankCopyResult(name, 0, 0, "Tank inspection is off for this vessel.")); continue; }
+            await using var db = await factory.CreateDbContextAsync();
+            db.CurrentCompanyId = companyId;
+            var have = (await db.Tanks.AsNoTracking().Where(t => t.VesselId == target).Select(t => t.Code).ToListAsync()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            int added = 0, skipped = 0;
+            foreach (var s in source)
+            {
+                if (!have.Add(s.Code)) { skipped++; continue; }
+                db.Tanks.Add(new Tank
+                {
+                    Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = target, Code = s.Code, Name = s.Name, Type = s.Type,
+                    PlanX = s.PlanX, PlanY = s.PlanY, PlanWidth = s.PlanWidth, PlanHeight = s.PlanHeight,
+                    SteelGradeDeck = s.SteelGradeDeck, SteelGradeBottom = s.SteelGradeBottom, SteelGradeSide = s.SteelGradeSide, SteelGradeBulkhead = s.SteelGradeBulkhead,
+                    OriginalCoating = s.OriginalCoating, CoatedAreaM2 = s.CoatedAreaM2, CathodicProtection = s.CathodicProtection, ProtectedAreaM2 = s.ProtectedAreaM2,
+                    CreatedByName = actor.Name, CreatedAt = DateTime.UtcNow,
+                });
+                added++;
+            }
+            if (added > 0) await db.SaveChangesAsync();
+            results.Add(new TankCopyResult(name, added, skipped));
+        }
+        return results;
+    }
+
+    // ---- the words a reviewer is shown highlighted (office) ----
+
+    /// <summary>The company's review keywords as typed (blank means the standard list) and the list that is in effect.</summary>
+    public async Task<(string Typed, List<string> Effective)> GetKeywordsAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var typed = await db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.TankReviewKeywords).FirstOrDefaultAsync() ?? "";
+        return (typed, TankKeywords.Effective(typed));
+    }
+
+    public async Task SaveKeywordsAsync(Guid companyId, string? text)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        var company = await db.Companies.FirstOrDefaultAsync(c => c.Id == companyId) ?? throw new InvalidOperationException("Company not found.");
+        company.TankReviewKeywords = string.Join(", ", TankKeywords.Parse(text));
+        await db.SaveChangesAsync();
     }
 
     // ---- the checklist library (office) ----

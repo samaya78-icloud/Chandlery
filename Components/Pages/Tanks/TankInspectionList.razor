@@ -1,0 +1,107 @@
+@page "/tanks/inspections"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject TankService Tanks
+@inject TankInspectionService Svc
+
+<PageTitle>Tank inspections · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Tank inspections" Subtitle="Every inspection, newest first. Open one to fill it in, or to see how the office answered.">
+    <Actions>
+        <a href="/tanks/inspections/new" class="btn btn-primary">+ New inspection</a>
+        <a href="/tanks" class="btn btn-secondary">Tank plan</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Tank inspection is switched off" Message="The module has not been switched on for this vessel." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <div>
+            <div class="mb-1">Status</div>
+            <div class="flex flex-wrap gap-2">
+                <button class="btn btn-sm @(_status is null ? "btn-primary" : "btn-secondary")" @onclick="() => _status = null">All (@_rows.Count(InVessel))</button>
+                @foreach (var s in Enum.GetValues<InspectionStatus>())
+                {
+                    var count = _rows.Count(r => InVessel(r) && r.Status == s);
+                    <button class="btn btn-sm @(_status == s ? "btn-primary" : "btn-secondary")" @onclick="() => _status = s">@StatusChip.Describe(s).Label (@count)</button>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (Shown().Count == 0)
+    {
+        <EmptyState Title="No inspections" Message="Nothing matches. Start a new inspection from here or from a tank on the plan." />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="p-3">Inspection</th><th class="p-3">Tank</th><th class="p-3">Date</th><th class="p-3">Where</th><th class="p-3">Inspector</th><th class="p-3">Status</th><th class="p-3">Result</th></tr>
+                </thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var r in Shown())
+                    {
+                        var i = r.Inspection;
+                        <tr>
+                            <td class="p-3"><a href="/tanks/inspections/@i.Id" class="link font-mono text-xs font-semibold">@i.Code</a></td>
+                            <td class="p-3">@r.TankCode · @r.TankName</td>
+                            <td class="p-3">@i.InspectedOn.ToString("dd MMM yyyy")</td>
+                            <td class="p-3">@i.Place</td>
+                            <td class="p-3">@i.InspectorName</td>
+                            <td class="p-3"><StatusChip Value="@r.Status" /></td>
+                            <td class="p-3">
+                                @if (i.SubmissionCount == 0) { <span class="text-muted">not submitted</span> }
+                                else if (i.ExceptionCount == 0) { <span class="chip" data-tone="success">no exceptions</span> }
+                                else { <span class="chip" data-tone="@(i.HasBadRating ? "danger" : "warning")">@i.ExceptionCount exception(s)</span> }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private bool _loaded;
+    private InspectionStatus? _status;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<InspectionRow> _rows = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _vessels = await Tanks.EnabledVesselsAsync(_companyId);
+        var enabled = _vessels.Select(v => v.Id).ToHashSet();
+        _rows = (await Svc.ListAsync(_companyId)).Where(r => enabled.Contains(r.Inspection.VesselId)).ToList();
+        _loaded = true;
+    }
+
+    private bool InVessel(InspectionRow r) => _vesselId == Guid.Empty || r.Inspection.VesselId == _vesselId;
+
+    private List<InspectionRow> Shown() => _rows.Where(r => InVessel(r) && (_status is null || r.Status == _status)).ToList();
+}
