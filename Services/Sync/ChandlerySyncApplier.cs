@@ -318,6 +318,9 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         // A reviewed inspection is locked: a changed copy of it arriving (a resend, or a vessel that was not told) is ignored, as the rule onboard says.
         if (existing is TankInspection held && TankStatus.Of(held.SubmissionCount, await db.TankInspectionReviews.AsNoTracking().Where(r => r.InspectionId == held.Id).ToListAsync(ct)) == InspectionStatus.Reviewed) return;
 
+        // A signed risk assessment is locked in the same way: a changed copy of it is ignored.
+        if (existing is RiskAssessment signedCopy && RaStatusRules.Of(signedCopy.SubmissionCount, await db.RaSignOffs.AsNoTracking().Where(s => s.AssessmentId == signedCopy.Id).ToListAsync(ct)) == RaStatus.Signed) return;
+
         // A vessel may only send for the vessel it runs.
         if (atHub)
         {

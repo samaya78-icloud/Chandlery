@@ -1,6 +1,6 @@
 # 06a. Risk assessment: plan (implements spec 06 in stages)
 
-Status: **approved 2026-11-09. R1 in progress.** Reuses the patterns proven in Worklist, PMS and Tank Inspection: records written once, state worked out from them, one owner per record, module switch ("Risk Assessment"), office master data for templates, Worklist tasks, `ModuleGate`, `[VesselAllowed]` with the lockdown test.
+Status: **approved 2026-11-09. R1 (foundation: library and assessment tables with an additive migration, scoring, status, review date and version rules as pure functions, assessment service with start, save, submit, sign-off and new version, sync wiring, lock in the applier, starting library, 6 rule tests and 5 two-database tests) built and pushed 2026-11-09; R2 (office library) in progress, R3 to R6 to do.** Reuses the patterns proven in Worklist, PMS and Tank Inspection: records written once, state worked out from them, one owner per record, module switch ("Risk Assessment"), office master data for templates, Worklist tasks, `ModuleGate`, `[VesselAllowed]` with the lockdown test.
 
 ## 1. The core idea
 An assessment is a **document written by one side, signed once, then frozen**:
@@ -55,3 +55,9 @@ Attachments and permits, per-category matrices, templates by ship type, PMS enfo
 - **Snapshots versus matrix changes.** Hazards store their scores and band at the time, so changing the matrix never changes history; the editor shows the stored band, with a plain note when the current matrix would give another.
 - **Duplicate tasks.** One task per control action and one reminder per assessment chain, each remembered on its record.
 - **Version chain across sides.** A new version made on one side while the other still shows the old one: both versions are valid documents; Superseded is worked out from the newest signed version in the chain, so both sides agree once synced.
+
+## 8. Decisions made while building R1
+- **Reference code** uses the platform's existing format (`MVSF-RA-2026-0001`, an H after the year when started ashore) rather than `RA-{origin}-{category}-{seq}`, so numbering works the same for every document. The category is stored on the assessment and shown beside the code. Versions share the code and differ in a version number (`v2`).
+- **Sharing (R4)** will copy a signed assessment to the chosen vessels as a new assessment for that vessel that remembers its source, rather than giving one assessment several vessels. Sync scope stays one vessel per assessment, as for tank inspections.
+- **Sign-off** is allowed on either side (a vessel can sign onboard, the office ashore); the "Risk reviewer" permission is added in R4 with the screens.
+- **Shared codec fix:** a new child row that arrives with its id already set (a hazard added in a correction) is now marked as new when a document is applied; before, only children without ids of their own were added this way.

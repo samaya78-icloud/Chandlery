@@ -174,7 +174,8 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         if (aggregate.Clr == typeof(WorklistTask)) return MasterData.ReadGuid(payload, nameof(WorklistTask.VesselId));
         if (aggregate.Clr == typeof(MachineryItem) || aggregate.Clr == typeof(PlannedJob) || aggregate.Clr == typeof(RunningHoursReading) || aggregate.Clr == typeof(JobCompletion)
             || aggregate.Clr == typeof(JobDeferralRequest) || aggregate.Clr == typeof(JobDeferralDecision) || aggregate.Clr == typeof(PlanChangeRequest) || aggregate.Clr == typeof(PlanChangeDecision) || aggregate.Clr == typeof(MachinerySpare)
-            || aggregate.Clr == typeof(Tank) || aggregate.Clr == typeof(TankInspection) || aggregate.Clr == typeof(TankInspectionReview))
+            || aggregate.Clr == typeof(Tank) || aggregate.Clr == typeof(TankInspection) || aggregate.Clr == typeof(TankInspectionReview)
+            || aggregate.Clr == typeof(RiskAssessment) || aggregate.Clr == typeof(RaSignOff))
             return MasterData.ReadGuid(payload, nameof(PlannedJob.VesselId));
         if (aggregate.Clr == typeof(JobVerification))
         {
@@ -405,6 +406,8 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
                 .OrderBy(m => m.CreatedAt), ct, parentsFirst: true);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.PlannedJobs.IgnoreQueryFilters().Where(j => j.VesselId == scope.VesselId && j.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.Tanks.IgnoreQueryFilters().Where(t => t.VesselId == scope.VesselId && t.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.RiskAssessments.IgnoreQueryFilters().Where(a => a.VesselId == scope.VesselId && a.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.RaSignOffs.IgnoreQueryFilters().Where(s => s.VesselId == scope.VesselId && s.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.MachinerySpares.IgnoreQueryFilters().Where(m => m.VesselId == scope.VesselId && m.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.RunningHoursReadings.IgnoreQueryFilters().Where(r => r.VesselId == scope.VesselId && r.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.JobCompletions.IgnoreQueryFilters().Where(c => c.VesselId == scope.VesselId && c.OwnerStage == SyncStages.Office), ct);

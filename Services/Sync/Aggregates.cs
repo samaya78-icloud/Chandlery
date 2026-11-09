@@ -44,13 +44,15 @@ public static class Aggregates
         new(nameof(Tank), typeof(Tank)),
         new(nameof(TankInspection), typeof(TankInspection)),
         new(nameof(TankInspectionReview), typeof(TankInspectionReview)),
+        new(nameof(RiskAssessment), typeof(RiskAssessment)),
+        new(nameof(RaSignOff), typeof(RaSignOff)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
     public static bool IsAppendOnly(Type clr) => clr == typeof(WorklistTask) || clr == typeof(WorklistEntry)
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
-        || clr == typeof(TankInspectionReview);
+        || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
     private static readonly Dictionary<Type, AggregateType> ByClr = Types.ToDictionary(t => t.Clr);
@@ -101,6 +103,8 @@ public static class Aggregates
         Tank tk => tk.OwnerStage,
         TankInspection ti => ti.OwnerStage,
         TankInspectionReview tr => tr.OwnerStage,
+        RiskAssessment ra => ra.OwnerStage,
+        RaSignOff rs => rs.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -125,6 +129,8 @@ public static class Aggregates
         else if (root is Tank tank) tank.OwnerStage = stage;
         else if (root is TankInspection inspection) inspection.OwnerStage = stage;
         else if (root is TankInspectionReview tankReview) tankReview.OwnerStage = stage;
+        else if (root is RiskAssessment assessment) assessment.OwnerStage = stage;
+        else if (root is RaSignOff signOff) signOff.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>
@@ -199,7 +205,13 @@ public static class Aggregates
                 if (id is null) continue;
                 keep.Add(id);
                 if (held.TryGetValue(id, out var current)) Build(nav, item, current);
-                else list.Add(Build(nav, item, Activator.CreateInstance(nav.TargetEntityType.ClrType)!));
+                else
+                {
+                    // A new child that arrives with its id already set (a risk assessment hazard) must be told it is new, or the save would try to update a row that is not there.
+                    var fresh = Build(nav, item, Activator.CreateInstance(nav.TargetEntityType.ClrType)!);
+                    list.Add(fresh);
+                    if (id is Guid newKey && newKey != Guid.Empty) entry.Context.Entry(fresh).State = EntityState.Added;
+                }
             }
             for (var i = list.Count - 1; i >= 0; i--)
                 if (!keep.Contains(keyProperty.PropertyInfo!.GetValue(list[i])!)) list.RemoveAt(i);
