@@ -1,0 +1,23 @@
+@inject RestReviewService Review
+@inject AuthenticationStateProvider Auth
+
+@if (_a is not null)
+{
+    <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard Label="Hours of rest: not recorded" Value="@_a.MissingDays.ToString("N0")" Hint="Days since your first record" Href="/rest" Tone="@(_a.MissingDays > 0 ? "warning" : "success")" />
+        <StatCard Label="Hours of rest: to sign" Value="@_a.ToSign.ToString("N0")" Hint="@(_a.IsMaster ? $"{_a.ToEndorse} more waiting for your signature as Master" : "Periods you have not signed, or must sign again")" Href="/rest/sign" Tone="@(_a.ToSign + _a.ToEndorse > 0 ? "warning" : "success")" />
+        <StatCard Label="Hours of rest: breaches" Value="@((_a.MyUnexplained + _a.ToAcknowledge).ToString("N0"))" Hint="@(_a.IsMaster ? $"{_a.MyUnexplained} of yours to explain · {_a.ToAcknowledge} for you to acknowledge" : "Waiting for your explanation")" Href="/rest/breaches" Tone="@(_a.MyUnexplained + _a.ToAcknowledge > 0 ? "danger" : "success")" />
+    </div>
+}
+
+@code {
+    private RestAttention? _a;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!NodeContext.Current.IsVessel) return;
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        if (Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId))
+            _a = await Review.AttentionAsync(companyId, Actor.From(user));
+    }
+}

@@ -1,0 +1,327 @@
+@page "/rest/breaches"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RestHoursService Svc
+@inject RestReviewService Review
+
+<PageTitle>Breaches · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Breaches of the hours of rest"
+            Subtitle="A breach is never hidden. The seafarer says what happened, then the Master acknowledges it, or declares it an exception (emergency, drill, overriding need), which owes compensatory rest. The office sees all of it.">
+    <Actions>
+        <a href="/rest/sign?crew=@_crewId&month=@_month.ToString("yyyy-MM")" class="btn btn-secondary">Sign hours</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Rest hours are switched off" Message="The Rest Hours module has not been switched on for this vessel." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" value="@_vesselId" @onchange="OnVesselChanged">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Seafarer
+            <select class="select mt-1" value="@_crewId" @onchange="OnCrewChanged" disabled="@(!CanSeeEveryone)">
+                @if (CanSeeEveryone) { <option value="@Guid.Empty">Everyone</option> }
+                @foreach (var c in _crew) { <option value="@c.Id">@c.FullName · @c.Rank</option> }
+            </select>
+        </label>
+        <div class="flex items-end gap-1">
+            <button class="btn btn-secondary" @onclick="() => MoveMonth(-1)">&lsaquo;</button>
+            <label>Month
+                <input type="month" class="input mt-1 w-44" value="@_month.ToString("yyyy-MM")" @onchange="OnMonthChanged" />
+            </label>
+            <button class="btn btn-secondary" @onclick="() => MoveMonth(1)">&rsaquo;</button>
+        </div>
+    </div>
+
+    @if (_groups.Count == 0)
+    {
+        <EmptyState Title="No breaches" Message="@($"Nothing broke the limits in {_month:MMMM yyyy}.")" />
+    }
+
+    <div class="space-y-4">
+        @foreach (var g in _groups)
+        {
+            var key = g.Key;
+            <div class="card p-5 @(key == _focus ? "ring-2 ring-accent-500" : "")" id="g-@key">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="font-display text-lg font-bold text-ink">@g.Name <span class="text-base font-normal text-muted">· @g.Rank</span></h3>
+                        <p class="text-sm text-muted">@g.Date.ToString("dddd d MMMM yyyy")</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <StatusChip Label="@StatusLabel(g.Overall)" Tone="@StatusTone(g.Overall)" />
+                        @if (g.TaskId is { } taskId) { <a class="btn btn-ghost btn-sm" href="/worklist/@taskId">Follow-up task</a> }
+                        <a class="btn btn-ghost btn-sm" href="/rest?crew=@g.CrewId&date=@g.Date.ToString("yyyy-MM-dd")">Open the day</a>
+                    </div>
+                </div>
+
+                <ul class="mt-3 space-y-1 text-sm">
+                    @foreach (var b in g.Breaches)
+                    {
+                        <li class="flex flex-wrap items-baseline gap-x-2">
+                            <span class="text-rose-700">@b.Finding.Message</span>
+                            @if (b.OwedMinutes > 0 && b.Status == BreachStatus.Excepted)
+                            {
+                                <span class="text-xs @(b.Compensatory is null ? "text-amber-700" : "text-muted")">
+                                    @(b.Compensatory is null ? $"{RestRules.Hm(b.OwedMinutes)} of compensatory rest owed" : "compensatory rest given")
+                                </span>
+                            }
+                            @if (b.Status == BreachStatus.Stale) { <span class="text-xs text-amber-700">A day changed after the Master looked at this.</span> }
+                        </li>
+                    }
+                </ul>
+
+                @if (g.Notes.Count > 0)
+                {
+                    <ol class="mt-3 space-y-2 border-l-2 border-line pl-4 text-sm">
+                        @foreach (var n in g.Notes)
+                        {
+                            <li>
+                                <p class="text-xs text-muted">@n.At.ToString("d MMM HH:mm") · @n.ByName · @NoteLabel(n)</p>
+                                @if (n.Text.Length > 0) { <p class="text-ink">@n.Text</p> }
+                            </li>
+                        }
+                    </ol>
+                }
+
+                @if (NodeContext.Current.IsVessel && _me is not null)
+                {
+                    <div class="mt-4 space-y-3 border-t border-line pt-4">
+                        @if (CanExplain(g) && g.Breaches.Any(b => !b.Resolved))
+                        {
+                            <div>
+                                <label class="block text-sm">@(g.Breaches.All(b => b.Explanation is null) ? "What happened?" : "Add to the explanation")
+                                    <input class="input mt-1 w-full" maxlength="500" placeholder="For example: cargo operation ran over at the berth" value="@TextOf(key, "explain")" @oninput='e => SetText(key, "explain", e)' />
+                                </label>
+                                <button class="btn btn-secondary btn-sm mt-2" disabled="@_busy" @onclick="() => ExplainAsync(g)">Add explanation</button>
+                            </div>
+                        }
+
+                        @if (_me.IsMaster)
+                        {
+                            @if (g.Breaches.Any(b => b.Status is BreachStatus.Explained or BreachStatus.Stale))
+                            {
+                                <div>
+                                    <button class="btn btn-primary btn-sm" disabled="@_busy" @onclick="() => AcknowledgeAsync(g)">Acknowledge</button>
+                                    <span class="ml-2 text-xs text-muted">Raises a follow-up task for the office.</span>
+                                </div>
+                            }
+                            @if (g.Breaches.Any(b => b.Status != BreachStatus.Excepted))
+                            {
+                                <div class="flex flex-wrap items-center gap-3">
+                                    <span class="text-sm text-muted">Or declare an exception:</span>
+                                    <select class="select" value="@KindOf(key)" @onchange="e => SetKind(key, e)">
+                                        <option value="@RestExceptionKind.Emergency">Emergency</option>
+                                        <option value="@RestExceptionKind.Drill">Drill</option>
+                                        <option value="@RestExceptionKind.OperationalNeed">Overriding operational need</option>
+                                    </select>
+                                    <input class="input w-72" maxlength="500" placeholder="Reason (required)" value="@TextOf(key, "exception")" @oninput='e => SetText(key, "exception", e)' />
+                                    <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="() => DeclareAsync(g)">Declare exception</button>
+                                </div>
+                            }
+
+                            @if (g.Breaches.Any(b => b.CompensatoryOutstanding))
+                            {
+                                <div class="flex flex-wrap items-end gap-3">
+                                    <input class="input w-96" maxlength="500" placeholder="When and how the compensatory rest was given" value="@TextOf(key, "comp")" @oninput='e => SetText(key, "comp", e)' />
+                                    <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="() => CompensatoryAsync(g)">Confirm compensatory rest given</button>
+                                </div>
+                            }
+                            @if (g.Breaches.Any(b => b.Status == BreachStatus.Excepted))
+                            {
+                                <div class="flex flex-wrap items-end gap-3">
+                                    <input class="input w-72" maxlength="500" placeholder="Why the exception is withdrawn" value="@TextOf(key, "withdraw")" @oninput='e => SetText(key, "withdraw", e)' />
+                                    <button class="btn btn-ghost btn-sm" disabled="@_busy" @onclick="() => WithdrawAsync(g)">Withdraw the exception</button>
+                                </div>
+                            }
+                        }
+
+                        @if (_errors.TryGetValue(key, out var error)) { <p class="text-sm text-rose-700">@error</p> }
+                        @if (_notices.TryGetValue(key, out var notice)) { <p class="text-sm text-emerald-700">@notice</p> }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "crew")] private Guid? CrewQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "note")] private Guid? NoteQuery { get; set; }
+
+    /// <summary>All the rules one seafarer broke on one date: they are explained and dealt with together, as one event.</summary>
+    private sealed record Group(Guid CrewId, string Name, string Rank, DateTime Date, List<BreachView> Breaches)
+    {
+        public string Key => $"{CrewId:N}-{Date:yyyyMMdd}";
+        /// <summary>The state that most needs someone: the day reads as dealt with only when every rule broken has been.</summary>
+        public BreachStatus Overall => new[] { BreachStatus.Unexplained, BreachStatus.Explained, BreachStatus.Stale, BreachStatus.Acknowledged }.FirstOrDefault(s => Breaches.Any(b => b.Status == s), BreachStatus.Excepted);
+        public List<RestBreachNote> Notes => Breaches.SelectMany(b => b.Notes).OrderBy(n => n.At).ThenBy(n => n.Id).ToList();
+        public Guid? TaskId => Notes.Select(n => n.WorklistTaskId).LastOrDefault(id => id is not null);
+    }
+
+    private Guid _companyId, _vesselId, _crewId;
+    private Actor _actor = Actor.System;
+    private CrewMember? _me;
+    private bool _loaded, _busy;
+    private string? _focus;
+    private DateTime _month = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<CrewMember> _crew = [];
+    private List<Group> _groups = [];
+    private readonly Dictionary<string, string> _texts = [];
+    private readonly Dictionary<string, RestExceptionKind> _kinds = [];
+    private readonly Dictionary<string, string> _errors = [], _notices = [];
+
+    private bool CanSeeEveryone => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
+        if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        Guid? wanted = CrewQuery;
+        if (NoteQuery is { } noteId && await Review.NoteAsync(_companyId, noteId) is { } note)
+        {
+            _vesselId = _vessels.Any(v => v.Id == note.VesselId) ? note.VesselId : _vesselId;
+            _month = new DateTime(note.Date.Year, note.Date.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            wanted = note.CrewMemberId;
+            _focus = $"{note.CrewMemberId:N}-{note.Date:yyyyMMdd}";
+        }
+        _crew = _vesselId == Guid.Empty ? [] : await Svc.CrewAboardAsync(_companyId, _vesselId);
+        _crewId = !CanSeeEveryone ? _me?.Id ?? Guid.Empty : wanted is { } w && _crew.Any(c => c.Id == w) ? w : Guid.Empty;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadVesselAsync()
+    {
+        _crew = _vesselId == Guid.Empty ? [] : await Svc.CrewAboardAsync(_companyId, _vesselId);
+        _crewId = !CanSeeEveryone ? _me?.Id ?? Guid.Empty : Guid.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var all = _vesselId == Guid.Empty ? [] : await Review.BreachesAsync(_companyId, _vesselId, _month, _month.AddMonths(1).AddDays(-1), _crewId == Guid.Empty ? null : _crewId);
+        _groups = all.GroupBy(b => (b.CrewId, b.Finding.Date.Date)).Select(g => new Group(g.Key.CrewId, g.First().CrewName, g.First().Rank, g.Key.Date, g.ToList()))
+            .OrderByDescending(g => g.Date).ThenBy(g => g.Name).ToList();
+    }
+
+    private async Task OnVesselChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _vesselId = id; await LoadVesselAsync(); } }
+    private async Task OnCrewChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _crewId = id; await LoadAsync(); } }
+    private async Task OnMonthChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString() + "-01", out var d)) { _month = new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc); await LoadAsync(); } }
+    private async Task MoveMonth(int months) { _month = _month.AddMonths(months); await LoadAsync(); }
+
+    private bool CanExplain(Group g) => _me is not null && (g.CrewId == _me.Id || _me.IsMaster || _me.IsCrewAdmin);
+
+    // ---- the words ----
+
+    private static string StatusLabel(BreachStatus s) => s switch
+    {
+        BreachStatus.Unexplained => "Needs an explanation",
+        BreachStatus.Explained => "Waiting for the Master",
+        BreachStatus.Stale => "Changed since the Master looked",
+        BreachStatus.Acknowledged => "Acknowledged",
+        _ => "Exception declared",
+    };
+
+    private static string StatusTone(BreachStatus s) => s switch
+    {
+        BreachStatus.Unexplained => "danger",
+        BreachStatus.Explained => "warning",
+        BreachStatus.Stale => "warning",
+        BreachStatus.Acknowledged => "success",
+        _ => "info",
+    };
+
+    private static string NoteLabel(RestBreachNote n) => n.Kind switch
+    {
+        RestNoteKind.Explanation => "explanation",
+        RestNoteKind.MasterAcknowledged => "acknowledged by the Master",
+        RestNoteKind.Exception => n.ExceptionKind == RestExceptionKind.None ? "exception withdrawn" : $"exception declared: {ExceptionName(n.ExceptionKind)}",
+        _ => "compensatory rest given",
+    } + (n.Rule.Length > 0 ? $" ({n.Rule})" : "");
+
+    private static string ExceptionName(RestExceptionKind k) => k switch { RestExceptionKind.Emergency => "emergency", RestExceptionKind.Drill => "drill", _ => "overriding operational need" };
+
+    // ---- the boxes ----
+
+    private string TextOf(string key, string field) => _texts.GetValueOrDefault($"{key}:{field}", "");
+    private void SetText(string key, string field, ChangeEventArgs e) => _texts[$"{key}:{field}"] = e.Value?.ToString() ?? "";
+    private RestExceptionKind KindOf(string key) => _kinds.GetValueOrDefault(key, RestExceptionKind.Emergency);
+    private void SetKind(string key, ChangeEventArgs e) { if (Enum.TryParse<RestExceptionKind>(e.Value?.ToString(), out var k)) _kinds[key] = k; }
+
+    /// <summary>Runs one action for each rule broken that day. All of them are tried; the first problem is shown.</summary>
+    private async Task ForEachAsync(Group g, Func<BreachView, bool> which, Func<BreachView, Task<BreachNoteResult>> act, string done, string? clear = null)
+    {
+        var key = g.Key;
+        _errors.Remove(key); _notices.Remove(key); _busy = true;
+        string? problem = null, taskProblem = null;
+        var count = 0;
+        try
+        {
+            foreach (var b in g.Breaches.Where(which).ToList())
+            {
+                try { var result = await act(b); count++; taskProblem ??= result.TaskProblem; }
+                catch (InvalidOperationException ex) { problem ??= ex.Message; }
+            }
+            if (count > 0)
+            {
+                if (clear is not null) _texts.Remove($"{key}:{clear}");
+                _notices[key] = done + (taskProblem is null ? "" : " " + taskProblem);
+            }
+            if (problem is not null) _errors[key] = problem;
+            await LoadAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private Task ExplainAsync(Group g)
+    {
+        var text = TextOf(g.Key, "explain");
+        return ForEachAsync(g, b => !b.Resolved, b => Review.ExplainAsync(_companyId, _vesselId, _actor, b.CrewId, b.Finding.Date, b.Finding.Rule, text), "Explanation added.", "explain");
+    }
+
+    private Task AcknowledgeAsync(Group g)
+        => ForEachAsync(g, b => b.Status is BreachStatus.Explained or BreachStatus.Stale, b => Review.AcknowledgeAsync(_companyId, _vesselId, _actor, b.CrewId, b.Finding.Date, b.Finding.Rule), "Acknowledged. A follow-up task was raised for the office.");
+
+    private Task DeclareAsync(Group g)
+    {
+        var (text, kind) = (TextOf(g.Key, "exception"), KindOf(g.Key));
+        return ForEachAsync(g, b => b.Status != BreachStatus.Excepted, b => Review.DeclareExceptionAsync(_companyId, _vesselId, _actor, b.CrewId, b.Finding.Date, b.Finding.Rule, kind, text), "Exception declared. Compensatory rest is now owed.", "exception");
+    }
+
+    private Task CompensatoryAsync(Group g)
+    {
+        var text = TextOf(g.Key, "comp");
+        return ForEachAsync(g, b => b.CompensatoryOutstanding, b => Review.ConfirmCompensatoryAsync(_companyId, _vesselId, _actor, b.CrewId, b.Finding.Date, b.Finding.Rule, text), "Compensatory rest recorded as given.", "comp");
+    }
+
+    private Task WithdrawAsync(Group g)
+    {
+        var text = TextOf(g.Key, "withdraw");
+        return ForEachAsync(g, b => b.Status == BreachStatus.Excepted, b => Review.DeclareExceptionAsync(_companyId, _vesselId, _actor, b.CrewId, b.Finding.Date, b.Finding.Rule, RestExceptionKind.None, text), "Exception withdrawn.", "withdraw");
+    }
+}

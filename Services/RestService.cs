@@ -218,6 +218,14 @@ public class RestHoursService(IDbContextFactory<ChandleryDbContext> factory)
         if (me.VesselId != vesselId) throw new InvalidOperationException("You are not signed on to this vessel.");
         if (crewMemberId != me.Id && !me.IsMaster && !me.IsCrewAdmin)
             throw new InvalidOperationException("You can record your own hours. The Master or a crew admin can record them for someone else.");
+        if (!me.IsMaster)
+        {
+            // Once the Master has signed a period, only the Master may change a day in it (the signatures then show as out of date and are given again).
+            await using var db = await factory.CreateDbContextAsync();
+            db.CurrentCompanyId = companyId;
+            if (await RestReview.MasterLockAsync(db, crewMemberId, date) is { } locked)
+                throw new InvalidOperationException($"{locked.FromDate:d MMM}–{locked.ToDate:d MMM} was signed by the Master ({locked.SignedByName}). Ask the Master to make the change; both signatures are then given again.");
+        }
         return await RecordDayAsync(companyId, vesselId, crewMemberId, date, workSpans, new Actor(actor.UserId, me.FullName), me.Id, reason);
     }
 
@@ -230,7 +238,7 @@ public class RestHoursService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>What the screen needs to check a day as it is being filled in: the days recorded around it, and the rules.</summary>
-    public sealed record RestWindow(List<RestDayInput> Days, RestLimits Limits, DateTime? BornOn)
+    public sealed record RestWindow(List<RestDayInput> Days, RestLimits Limits, DateTime? BornOn, RestSignOff? MasterLock = null)
     {
         public Func<DateTime, bool>? IsMinor => BornOn is { } dob ? date => dob.Date.AddYears(18) > date : null;
 
@@ -255,7 +263,7 @@ public class RestHoursService(IDbContextFactory<ChandleryDbContext> factory)
         var (_, limits) = await RulesForAsync(db, companyId, vesselId);
         var from = day.AddDays(-8);
         var entries = await db.RestEntries.AsNoTracking().Where(e => e.CrewMemberId == crewMemberId && e.Date >= from && e.Date <= day.AddDays(1)).ToListAsync();
-        return new RestWindow(Inputs(entries), limits, crew?.DateOfBirth);
+        return new RestWindow(Inputs(entries), limits, crew?.DateOfBirth, await RestReview.MasterLockAsync(db, crewMemberId, day));
     }
 
     public sealed record RestMonthDay(DateTime Date, string? Spans, RestDayResult Result, int Revisions, string? LastBy, bool OnBehalf, VesselDayStatus? Status);

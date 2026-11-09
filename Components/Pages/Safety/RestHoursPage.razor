@@ -83,6 +83,10 @@ else
                         <p class="text-muted">@(string.IsNullOrEmpty(_spans) ? "No work marked" : _spans.Replace(",", "  ·  "))</p>
                     </div>
 
+                    @if (_window?.MasterLock is { } held && _me is { IsMaster: true })
+                    {
+                        <p class="mt-4 rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 text-sm dark:bg-amber-500/10">You signed this period as Master (@held.FromDate.ToString("d MMM") – @held.ToDate.ToString("d MMM")). A correction here makes the signatures out of date, and they are given again.</p>
+                    }
                     @if (CanEdit)
                     {
                         <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
@@ -238,12 +242,14 @@ else
     private VesselDayStatus? _status;
 
     private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
-    private bool CanEdit => NodeContext.Current.IsVessel && _me is not null && _me.VesselId == _vesselId && (_crewId == _me.Id || _me.IsMaster || _me.IsCrewAdmin);
+    private bool Locked => _window?.MasterLock is not null && _me is not { IsMaster: true };
+    private bool CanEdit => NodeContext.Current.IsVessel && _me is not null && _me.VesselId == _vesselId && (_crewId == _me.Id || _me.IsMaster || _me.IsCrewAdmin) && !Locked;
     private bool NeedsReason => _saved is not null && _spans != _saved;
     private int WorkMinutes => RestSpans.Minutes(RestSpans.Normalize(SafeParse(_spans)));
 
     private string ReadOnlyReason => !NodeContext.Current.IsVessel
         ? "Hours are recorded onboard. This is the vessel's record, as it reached the office."
+        : Locked ? $"{_window!.MasterLock!.FromDate:d MMM} – {_window.MasterLock.ToDate:d MMM} was signed by the Master ({_window.MasterLock.SignedByName}). Ask the Master to make a change: both signatures are then given again."
         : _me is null ? "Only the seafarers of the vessel record hours." : "You can record your own hours. The Master or a crew admin can record them for someone else.";
 
     private static List<WorkSpan> SafeParse(string text) { try { return RestSpans.Parse(text); } catch (FormatException) { return []; } }

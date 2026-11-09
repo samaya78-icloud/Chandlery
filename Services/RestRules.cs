@@ -179,11 +179,14 @@ public static class RestRules
             if (!recorded[d]) continue;
             // Several windows can share the least rest; the one that holds the rest in the fewest pieces is the one that shows whether a long unbroken rest was kept
             // (a window that cuts a night's rest in two would hide it).
+            // A window that ends early in the day holds none of the day's work: it only repeats what the window ending at midnight showed for the day before (that one holds
+            // at least as much work), so counting it too would report one long spell of work on two dates. Only the window ending at midnight is kept for a day with no work.
+            bool OnlyYesterday(int e) => e != (d + 1) * SlotsPerDay && prefixWork[e] == prefixWork[d * SlotsPerDay];
             int bestRest = int.MaxValue, bestEnd = -1, bestLongest = 0;
             for (var e = d * SlotsPerDay + 1; e <= (d + 1) * SlotsPerDay; e++)
             {
                 var a = e - SlotsPerDay;
-                if (a < 0 || !Known(a, e)) continue;
+                if (a < 0 || !Known(a, e) || OnlyYesterday(e)) continue;
                 var rest = SlotsPerDay - (prefixWork[e] - prefixWork[a]);
                 if (rest < bestRest) { (bestRest, bestEnd) = (rest, e); bestLongest = LongestRest(work, a, e); }
                 else if (rest == bestRest) bestLongest = Math.Max(bestLongest, LongestRest(work, a, e));
@@ -198,7 +201,7 @@ public static class RestRules
             for (var e = d * SlotsPerDay + 1; e <= (d + 1) * SlotsPerDay; e++)
             {
                 var a = e - Slots7;
-                if (a < 0 || !Known(a, e)) continue;
+                if (a < 0 || !Known(a, e) || OnlyYesterday(e)) continue;
                 var rest = Slots7 - (prefixWork[e] - prefixWork[a]);
                 if (rest < bestRest) (bestRest, bestEnd) = (rest, e);
             }

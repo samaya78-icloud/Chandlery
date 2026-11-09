@@ -1,0 +1,208 @@
+@page "/rest/sign"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RestHoursService Svc
+@inject RestReviewService Review
+
+<PageTitle>Sign hours · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Sign the hours of rest"
+            Subtitle="Each seafarer signs their own hours for the period, then the Master signs. A signature remembers the days it was given for: if a day is changed afterwards, it shows as out of date and both sign again.">
+    <Actions>
+        <a href="/rest/breaches?crew=@_crewId&month=@_month.ToString("yyyy-MM")" class="btn btn-secondary">Breaches</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Rest hours are switched off" Message="The Rest Hours module has not been switched on for this vessel." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" value="@_vesselId" @onchange="OnVesselChanged">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Seafarer
+            <select class="select mt-1" value="@_crewId" @onchange="OnCrewChanged" disabled="@(!CanPickSeafarer)">
+                @foreach (var c in _crew) { <option value="@c.Id">@c.FullName · @c.Rank</option> }
+            </select>
+        </label>
+        <div class="flex items-end gap-1">
+            <button class="btn btn-secondary" @onclick="() => MoveMonth(-1)">&lsaquo;</button>
+            <label>Month
+                <input type="month" class="input mt-1 w-44" value="@_month.ToString("yyyy-MM")" @onchange="OnMonthChanged" />
+            </label>
+            <button class="btn btn-secondary" @onclick="() => MoveMonth(1)">&rsaquo;</button>
+        </div>
+    </div>
+
+    @if (_review is null)
+    {
+        <EmptyState Title="No seafarer to show" Message="No seafarer is signed on to this vessel." />
+    }
+    else
+    {
+        <div class="mb-3">
+            <h2 class="font-display text-xl font-bold text-ink">@_review.CrewName</h2>
+            <p class="text-sm text-muted">@_review.Rank · @_month.ToString("MMMM yyyy") · signed every @_review.SignIntervalDays day(s)</p>
+        </div>
+
+        @if (_error is not null) { <p class="mb-3 rounded-xl border border-rose-300/50 bg-rose-50/60 px-4 py-3 text-sm text-rose-700 dark:bg-rose-500/10">@_error</p> }
+        @if (_message is not null) { <p class="mb-3 rounded-xl border border-emerald-300/50 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-700 dark:bg-emerald-500/10">@_message</p> }
+
+        <div class="space-y-4">
+            @foreach (var p in _review.Periods)
+            {
+                <div class="card p-5">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <h3 class="font-display text-lg font-bold text-ink">@p.From.ToString("d MMM") – @p.To.ToString("d MMM")</h3>
+                            <p class="text-sm text-muted">
+                                @p.Recorded of @p.Days days recorded
+                                @if (p.Breaches > 0)
+                                {
+                                    <span> · <a class="link" href="/rest/breaches?crew=@_crewId&month=@_month.ToString("yyyy-MM")">@p.Breaches breach(es)@(p.BreachesUnresolved > 0 ? $", {p.BreachesUnresolved} not yet dealt with" : ", all dealt with")</a></span>
+                                }
+                            </p>
+                            @if (p.Gaps.Count > 0)
+                            {
+                                <p class="mt-1 text-sm text-amber-700">Not recorded:
+                                    @foreach (var g in p.Gaps.Take(6)) { <a class="link mr-2" href="/rest?crew=@_crewId&date=@g.ToString("yyyy-MM-dd")">@g.ToString("d MMM")</a> }
+                                    @if (p.Gaps.Count > 6) { <span>and @(p.Gaps.Count - 6) more</span> }
+                                </p>
+                            }
+                        </div>
+                        <a class="btn btn-ghost btn-sm" href="/rest/sheet?crew=@_crewId&month=@_month.ToString("yyyy-MM")">See the sheet</a>
+                    </div>
+
+                    <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                        @SignBox("The seafarer", p.Seafarer, p)
+                        @SignBox("The Master", p.Master, p)
+                    </div>
+
+                    @if (NodeContext.Current.IsVessel && _me is not null)
+                    {
+                        <div class="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+                            @if (_crewId == _me.Id && !p.SeafarerSigned)
+                            {
+                                <button class="btn btn-primary" disabled="@(_busy || !CanSign(p))" @onclick="() => SignAsync(p, RestRole.Seafarer)">@(p.Seafarer is null ? "Sign my hours" : "Sign my hours again")</button>
+                            }
+                            @if (_me.IsMaster && p.SeafarerSigned && !p.MasterSigned)
+                            {
+                                <button class="btn btn-primary" disabled="@(_busy || p.BreachesUnresolved > 0)" @onclick="() => SignAsync(p, RestRole.Master)">@(p.Master is null ? "Sign as Master" : "Sign as Master again")</button>
+                            }
+                            @if (Hint(p) is { } hint) { <span class="text-sm text-muted">@hint</span> }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "crew")] private Guid? CrewQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "month")] private string? MonthQuery { get; set; }
+
+    private Guid _companyId, _vesselId, _crewId;
+    private Actor _actor = Actor.System;
+    private CrewMember? _me;
+    private bool _loaded, _busy;
+    private string? _error, _message;
+    private DateTime _month = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<CrewMember> _crew = [];
+    private RestMonthReview? _review;
+
+    private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
+        if (MonthQuery is { Length: 7 } && DateTime.TryParse(MonthQuery + "-01", out var asked)) _month = new DateTime(asked.Year, asked.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        await LoadVesselAsync(CrewQuery);
+        _loaded = true;
+    }
+
+    private async Task LoadVesselAsync(Guid? wanted = null)
+    {
+        _crew = _vesselId == Guid.Empty ? [] : await Svc.CrewAboardAsync(_companyId, _vesselId);
+        _crewId = wanted is { } w && _crew.Any(c => c.Id == w) && (CanPickSeafarer || w == _me?.Id) ? w
+            : _me is not null && _crew.Any(c => c.Id == _me.Id) ? _me.Id
+            : _crew.FirstOrDefault()?.Id ?? Guid.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+        => _review = _crewId == Guid.Empty ? null : await Review.MonthAsync(_companyId, _vesselId, _crewId, _month.Year, _month.Month);
+
+    private async Task OnVesselChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _vesselId = id; _error = _message = null; await LoadVesselAsync(); } }
+    private async Task OnCrewChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _crewId = id; _error = _message = null; await LoadAsync(); } }
+    private async Task OnMonthChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString() + "-01", out var d)) { _month = new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc); _error = _message = null; await LoadAsync(); } }
+    private async Task MoveMonth(int months) { _month = _month.AddMonths(months); _error = _message = null; await LoadAsync(); }
+
+    private bool CanSign(RestPeriod p) => p.Recorded > 0 && p.Gaps.Count == 0 && p.From <= DateTime.UtcNow.Date;
+
+    private string? Hint(RestPeriod p)
+    {
+        if (_me is null) return null;
+        if (_crewId == _me.Id && !p.SeafarerSigned)
+            return p.Gaps.Count > 0 ? "Record the days that are missing first." : p.Recorded == 0 ? "Nothing is recorded in this period." : !p.Ended ? "The period is not over yet. You can sign it now and again if a day changes." : null;
+        if (_me.IsMaster && _crewId != _me.Id && !p.SeafarerSigned && p.Recorded > 0) return p.Seafarer is null ? "Waiting for the seafarer to sign." : "The seafarer signs again first: a day was changed after they signed.";
+        if (_me.IsMaster && p.SeafarerSigned && !p.MasterSigned && p.BreachesUnresolved > 0) return $"{p.BreachesUnresolved} breach(es) need your acknowledgement first (see Breaches).";
+        return null;
+    }
+
+    private async Task SignAsync(RestPeriod p, RestRole role)
+    {
+        _error = _message = null; _busy = true;
+        try
+        {
+            await Review.SignAsync(_companyId, _vesselId, _actor, _crewId, p.From, p.To, role);
+            await LoadAsync();
+            _message = role == RestRole.Master ? $"Signed as Master: {p.From:d MMM} – {p.To:d MMM}." : $"Signed: {p.From:d MMM} – {p.To:d MMM}.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private RenderFragment SignBox(string who, SignView? view, RestPeriod p) => __builder =>
+    {
+        <div class="rounded-xl border border-line p-3 text-sm">
+            <p class="text-xs font-medium uppercase tracking-wide text-muted">@who</p>
+            @if (view is null)
+            {
+                <p class="mt-1"><StatusChip Label="Not signed" Tone="neutral" /></p>
+            }
+            else if (view.Current)
+            {
+                <p class="mt-1"><StatusChip Label="Signed" Tone="success" /></p>
+                <p class="mt-1 text-ink">@view.Sign.SignedByName</p>
+                <p class="text-xs text-muted">@view.Sign.SignedAt.ToString("d MMM yyyy HH:mm") UTC</p>
+            }
+            else
+            {
+                <p class="mt-1"><StatusChip Label="Out of date" Tone="warning" /></p>
+                <p class="mt-1 text-ink">@view.Sign.SignedByName, @view.Sign.SignedAt.ToString("d MMM yyyy")</p>
+                <p class="text-xs text-amber-700">A day was changed after this signature was given.</p>
+            }
+        </div>
+    };
+}
