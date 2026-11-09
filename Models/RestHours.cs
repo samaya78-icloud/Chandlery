@@ -173,3 +173,20 @@ public class WorkArrangementTable
     public DateTime CreatedAt { get; set; }
     public string OwnerStage { get; set; } = SyncStages.Office;
 }
+
+/// <summary>
+/// The Master's signature on one version of the working-arrangements table, given onboard. The table itself is the office's and cannot be
+/// changed there; a new version needs a new signature. A record of its own, written once, so it travels up to the office like the other onboard records.
+/// </summary>
+public class WorkArrangementSignOff
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid TableId { get; set; }
+    public int VersionNo { get; set; }
+    public string SignedByName { get; set; } = "";
+    public Guid? SignedByCrewId { get; set; }
+    public DateTime SignedAt { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Vessel;
+}

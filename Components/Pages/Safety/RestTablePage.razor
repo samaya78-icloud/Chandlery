@@ -1,0 +1,205 @@
+@page "/rest/table"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject RestHoursService Svc
+@inject WorkArrangementService Table
+
+<PageTitle>Working arrangements · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Table of shipboard working arrangements"
+            Subtitle="Appendix 3 of the guidelines: when each position works at sea and in port, and the daily hours of work and rest that follow. The office writes it, the Master signs it onboard, and it is posted where the crew can read it.">
+    <Actions>
+        @if (_doc is not null)
+        {
+            <button onclick="window.print()" class="btn btn-secondary">Print</button>
+            <a href="/rest/table/@_vesselId/pdf?version=@_doc.Table.VersionNo" download class="btn btn-secondary">Download PDF</a>
+        }
+        @if (!NodeContext.Current.IsVessel && _vesselId != Guid.Empty)
+        {
+            <a href="/rest/table/edit?vessel=@_vesselId" class="btn btn-primary">@(_doc is null ? "Write the table" : "Write a new version")</a>
+        }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Rest hours are switched off" Message="The Rest Hours module has not been switched on for this vessel." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm print:hidden">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" value="@_vesselId" @onchange="OnVesselChanged">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        @if (_versions.Count > 1)
+        {
+            <label>Version
+                <select class="select mt-1" value="@(_doc?.Table.VersionNo)" @onchange="OnVersionChanged">
+                    @foreach (var t in _versions) { <option value="@t.VersionNo">Version @t.VersionNo · from @t.EffectiveFrom.ToString("d MMM yyyy")@(_signs.ContainsKey(t.Id) ? " · signed" : "")</option> }
+                </select>
+            </label>
+        }
+    </div>
+
+    @if (_error is not null) { <p class="mb-3 rounded-xl border border-rose-300/50 bg-rose-50/60 px-4 py-3 text-sm text-rose-700 dark:bg-rose-500/10">@_error</p> }
+    @if (_message is not null) { <p class="mb-3 rounded-xl border border-emerald-300/50 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-700 dark:bg-emerald-500/10">@_message</p> }
+
+    @if (_doc is null)
+    {
+        <EmptyState Title="No table yet" Message="@(NodeContext.Current.IsVessel ? "The office has not sent a table of working arrangements for this vessel yet." : "Write the table for this vessel. It then goes to the vessel for the Master to sign.")" />
+    }
+    else
+    {
+        var t = _doc.Table;
+        <div class="card mb-4 grid gap-4 p-5 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <div><p class="text-xs uppercase tracking-wide text-muted">Name of ship</p><p class="font-semibold text-ink">@_doc.VesselName</p></div>
+            <div><p class="text-xs uppercase tracking-wide text-muted">IMO number</p><p class="font-semibold text-ink">@(_doc.ImoNumber ?? "-")</p></div>
+            <div><p class="text-xs uppercase tracking-wide text-muted">Flag state</p><p class="font-semibold text-ink">@(string.IsNullOrWhiteSpace(_doc.FlagState) ? "-" : _doc.FlagState)</p></div>
+            <div><p class="text-xs uppercase tracking-wide text-muted">Version</p><p class="font-semibold text-ink">@t.VersionNo, in force from @t.EffectiveFrom.ToString("d MMM yyyy")</p><p class="text-xs text-muted">Latest update @t.CreatedAt.ToString("d MMM yyyy"), by @t.CreatedByName</p></div>
+            <div class="sm:col-span-2"><p class="text-xs uppercase tracking-wide text-muted">National law or agreement</p><p class="text-ink">@(string.IsNullOrWhiteSpace(t.LawReference) ? "-" : t.LawReference)</p></div>
+            <div class="sm:col-span-2"><p class="text-xs uppercase tracking-wide text-muted">Limits applied (@_doc.RuleSetName)</p><p class="text-ink">@(string.IsNullOrWhiteSpace(t.LimitsText) ? "-" : t.LimitsText)</p></div>
+        </div>
+
+        <div class="card mb-4 overflow-x-auto p-0">
+            <table class="w-full text-sm">
+                <thead class="bg-surface-2 text-left text-xs uppercase tracking-wide text-muted">
+                    <tr>
+                        <th class="px-3 py-2" rowspan="2">Position</th>
+                        <th class="px-3 py-2 text-center" colspan="3">At sea</th>
+                        <th class="px-3 py-2 text-center" colspan="3">In port</th>
+                        <th class="px-3 py-2" rowspan="2">Comments</th>
+                    </tr>
+                    <tr>
+                        <th class="px-3 py-1">Watchkeeping</th><th class="px-3 py-1">Other duties</th><th class="px-3 py-1">Work / rest</th>
+                        <th class="px-3 py-1">Watchkeeping</th><th class="px-3 py-1">Other duties</th><th class="px-3 py-1">Work / rest</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _doc.Rows)
+                    {
+                        <tr class="border-t border-line align-top">
+                            <td class="px-3 py-2 font-medium text-ink">@r.Row.Position</td>
+                            <td class="px-3 py-2">@ArrangementPdf.Spans(r.Row.SeaWatchkeeping)</td>
+                            <td class="px-3 py-2">@ArrangementPdf.Spans(r.Row.SeaOther)</td>
+                            <td class="px-3 py-2">@Totals(r.Sea)</td>
+                            <td class="px-3 py-2">@ArrangementPdf.Spans(r.Row.PortWatchkeeping)</td>
+                            <td class="px-3 py-2">@ArrangementPdf.Spans(r.Row.PortOther)</td>
+                            <td class="px-3 py-2">@Totals(r.Port)</td>
+                            <td class="px-3 py-2 text-muted">@r.Row.Comments</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(t.OtherRequirements))
+        {
+            <p class="mb-4 text-sm text-ink"><span class="font-semibold">Other requirements: </span>@t.OtherRequirements</p>
+        }
+
+        @if (_doc.Problems > 0)
+        {
+            <p class="mb-4 rounded-xl border border-amber-300/50 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 print:hidden dark:bg-amber-500/10">
+                Some rows could not be worked within the limits (marked in red). The table can still be signed, but the crew would breach the rules by following it.
+            </p>
+        }
+
+        <div class="card flex flex-wrap items-center justify-between gap-3 p-5 text-sm">
+            <div>
+                <p class="text-xs font-medium uppercase tracking-wide text-muted">The Master</p>
+                @if (_doc.Signature is { } sign)
+                {
+                    <p class="mt-1"><StatusChip Label="Signed" Tone="success" /></p>
+                    <p class="mt-1 text-ink">@sign.SignedByName</p>
+                    <p class="text-xs text-muted">@sign.SignedAt.ToString("d MMM yyyy HH:mm") UTC</p>
+                }
+                else
+                {
+                    <p class="mt-1"><StatusChip Label="Not signed" Tone="warning" /></p>
+                    <p class="mt-1 text-muted">@(NodeContext.Current.IsVessel ? "The Master signs once the table has been read and agreed." : "Waiting for the Master to sign onboard.")</p>
+                }
+            </div>
+            @if (CanSign)
+            {
+                <button class="btn btn-primary print:hidden" disabled="@_busy" @onclick="SignAsync">Sign as Master</button>
+            }
+            @if (_versions.Count > 0 && _doc.Table.VersionNo != _versions[0].VersionNo)
+            {
+                <p class="text-sm text-amber-700">A newer version (@_versions[0].VersionNo) has been issued.</p>
+            }
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private Actor _actor = Actor.System;
+    private CrewMember? _me;
+    private bool _loaded, _busy;
+    private string? _error, _message;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<WorkArrangementTable> _versions = [];
+    private Dictionary<Guid, WorkArrangementSignOff> _signs = [];
+    private ArrangementDocument? _doc;
+
+    private bool CanSign => NodeContext.Current.IsVessel && _me is { IsMaster: true } && _me.VesselId == _vesselId
+        && _doc is { Signature: null } && _versions.Count > 0 && _doc.Table.VersionNo == _versions[0].VersionNo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0)
+            _vesselId = VesselQuery is { } asked && _vessels.Any(v => v.Id == asked) ? asked
+                : _me?.VesselId is { } mine && _vessels.Any(v => v.Id == mine) ? mine : _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync(int? version = null)
+    {
+        if (_vesselId == Guid.Empty) return;
+        _versions = await Table.VersionsAsync(_companyId, _vesselId);
+        _signs = (await Table.SignaturesAsync(_companyId, _vesselId)).GroupBy(s => s.TableId).ToDictionary(g => g.Key, g => g.First());
+        _doc = await Table.DocumentAsync(_companyId, _vesselId, version);
+    }
+
+    private async Task OnVesselChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _vesselId = id; _error = _message = null; await LoadAsync(); } }
+    private async Task OnVersionChanged(ChangeEventArgs e) { if (int.TryParse(e.Value?.ToString(), out var n)) { _error = _message = null; await LoadAsync(n); } }
+
+    private async Task SignAsync()
+    {
+        if (_doc is null) return;
+        _error = _message = null; _busy = true;
+        try
+        {
+            await Table.SignAsync(_companyId, _vesselId, _actor, _doc.Table.Id);
+            await LoadAsync(_doc.Table.VersionNo);
+            _message = $"Version {_doc.Table.VersionNo} signed.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private static RenderFragment Totals(ArrangementDayCheck c) => __builder =>
+    {
+        <span class="@(c.Ok ? "text-ink" : "font-semibold text-rose-700")">@RestRules.Hm(c.WorkMinutes) / @RestRules.Hm(c.RestMinutes)</span>
+        @foreach (var p in c.Problems) { <p class="mt-1 max-w-[16rem] text-xs text-rose-700">@p</p> }
+    };
+}

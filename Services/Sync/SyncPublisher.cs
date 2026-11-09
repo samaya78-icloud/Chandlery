@@ -176,7 +176,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             || aggregate.Clr == typeof(JobDeferralRequest) || aggregate.Clr == typeof(JobDeferralDecision) || aggregate.Clr == typeof(PlanChangeRequest) || aggregate.Clr == typeof(PlanChangeDecision) || aggregate.Clr == typeof(MachinerySpare)
             || aggregate.Clr == typeof(Tank) || aggregate.Clr == typeof(TankInspection) || aggregate.Clr == typeof(TankInspectionReview))
             return MasterData.ReadGuid(payload, nameof(PlannedJob.VesselId));
-        if (aggregate.Clr == typeof(RestEntry) || aggregate.Clr == typeof(RestSignOff) || aggregate.Clr == typeof(RestBreachNote) || aggregate.Clr == typeof(VesselDayStatus) || aggregate.Clr == typeof(WorkArrangementTable))
+        if (aggregate.Clr == typeof(RestEntry) || aggregate.Clr == typeof(RestSignOff) || aggregate.Clr == typeof(RestBreachNote) || aggregate.Clr == typeof(VesselDayStatus) || aggregate.Clr == typeof(WorkArrangementTable) || aggregate.Clr == typeof(WorkArrangementSignOff))
             return MasterData.ReadGuid(payload, nameof(RestEntry.VesselId));
         if (aggregate.Clr == typeof(JobVerification))
         {

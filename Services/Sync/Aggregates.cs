@@ -49,6 +49,7 @@ public static class Aggregates
         new(nameof(RestBreachNote), typeof(RestBreachNote)),
         new(nameof(VesselDayStatus), typeof(VesselDayStatus)),
         new(nameof(WorkArrangementTable), typeof(WorkArrangementTable)),
+        new(nameof(WorkArrangementSignOff), typeof(WorkArrangementSignOff)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
@@ -56,7 +57,7 @@ public static class Aggregates
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview)
-        || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable);
+        || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
     private static readonly Dictionary<Type, AggregateType> ByClr = Types.ToDictionary(t => t.Clr);
@@ -112,6 +113,7 @@ public static class Aggregates
         RestBreachNote rb => rb.OwnerStage,
         VesselDayStatus vs => vs.OwnerStage,
         WorkArrangementTable wa => wa.OwnerStage,
+        WorkArrangementSignOff ws => ws.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -141,6 +143,7 @@ public static class Aggregates
         else if (root is RestBreachNote restNote) restNote.OwnerStage = stage;
         else if (root is VesselDayStatus dayStatus) dayStatus.OwnerStage = stage;
         else if (root is WorkArrangementTable arrangement) arrangement.OwnerStage = stage;
+        else if (root is WorkArrangementSignOff arrangementSign) arrangementSign.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

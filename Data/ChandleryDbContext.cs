@@ -72,6 +72,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<RestRuleSet> RestRuleSets => Set<RestRuleSet>();
     public DbSet<RestEntry> RestEntries => Set<RestEntry>();
     public DbSet<RestSignOff> RestSignOffs => Set<RestSignOff>();
+    public DbSet<WorkArrangementSignOff> WorkArrangementSignOffs => Set<WorkArrangementSignOff>();
     public DbSet<RestBreachNote> RestBreachNotes => Set<RestBreachNote>();
     public DbSet<VesselDayStatus> VesselDayStatuses => Set<VesselDayStatus>();
     public DbSet<WorkArrangementTable> WorkArrangementTables => Set<WorkArrangementTable>();
@@ -688,6 +689,16 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Vessel>().WithMany().HasForeignKey(t => t.VesselId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(t => new { t.VesselId, t.VersionNo }).IsUnique();
             b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+
+        modelBuilder.Entity<WorkArrangementSignOff>(b =>
+        {
+            b.Property(s => s.SignedByName).HasMaxLength(120);
+            b.Property(s => s.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(s => s.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(s => s.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(s => new { s.VesselId, s.VersionNo });
+            b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<PoDispatch>(b =>

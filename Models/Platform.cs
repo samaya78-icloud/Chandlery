@@ -117,7 +117,7 @@ public static class VesselRules
         typeof(MachineryItem), typeof(PlannedJob), typeof(RunningHoursReading), typeof(JobCompletion), typeof(JobVerification),
         typeof(JobDeferralRequest), typeof(JobDeferralDecision), typeof(PlanChangeRequest), typeof(PlanChangeDecision), typeof(MachinerySpare), typeof(Tank), typeof(TankInspection), typeof(TankInspectionResult),
         typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine), typeof(PoApproval), typeof(PurchaseOrder), typeof(PoLine),
-        typeof(RestEntry), typeof(RestSignOff), typeof(RestBreachNote), typeof(VesselDayStatus),      // the office's WorkArrangementTable is received, not written, onboard
+        typeof(RestEntry), typeof(RestSignOff), typeof(RestBreachNote), typeof(VesselDayStatus), typeof(WorkArrangementSignOff),      // the office's WorkArrangementTable is received, not written, onboard
     ];
 
     public static bool MayWrite(Type entity) => Writable.Contains(entity);

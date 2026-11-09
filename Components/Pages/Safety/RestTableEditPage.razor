@@ -1,0 +1,180 @@
+@page "/rest/table/edit"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject RestHoursService Svc
+@inject WorkArrangementService Table
+@inject NavigationManager Nav
+
+<PageTitle>Write the working table · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Write the working-arrangements table"
+            Parent="@(new Crumb("Working arrangements", "/rest/table"))"
+            Subtitle="One row per position. Enter the periods as 04:00-08:00, separated by commas, on the quarter hour. The hours of work and rest are worked out and checked against the vessel's rules as you type. Publishing makes a new version; the old ones stay on record.">
+    <Actions>
+        <a href="/rest/table?vessel=@_vesselId" class="btn btn-secondary">Cancel</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Rest hours are switched off" Message="The Rest Hours module has not been switched on for any vessel." />
+}
+else
+{
+    <div class="card mb-5 grid gap-4 p-5 text-sm sm:grid-cols-2">
+        <label>Vessel
+            <select class="select mt-1 w-full" value="@_vesselId" @onchange="OnVesselChanged">
+                @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+            </select>
+        </label>
+        <label>In force from
+            <input type="date" class="input mt-1 w-full" @bind="_from" @bind:format="yyyy-MM-dd" />
+        </label>
+        <label class="sm:col-span-2">National law or agreement the limits come from
+            <input class="input mt-1 w-full" @bind="_law" maxlength="300" placeholder="For example: Merchant Shipping (Hours of Work) Regulations, collective agreement" />
+        </label>
+        <label class="sm:col-span-2">Limits applied
+            <textarea class="input mt-1 w-full" rows="2" @bind="_limits" maxlength="300"></textarea>
+        </label>
+        <label class="sm:col-span-2">Other requirements
+            <textarea class="input mt-1 w-full" rows="2" @bind="_other" maxlength="1000" placeholder="For example: drills, emergencies and overriding operational needs"></textarea>
+        </label>
+    </div>
+
+    @if (_error is not null) { <p class="mb-3 rounded-xl border border-rose-300/50 bg-rose-50/60 px-4 py-3 text-sm text-rose-700 dark:bg-rose-500/10">@_error</p> }
+
+    <div class="space-y-3">
+        @for (var i = 0; i < _rows.Count; i++)
+        {
+            var row = _rows[i];
+            var check = ArrangementRules.Check(row.ToRow(), _rules);
+            <div class="card p-4 text-sm">
+                <div class="flex flex-wrap items-end gap-3">
+                    <label class="grow">Position
+                        <input class="input mt-1 w-full" @bind="row.Position" @bind:event="oninput" maxlength="60" placeholder="Master, Chief Officer, Able Seaman..." />
+                    </label>
+                    <button class="btn btn-ghost btn-sm" @onclick="() => Remove(row)">Remove</button>
+                </div>
+                <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div class="rounded-xl border border-line p-3">
+                        <p class="text-xs font-medium uppercase tracking-wide text-muted">At sea</p>
+                        <label class="mt-2 block">Watchkeeping<input class="input mt-1 w-full" @bind="row.SeaWatch" @bind:event="oninput" placeholder="04:00-08:00,16:00-20:00" /></label>
+                        <label class="mt-2 block">Other duties<input class="input mt-1 w-full" @bind="row.SeaOther" @bind:event="oninput" placeholder="08:00-12:00" /></label>
+                        <p class="mt-2">@Totals(check.Sea)</p>
+                    </div>
+                    <div class="rounded-xl border border-line p-3">
+                        <p class="text-xs font-medium uppercase tracking-wide text-muted">In port</p>
+                        <label class="mt-2 block">Watchkeeping<input class="input mt-1 w-full" @bind="row.PortWatch" @bind:event="oninput" /></label>
+                        <label class="mt-2 block">Other duties<input class="input mt-1 w-full" @bind="row.PortOther" @bind:event="oninput" /></label>
+                        <p class="mt-2">@Totals(check.Port)</p>
+                    </div>
+                </div>
+                <label class="mt-3 block">Comments<input class="input mt-1 w-full" @bind="row.Comments" maxlength="300" /></label>
+            </div>
+        }
+    </div>
+
+    <div class="mt-4 flex flex-wrap items-center gap-3">
+        <button class="btn btn-secondary" @onclick="AddRow">Add a position</button>
+        @if (_crewRanks.Count > 0)
+        {
+            <button class="btn btn-ghost" @onclick="AddCrewRanks">Add the ranks aboard (@_crewRanks.Count)</button>
+        }
+        <span class="grow"></span>
+        <button class="btn btn-primary" disabled="@_busy" @onclick="PublishAsync">Publish version @(_nextVersion)</button>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
+
+    private sealed class RowEdit
+    {
+        public string Position { get; set; } = "";
+        public string SeaWatch { get; set; } = "";
+        public string SeaOther { get; set; } = "";
+        public string PortWatch { get; set; } = "";
+        public string PortOther { get; set; } = "";
+        public string Comments { get; set; } = "";
+        public ArrangementRow ToRow() => new(Position, SeaWatch, SeaOther, PortWatch, PortOther, Comments);
+    }
+
+    private Guid _companyId, _vesselId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _busy;
+    private string? _error;
+    private DateTime _from = DateTime.UtcNow.Date;
+    private string _law = "", _limits = "", _other = "";
+    private int _nextVersion = 1;
+    private RestLimits _rules = RestLimits.Default;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<RowEdit> _rows = [];
+    private List<string> _crewRanks = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vesselId = VesselQuery is { } asked && _vessels.Any(v => v.Id == asked) ? asked : _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    /// <summary>Starts from the newest version of the vessel's table, so a change is a small edit rather than a retype.</summary>
+    private async Task LoadAsync()
+    {
+        _error = null;
+        if (_vesselId == Guid.Empty) return;
+        var (limits, words, _) = await Table.LimitsAsync(_companyId, _vesselId);
+        _rules = limits;
+        var versions = await Table.VersionsAsync(_companyId, _vesselId);
+        _nextVersion = (versions.FirstOrDefault()?.VersionNo ?? 0) + 1;
+        _crewRanks = (await Svc.CrewAboardAsync(_companyId, _vesselId)).Select(c => c.Rank.Trim()).Where(r => r.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(r => r).ToList();
+        if (versions.FirstOrDefault() is { } latest)
+        {
+            (_law, _limits, _other) = (latest.LawReference, latest.LimitsText, latest.OtherRequirements);
+            _rows = WorkArrangementService.RowsOf(latest).Select(r => new RowEdit { Position = r.Position, SeaWatch = r.SeaWatchkeeping, SeaOther = r.SeaOther, PortWatch = r.PortWatchkeeping, PortOther = r.PortOther, Comments = r.Comments }).ToList();
+        }
+        else
+        {
+            (_law, _limits, _other) = ("", words, "");
+            _rows = [new RowEdit()];
+        }
+    }
+
+    private async Task OnVesselChanged(ChangeEventArgs e) { if (Guid.TryParse(e.Value?.ToString(), out var id)) { _vesselId = id; await LoadAsync(); } }
+    private void AddRow() => _rows.Add(new RowEdit());
+    private void Remove(RowEdit row) => _rows.Remove(row);
+
+    private void AddCrewRanks()
+    {
+        foreach (var rank in _crewRanks.Where(r => !_rows.Any(x => string.Equals(x.Position.Trim(), r, StringComparison.OrdinalIgnoreCase))))
+            _rows.Add(new RowEdit { Position = rank });
+        _rows.RemoveAll(r => r.Position.Length == 0 && r.SeaWatch.Length + r.SeaOther.Length + r.PortWatch.Length + r.PortOther.Length == 0 && _rows.Count > 1);
+    }
+
+    private async Task PublishAsync()
+    {
+        _error = null; _busy = true;
+        try
+        {
+            await Table.PublishVersionAsync(_companyId, _vesselId, new ArrangementInput(_from, _law, _limits, _other, _rows.Select(r => r.ToRow()).ToList()), _actor);
+            Nav.NavigateTo($"/rest/table?vessel={_vesselId}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private static RenderFragment Totals(ArrangementDayCheck c) => __builder =>
+    {
+        <span class="@(c.Ok ? "text-ink" : "font-semibold text-rose-700")">Work @RestRules.Hm(c.WorkMinutes), rest @RestRules.Hm(c.RestMinutes)</span>
+        @foreach (var p in c.Problems) { <span class="mt-1 block text-xs text-rose-700">@p</span> }
+    };
+}

@@ -380,6 +380,16 @@ app.MapGet("/company/purchase-orders/{poId:guid}/pdf", async (Guid poId, HttpCon
     return Results.File(PoPdf.Build(doc), "application/pdf", PoFileName(doc));
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
+// The table of shipboard working arrangements (appendix 3) as a PDF to post onboard: the version in force, or ?version=n. Works onboard and ashore.
+app.MapGet("/rest/table/{vesselId:guid}/pdf", async (Guid vesselId, int? version, HttpContext http, WorkArrangementService table) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var doc = await table.DocumentAsync(companyId, vesselId, version);
+    if (doc is null) return Results.NotFound();
+    var name = new string($"working-arrangements-{doc.VesselName}-v{doc.Table.VersionNo}".Select(c => char.IsLetterOrDigit(c) || c == '-' ? c : '-').ToArray());
+    return Results.File(ArrangementPdf.Build(doc), "application/pdf", name + ".pdf");
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
 // The order as a ready-to-open email message for the sender's own mail program: to the supplier, the office in copy, PDF attached.
 app.MapGet("/company/purchase-orders/{poId:guid}/email", async (Guid poId, HttpContext http, DispatchService dispatch) =>
 {

@@ -86,7 +86,7 @@
                 }
             }
             if (await RestSvc.IsEnabledForCompanyAsync(companyId))
-                _safetyItems.AddRange([new NavItem("/rest", "Hours of rest", RestIcon), new NavItem("/rest/sheet", "Month sheet", RestIcon), new NavItem("/rest/sign", "Sign hours", RestIcon), new NavItem("/rest/breaches", "Breaches", RestIcon)]);
+                _safetyItems.AddRange([new NavItem("/rest", "Hours of rest", RestIcon), new NavItem("/rest/sheet", "Month sheet", RestIcon), new NavItem("/rest/sign", "Sign hours", RestIcon), new NavItem("/rest/breaches", "Breaches", RestIcon), new NavItem("/rest/table", "Working table", RestIcon)]);
             _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
                                 + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;
         }
