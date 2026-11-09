@@ -1,0 +1,178 @@
+@page "/tanks/exceptions"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject TankService Tanks
+@inject TankTrendService Svc
+
+<PageTitle>Tank exceptions · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Tank exceptions" Subtitle="What the inspections found: fair and bad ratings, and any other answer a checklist counts as an exception. Narrow it by vessel, rating and tank type, then open the inspection.">
+    <Actions>
+        @if (!NodeContext.Current.IsVessel) { <a href="/tanks/review" class="btn btn-secondary">Review queue</a> }
+        <a href="/tanks" class="btn btn-secondary">Tank plan</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Tank inspection is switched off" Message="The module has not been switched on for any vessel." />
+}
+else
+{
+    <div class="card mb-5 space-y-4 p-4 text-sm">
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="w-24 text-muted">Looking at</span>
+            <button class="btn btn-sm @(_current ? "btn-primary" : "btn-secondary")" @onclick="() => SetScopeAsync(true)">What is wrong now</button>
+            <button class="btn btn-sm @(!_current ? "btn-primary" : "btn-secondary")" @onclick="() => SetScopeAsync(false)">Every inspection</button>
+            @if (!_current)
+            {
+                <label class="ml-2 flex items-center gap-2">since <input type="date" class="input" @bind="_since" @bind:after="LoadAsync" /></label>
+            }
+            <span class="ml-auto text-xs text-muted">@(_current ? "The latest submitted inspection of each tank in service." : "Every submitted inspection, so a problem found and later fixed still shows.")</span>
+        </div>
+
+        @if (_vessels.Count > 1)
+        {
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="w-24 text-muted">Vessels</span>
+            @foreach (var g in _groups)
+            {
+                var members = _vessels.Where(v => v.GroupId == g.Id).Select(v => v.Id).ToList();
+                var all = members.Count > 0 && members.All(_pickedVessels.Contains);
+                <button class="btn btn-sm @(all ? "btn-primary" : "btn-secondary")" title="All vessels of this group" @onclick="() => ToggleGroupAsync(members)">@g.Name</button>
+            }
+            @foreach (var v in _vessels)
+            {
+                <button class="btn btn-sm @(_pickedVessels.Contains(v.Id) ? "btn-primary" : "btn-secondary")" @onclick="() => ToggleAsync(_pickedVessels, v.Id)">@v.Name</button>
+            }
+            @if (_pickedVessels.Count == 0) { <span class="text-xs text-muted">all vessels</span> }
+        </div>
+        }
+
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="w-24 text-muted">Rating</span>
+            @foreach (var s in Enum.GetValues<ExceptionSeverity>())
+            {
+                <button class="btn btn-sm @(_pickedSeverities.Contains(s) ? "btn-primary" : "btn-secondary")" @onclick="() => ToggleAsync(_pickedSeverities, s)">@TankTrend.Label(s)</button>
+            }
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="w-24 text-muted">Tank type</span>
+            @foreach (var t in Enum.GetValues<TankType>())
+            {
+                <button class="btn btn-sm @(_pickedTypes.Contains(t) ? "btn-primary" : "btn-secondary")" @onclick="() => ToggleAsync(_pickedTypes, t)">@TankLook.Label(t)</button>
+            }
+            @if (_pickedVessels.Count + _pickedSeverities.Count + _pickedTypes.Count > 0) { <button class="btn btn-ghost btn-sm ml-auto" @onclick="ClearAsync">Clear filters</button> }
+        </div>
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <EmptyState Title="No exceptions" Message="@(_current ? "Nothing found on the latest inspections matches. Either all is well, or try other filters." : "No inspection in this period found an exception that matches.")" />
+    }
+    else
+    {
+        <div class="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-5">
+            <StatCard Label="Bad ratings" Value="@_rows.Count(r => r.Severity == ExceptionSeverity.Bad).ToString("N0")" Tone="danger" />
+            <StatCard Label="Fair ratings" Value="@_rows.Count(r => r.Severity == ExceptionSeverity.Fair).ToString("N0")" Tone="warning" />
+            <StatCard Label="Other" Value="@_rows.Count(r => r.Severity == ExceptionSeverity.Other).ToString("N0")" Tone="info" />
+            <StatCard Label="Tanks" Value="@_rows.Select(r => r.TankId).Distinct().Count().ToString("N0")" />
+            <StatCard Label="Vessels" Value="@_rows.Select(r => r.VesselId).Distinct().Count().ToString("N0")" />
+        </div>
+
+        <div class="mb-3 flex items-center gap-3 text-sm">
+            <label>Sort by
+                <select class="select ml-2" @bind="_sort">
+                    <option value="severity">Most serious first</option>
+                    <option value="vessel">Vessel</option>
+                    <option value="tank">Tank</option>
+                    <option value="newest">Newest inspection</option>
+                    <option value="criterion">Criterion</option>
+                </select>
+            </label>
+            <span class="text-muted">@_rows.Count exception(s)</span>
+        </div>
+
+        <div class="card overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="p-3">Rating</th><th class="p-3">Vessel</th><th class="p-3">Tank</th><th class="p-3">Criterion</th><th class="p-3">Comment</th><th class="p-3">Inspection</th><th class="p-3">Task</th></tr>
+                </thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var r in Sorted())
+                    {
+                        <tr>
+                            <td class="p-3"><span class="chip" data-tone="@(r.Severity switch { ExceptionSeverity.Bad => "danger", ExceptionSeverity.Fair => "warning", _ => "info" })">@r.Value</span></td>
+                            <td class="p-3">@r.VesselName</td>
+                            <td class="p-3"><a href="/tanks/@r.TankId/trend" class="link"><span class="font-mono text-xs font-semibold">@r.TankCode</span> · @r.TankName</a> <span class="text-xs text-muted">@TankLook.Label(r.TankType)</span></td>
+                            <td class="p-3">@r.Criterion <span class="text-xs text-muted">@TankLook.Label(r.Group)</span></td>
+                            <td class="p-3 text-ink-2">@r.Comment</td>
+                            <td class="p-3">
+                                <a href="/tanks/inspections/@r.InspectionId" class="link font-mono text-xs font-semibold">@r.InspectionCode</a>
+                                <span class="text-muted">@r.InspectedOn.ToString("dd MMM yyyy")</span>
+                                <StatusChip Value="@r.Status" />
+                            </td>
+                            <td class="p-3">@if (r.WorklistTaskId is { } task) { <a href="/worklist/@task" class="link">Open task</a> } else { <span class="text-muted">none</span> }</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private bool _loaded, _current = true;
+    private DateTime? _since;
+    private string _sort = "severity";
+    private List<(Guid Id, string Name, Guid? GroupId)> _vessels = [];
+    private List<VesselGroup> _groups = [];
+    private readonly HashSet<Guid> _pickedVessels = [];
+    private readonly HashSet<ExceptionSeverity> _pickedSeverities = [];
+    private readonly HashSet<TankType> _pickedTypes = [];
+    private List<ExceptionRow> _rows = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        var choices = await Tanks.VesselChoicesAsync(_companyId);
+        _vessels = choices.Vessels;
+        _groups = choices.Groups.Where(g => _vessels.Any(v => v.GroupId == g.Id)).ToList();
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+        => _rows = await Svc.ExceptionsAsync(_companyId, new ExceptionFilter(_pickedVessels.ToList(), _pickedTypes.ToList(), _pickedSeverities.ToList(), _current, _current ? null : _since));
+
+    private async Task SetScopeAsync(bool current) { _current = current; await LoadAsync(); }
+
+    private async Task ToggleAsync<T>(HashSet<T> set, T value) { if (!set.Remove(value)) set.Add(value); await LoadAsync(); }
+
+    private async Task ToggleGroupAsync(List<Guid> members)
+    {
+        if (members.All(_pickedVessels.Contains)) _pickedVessels.ExceptWith(members); else _pickedVessels.UnionWith(members);
+        await LoadAsync();
+    }
+
+    private async Task ClearAsync() { _pickedVessels.Clear(); _pickedSeverities.Clear(); _pickedTypes.Clear(); await LoadAsync(); }
+
+    private IEnumerable<ExceptionRow> Sorted() => _sort switch
+    {
+        "vessel" => _rows.OrderBy(r => r.VesselName).ThenBy(r => r.Severity).ThenBy(r => r.TankCode),
+        "tank" => _rows.OrderBy(r => r.TankCode).ThenBy(r => r.VesselName).ThenBy(r => r.Severity),
+        "newest" => _rows.OrderByDescending(r => r.InspectedOn).ThenBy(r => r.Severity),
+        "criterion" => _rows.OrderBy(r => r.Criterion).ThenBy(r => r.Severity).ThenBy(r => r.VesselName),
+        _ => _rows,
+    };
+}

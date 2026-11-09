@@ -25,6 +25,7 @@ else
     <PageHeader Eyebrow="@insp.Code" Title="@($"{tank.Code} · {tank.Name}")" Subtitle="@($"{TankLook.Label(tank.Type)} tank · {insp.TemplateName} (version {insp.TemplateVersion})")">
         <Actions>
             <a href="/tanks/inspections" class="btn btn-secondary">All inspections</a>
+            <a href="/tanks/@tank.Id/trend" class="btn btn-secondary">Trend</a>
             <a href="/tanks" class="btn btn-secondary">Tank plan</a>
         </Actions>
     </PageHeader>

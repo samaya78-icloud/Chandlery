@@ -1,0 +1,202 @@
+@page "/tanks/{TankId:guid}/trend"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using System.Globalization
+@inject TankTrendService Svc
+
+<PageTitle>Tank trend · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <PageHeader Eyebrow="Tank" Title="Tank trend" />
+    <Skeleton Rows="4" />
+}
+else if (_data is null)
+{
+    <PageHeader Eyebrow="Tank" Title="Tank trend" />
+    <EmptyState Title="Tank not found" Message="This tank does not exist, or belongs to another company." />
+}
+else
+{
+    var tank = _data.Tank;
+    <PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="@($"{tank.Code} · {tank.Name}")"
+                Subtitle="How this tank has been rated inspection by inspection. Each column is one submitted inspection, oldest on the left.">
+        <Actions>
+            <a href="/tanks" class="btn btn-secondary">Tank plan</a>
+            @if (tank.IsActive) { <a href="/tanks/inspections/new?tank=@tank.Id" class="btn btn-primary">Inspect this tank</a> }
+        </Actions>
+    </PageHeader>
+
+    @if (_data.TotalInspections == 0)
+    {
+        <EmptyState Title="Not inspected yet" Message="A trend appears once an inspection of this tank has been submitted." />
+    }
+    else
+    {
+        <div class="card mb-5 flex flex-wrap items-center gap-4 p-4 text-sm">
+            <span class="chip chip-plain">@TankLook.Label(tank.Type)</span>
+            <span>Showing @_data.Columns.Count of @_data.TotalInspections inspection(s)</span>
+            @if (_data.TotalInspections > Latest || _all)
+            {
+                <button class="btn btn-sm btn-secondary" @onclick="ToggleAllAsync">@(_all ? $"Only the latest {Latest}" : "Show all")</button>
+            }
+            <div class="ml-auto flex flex-wrap gap-3 text-xs">
+                @foreach (var t in new[] { CellTone.Good, CellTone.Fair, CellTone.Bad, CellTone.None })
+                {
+                    <span class="flex items-center gap-1"><span class="inline-block h-3 w-3 rounded" style="background:@TankTrend.Colour(t)"></span>@(t switch { CellTone.Good => "Good", CellTone.Fair => "Fair or watch", CellTone.Bad => "Bad", _ => "Not inspected / not applicable" })</span>
+                }
+            </div>
+        </div>
+
+        var scored = _data.Rows.Where(r => r.HasScores).ToList();
+        var row = ChartRow(scored);
+        @if (row is not null)
+        {
+            var points = TankTrend.Series(_data, row);
+            var g = new Geometry(TankTrend.Levels(row.Scale), points);
+            <div class="card mb-5 p-5">
+                <div class="mb-3 flex flex-wrap items-center gap-3">
+                    <h2 class="font-display text-lg font-extrabold text-ink">@(row.Name.Equals("Condition of coating", StringComparison.OrdinalIgnoreCase) ? "Coating condition over time" : $"{row.Name} over time")</h2>
+                    <label class="ml-auto text-sm">Chart
+                        <select class="select ml-2" value="@KeyOf(row)" @onchange="e => _chartKey = e.Value?.ToString() ?? string.Empty">
+                            @foreach (var r in scored) { <option value="@KeyOf(r)" selected="@(KeyOf(r) == KeyOf(row))">@r.Name</option> }
+                        </select>
+                    </label>
+                </div>
+                <svg viewBox="0 0 @F(Geometry.W) @F(Geometry.H)" class="w-full" role="img" aria-label="@($"{row.Name} over time")">
+                    @foreach (var l in g.Levels)
+                    {
+                        <line x1="@F(Geometry.Left)" x2="@F(Geometry.W - Geometry.Right)" y1="@F(g.Y(l.Score))" y2="@F(g.Y(l.Score))" stroke="currentColor" stroke-opacity="0.12" />
+                        <g><text x="@F(Geometry.Left - 10)" y="@F(g.Y(l.Score) + 4)" text-anchor="end" font-size="12" fill="currentColor" fill-opacity="0.6">@l.Label</text></g>
+                    }
+                    @if (points.Count > 1)
+                    {
+                        <polyline fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2" points="@string.Join(" ", points.Select((p, i) => $"{F(g.X(i, p.On))},{F(g.Y(p.Score))}"))" />
+                    }
+                    @{ var lastLabel = double.NegativeInfinity; }
+                    @for (var i = 0; i < points.Count; i++)
+                    {
+                        var p = points[i]; var x = g.X(i, p.On);
+                        <circle cx="@F(x)" cy="@F(g.Y(p.Score))" r="7" fill="@TankTrend.Colour(p.Tone)" stroke="white" stroke-width="2"><title>@($"{p.On:dd MMM yyyy} · {p.Code}: {p.Value}")</title></circle>
+                        @if (x - lastLabel >= 52)
+                        {
+                            lastLabel = x;
+                            <g><text x="@F(x)" y="@F(Geometry.H - Geometry.Bottom + 22)" text-anchor="middle" font-size="12" fill="currentColor" fill-opacity="0.7">@p.On.ToString("dd MMM yy")</text></g>
+                        }
+                    }
+                </svg>
+            </div>
+        }
+
+        <div class="card overflow-x-auto">
+            <table class="w-full border-separate border-spacing-0 text-sm">
+                <thead>
+                    <tr class="text-left text-xs text-muted">
+                        <th class="sticky left-0 z-10 min-w-[14rem] bg-surface p-3">Criterion</th>
+                        @foreach (var c in _data.Columns)
+                        {
+                            <th class="min-w-[6.5rem] p-3 text-center font-normal">
+                                <div class="font-semibold text-ink">@c.InspectedOn.ToString("dd MMM yy")</div>
+                                <a href="/tanks/inspections/@c.InspectionId" class="link font-mono">@c.Code</a>
+                                <div>@StatusChip.Describe(c.Status).Label</div>
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="sticky left-0 bg-surface p-3 font-semibold text-ink">Exceptions</td>
+                        @foreach (var c in _data.Columns)
+                        {
+                            <td class="p-2 text-center">
+                                @if (c.ExceptionCount == 0) { <span class="chip" data-tone="success">none</span> }
+                                else { <span class="chip" data-tone="@(c.HasBadRating ? "danger" : "warning")">@c.ExceptionCount</span> }
+                            </td>
+                        }
+                    </tr>
+                    @{ CriterionGroup? group = null; }
+                    @foreach (var r in _data.Rows)
+                    {
+                        @if (group != r.Group)
+                        {
+                            group = r.Group;
+                            <tr><td colspan="@(_data.Columns.Count + 1)" class="bg-surface-2 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-muted">@TankLook.Label(r.Group)</td></tr>
+                        }
+                        <tr>
+                            <td class="sticky left-0 border-t border-line/60 bg-surface p-3">@r.Name</td>
+                            @foreach (var cell in r.Cells)
+                            {
+                                <td class="border-t border-line/60 p-2 text-center">
+                                    @if (cell is null) { <span class="text-muted" title="Not on this checklist">·</span> }
+                                    else
+                                    {
+                                        <span class="inline-block min-w-[3.25rem] rounded-md px-2 py-1 text-xs font-semibold text-white" style="background:@TankTrend.Colour(cell.Tone)"
+                                              title="@($"{TankLook.Meaning(cell.Value)}{(cell.Comment == "" ? "" : ": " + cell.Comment)}")">@cell.Value@(cell.Comment == "" ? "" : " •")</span>
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="mt-3 text-xs text-muted">A dot after an answer means the inspector left a comment: hover to read it. A criterion that was renamed on the checklist shows as a new row; the old name keeps its own history.</p>
+    }
+}
+
+@code {
+    private const int Latest = 12;
+
+    [Parameter] public Guid TankId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private bool _loaded, _all;
+    private TankTrendData? _data;
+    private string _chartKey = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _data = await Svc.TrendAsync(_companyId, TankId, _all ? 0 : Latest);
+        _loaded = true;
+    }
+
+    private async Task ToggleAllAsync() { _all = !_all; await LoadAsync(); }
+
+    private static string KeyOf(TrendRow r) => $"{(int)r.Group}|{r.Name}";
+
+    /// <summary>The chosen criterion, else the coating condition, else the first one that has scores.</summary>
+    private TrendRow? ChartRow(List<TrendRow> scored)
+        => scored.FirstOrDefault(r => KeyOf(r) == _chartKey) ?? TankTrend.CoatingRow(_data!) ?? scored.FirstOrDefault();
+
+    private static string F(double v) => v.ToString("0.#", CultureInfo.InvariantCulture);
+    /// <summary>Where things go on the chart: dates along the bottom (spaced by time), the scale's answers up the side from worst to best.</summary>
+    private sealed class Geometry
+    {
+        public const double W = 760, H = 260, Left = 70, Right = 44, Top = 20, Bottom = 46;
+        public List<(int Score, string Label)> Levels { get; }
+        private readonly int _min, _max, _count;
+        private readonly DateTime _first;
+        private readonly double _span;
+
+        public Geometry(List<(int Score, string Label)> levels, List<TrendPoint> points)
+        {
+            Levels = levels;
+            (_min, _max) = (levels.Min(l => l.Score), levels.Max(l => l.Score));
+            (_count, _first, _span) = (points.Count, points[0].On, (points[^1].On - points[0].On).TotalDays);
+        }
+
+        public double Y(int score) => Top + (_max - score) / (double)Math.Max(1, _max - _min) * (H - Top - Bottom);
+
+        public double X(int index, DateTime on) => _count == 1 ? (Left + W - Right) / 2
+            : _span <= 0 ? Left + index * (W - Left - Right) / (_count - 1) : Left + (on - _first).TotalDays / _span * (W - Left - Right);
+    }
+}

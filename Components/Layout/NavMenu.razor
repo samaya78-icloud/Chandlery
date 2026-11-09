@@ -4,6 +4,7 @@
 @inject PmsService PmsSvc
 @inject TankService TankSvc
 @inject TankInspectionService TankReviewSvc
+@inject TankTrendService TankTrendSvc
 
 <nav class="flex flex-col pt-1">
     <AuthorizeView Roles="CompanyAdmin,CompanyUser">
@@ -90,6 +91,7 @@
             {
                 _tankItems.Add(new NavItem("/tanks", "Tanks", TankIcon));
                 _tankItems.Add(new NavItem("/tanks/inspections", "Inspections", TankIcon));
+                _tankItems.Add(new NavItem("/tanks/exceptions", "Exceptions", TankIcon, (await TankTrendSvc.CountsAsync(companyId))?.CurrentExceptions ?? 0));
                 if (!NodeContext.Current.IsVessel)
                 {
                     var waiting = await TankReviewSvc.ReviewWaitingAsync(companyId);
