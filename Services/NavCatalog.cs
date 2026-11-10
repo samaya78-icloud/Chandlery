@@ -15,7 +15,7 @@ public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
 /// </summary>
 public class NavCatalogService(
     ApprovalService approvals, InvoiceService invoices, WorklistService worklist, PmsService pms, RestHoursService rest,
-    TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk,
+    TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
     IAuthorizationService authorization)
 {
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
@@ -88,7 +88,7 @@ public class NavCatalogService(
             new("/company/profile", "Company Profile", "profile"),
             new("/company/team", "Team", "team"),
         ];
-        List<NavEntry> maintenance = [], tankItems = [], riskItems = [], safety = [];
+        List<NavEntry> maintenance = [], tankItems = [], riskItems = [], safety = [], projectItems = [];
 
         if (await worklist.IsEnabledForCompanyAsync(companyId))
         {
@@ -144,11 +144,18 @@ public class NavCatalogService(
             if (!isVessel) admin.Add(new("/company/risk-library", "Risk library", "risk"));
         }
 
+        if (!isVessel && await projects.IsEnabledForCompanyAsync(companyId))
+        {
+            projectItems.Add(new("/projects", "Projects", "project"));
+            if (await projects.MayManageAsync(companyId, userId)) projectItems.Add(new("/projects/new", "New project", "project"));
+        }
+
         var groups = new List<NavGroup> { new(isVessel ? "Onboard" : "Work", isVessel ? onboard : work) };
         if (maintenance.Count > 0) groups.Add(new("Maintenance", maintenance, "pms planned maintenance"));
         if (tankItems.Count > 0) groups.Add(new("Tank inspection", tankItems));
         if (riskItems.Count > 0) groups.Add(new("Risk assessment", riskItems, "risk ra hazard"));
         if (safety.Count > 0) groups.Add(new("Safety", safety, "hours of rest rest hours"));
+        if (projectItems.Count > 0) groups.Add(new("Projects", projectItems, "drydock yard technical project"));
         if (!isVessel)
         {
             groups.Add(new("Procurement", procurement));

@@ -10,7 +10,7 @@
         <div class="flex flex-wrap items-center gap-3">
             @if (_current is { } c)
             {
-                <span class="font-mono font-semibold">@c.Code</span>
+                <a href="/projects/@c.ProjectId" class="link font-mono font-semibold">@c.Code</a>
                 <span>@c.Title</span>
                 <StatusChip Value="@c.Status" />
                 @if (c.Inherited)

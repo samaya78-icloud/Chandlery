@@ -1,0 +1,124 @@
+@page "/projects/new"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProjectService Svc
+@inject NavigationManager Navigation
+
+<PageTitle>New project · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Projects" Title="New project" Subtitle="Plan the job first; the specification, budget and dates can all be filled in on the project afterwards." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (!_mayManage)
+{
+    <EmptyState Title="Only a project manager can plan projects" Message="Ask a company admin to name you a project manager on the Team page." />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Projects is switched off" Message="The module has not been switched on for any vessel. A company admin can do that under Vessel policy." />
+}
+else
+{
+    <div class="card max-w-4xl space-y-5 p-6">
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+                <label class="label">Vessel <span class="text-rose-500">*</span></label>
+                <SelectBox TValue="Guid" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="Choose a vessel…" />
+            </div>
+            <div>
+                <label class="label">Type</label>
+                <SelectBox TValue="ProjectType" @bind-Value="_type" Options="_typeOptions" />
+            </div>
+            <div class="md:col-span-2">
+                <label class="label">Title <span class="text-rose-500">*</span></label>
+                <input @bind="_title" class="input" placeholder="Intermediate drydock and special survey 2027" />
+            </div>
+            <div class="md:col-span-2">
+                <label class="label">Scope</label>
+                <textarea @bind="_description" rows="3" class="textarea" placeholder="What the project is for and what it covers"></textarea>
+            </div>
+            <div>
+                <label class="label">Superintendent in charge</label>
+                <SelectBox TValue="Guid" @bind-Value="_superintendentId" Options="_userOptions" Placeholder="Not named yet" AllowClear="true" />
+            </div>
+            <div>
+                <label class="label">Yard</label>
+                <input @bind="_yard" class="input" placeholder="Where the work is to be done" />
+            </div>
+            <div>
+                <label class="label">Planned start</label>
+                <input type="date" @bind="_start" class="input" />
+            </div>
+            <div>
+                <label class="label">Planned end</label>
+                <input type="date" @bind="_end" class="input" />
+            </div>
+            <label class="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" @bind="_uwild" /> Underwater inspection in lieu of drydock (UWILD)</label>
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+        <div class="flex gap-3">
+            <button @onclick="Create" disabled="@_busy" class="btn btn-primary">@(_busy ? "Creating…" : "Create project")</button>
+            <a href="/projects" class="btn btn-secondary">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId, _superintendentId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _mayManage, _busy, _uwild;
+    private string _title = "", _description = "", _yard = "";
+    private string? _error;
+    private DateTime? _start, _end;
+    private ProjectType _type = ProjectType.Drydock;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<(Guid Id, string Name)> _users = [];
+    private List<SelectOption<Guid>> _vesselOptions = [], _userOptions = [];
+    private readonly List<SelectOption<ProjectType>> _typeOptions =
+    [
+        new(ProjectType.Drydock, "Drydock", "Docking, survey and repairs at a yard"),
+        new(ProjectType.NonDrydock, "Technical project", "A retrofit or repair that does not need a drydock"),
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _mayManage = await Svc.MayManageAsync(_companyId, _actor.UserId);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        _users = await Svc.OfficeUsersAsync(_companyId);
+        _vesselOptions = SelectOptions.From(_vessels, v => v.Id, v => v.Name);
+        _userOptions = SelectOptions.From(_users, u => u.Id, u => u.Name);
+        if (_vessels.Count == 1) _vesselId = _vessels[0].Id;
+        _loaded = true;
+    }
+
+    private async Task Create()
+    {
+        _error = null;
+        if (_vesselId == Guid.Empty) { _error = "Choose the vessel this project is for."; return; }
+        _busy = true;
+        try
+        {
+            var superintendent = _users.FirstOrDefault(u => u.Id == _superintendentId);
+            var project = await Svc.CreateAsync(_companyId, new NewProject(_vesselId, _type, _title, _description, _superintendentId == Guid.Empty ? null : _superintendentId,
+                superintendent.Name ?? "", _start, _end, _yard, _uwild), _actor);
+            Navigation.NavigateTo($"/projects/{project.Id}");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}

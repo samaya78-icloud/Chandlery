@@ -35,6 +35,9 @@ public class AppUser
     /// <summary>May start a review of, sign or return a risk assessment ashore. A company admin always may.</summary>
     public bool IsRiskReviewer { get; set; }
 
+    /// <summary>May plan and run projects ashore (create them, set budgets, record approval and progress). A company admin always may.</summary>
+    public bool IsProjectManager { get; set; }
+
     public bool IsCompanyRole => Role is UserRole.CompanyAdmin or UserRole.CompanyUser;
     public bool IsSupplierRole => Role is UserRole.SupplierAdmin or UserRole.SupplierUser;
 }

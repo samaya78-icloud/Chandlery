@@ -1,0 +1,534 @@
+@page "/projects/{ProjectId:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProjectService Svc
+@inject ToastService Toasts
+
+<PageTitle>@(_detail?.Project.Code ?? "Project") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="6" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Project not found" Message="It may belong to another company, or the module may be switched off.">
+        <Action><a href="/projects" class="btn btn-secondary">Back to projects</a></Action>
+    </EmptyState>
+}
+else
+{
+    var p = _detail.Project;
+    var editable = ProjectStatusRules.IsEditable(_detail.Status);
+    var canEdit = _mayManage && editable;
+    <PageHeader Eyebrow="@p.Code" Title="@p.Title">
+        <Badges>
+            <StatusChip Value="_detail.Status" />
+            <StatusChip Label="@(p.Type == ProjectType.Drydock ? "Drydock" : "Technical project")" Tone="accent" />
+            @if (p.IsUwild) { <StatusChip Label="UWILD" Tone="info" /> }
+        </Badges>
+        <Facts>
+            <DocLink Kind="DocKind.Vessel" Id="p.VesselId" Text="@_vesselName" />
+            @if (p.SuperintendentName != "") { <span>&middot; @p.SuperintendentName in charge</span> }
+            @if (p.Yard != "") { <span>&middot; @p.Yard</span> }
+            @if (p.PlannedStart is { } ps) { <span>&middot; planned @ps.ToString("d MMM yyyy")@(p.PlannedEnd is { } pe ? " to " + pe.ToString("d MMM yyyy") : "")</span> }
+        </Facts>
+        <Actions>
+            @if (canEdit)
+            {
+                <button @onclick="OpenDetails" class="btn btn-secondary btn-sm">Edit details</button>
+                @foreach (var kind in NextSteps(_detail.Status))
+                {
+                    <button @onclick="() => OpenStep(kind)" class="@("btn btn-sm " + (kind == ProjectEventKind.Withdrawn ? "btn-secondary" : "btn-primary"))">@StepLabel(kind)</button>
+                }
+            }
+        </Actions>
+    </PageHeader>
+
+    @if (!editable)
+    {
+        <div class="mb-6 rounded-xl border border-line bg-surface-2/60 px-4 py-3 text-sm">This project is closed and locked. Nothing on it can be changed.</div>
+    }
+    @if (_error is not null)
+    {
+        <div class="mb-6 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+
+    @if (_step is { } step)
+    {
+        <div class="card mb-6 border-accent-300 p-5">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">@StepLabel(step)</h2>
+            <p class="mb-3 text-sm text-muted">@StepHelp(step)</p>
+            <div class="flex flex-wrap items-end gap-4">
+                @if (step is ProjectEventKind.Started or ProjectEventKind.Completed)
+                {
+                    <label class="text-sm">Date it took effect <input type="date" @bind="_stepDate" class="input mt-1" /></label>
+                }
+                <label class="min-w-[18rem] flex-1 text-sm">@(step == ProjectEventKind.Closed ? "Reconciliation note (required)" : "Note")
+                    <input @bind="_stepNote" class="input mt-1" placeholder="@(step == ProjectEventKind.Closed ? "How the cost came out against the budget" : "Optional")" /></label>
+                <button @onclick="ConfirmStep" disabled="@_busy" class="btn btn-primary">Confirm</button>
+                <button @onclick="() => _step = null" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_editDetails)
+    {
+        <div class="card mb-6 p-5">
+            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Details</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div class="md:col-span-2"><label class="label">Title</label><input @bind="_title" class="input" /></div>
+                <div class="md:col-span-2"><label class="label">Scope</label><textarea @bind="_description" rows="3" class="textarea"></textarea></div>
+                <div><label class="label">Type</label><SelectBox TValue="ProjectType" @bind-Value="_type" Options="_typeOptions" /></div>
+                <div><label class="label">Superintendent in charge</label><SelectBox TValue="Guid" @bind-Value="_superintendentId" Options="_userOptions" Placeholder="Not named yet" AllowClear="true" /></div>
+                <div><label class="label">Yard</label><input @bind="_yard" class="input" /></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="label">Planned start</label><input type="date" @bind="_start" class="input" /></div>
+                    <div><label class="label">Planned end</label><input type="date" @bind="_end" class="input" /></div>
+                </div>
+                <label class="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" @bind="_uwild" /> Underwater inspection in lieu of drydock (UWILD)</label>
+            </div>
+            <div class="mt-4 flex gap-3">
+                <button @onclick="SaveDetails" disabled="@_busy" class="btn btn-primary">Save details</button>
+                <button @onclick="() => _editDetails = false" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    }
+    else if (p.Description != "")
+    {
+        <p class="mb-6 max-w-4xl text-sm text-ink-2">@p.Description</p>
+    }
+
+    @* ---- at a glance ---- *@
+    <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard Label="Days" Value="@DaysText()" Hint="@DaysHint()" Tone="info" />
+        <StatCard Label="Specification" Value="@($"{_detail.Project.Items.Count(i => i.Status == ProjectItemStatus.Done)} of {_detail.Project.Items.Count}")" Hint="@($"{_detail.Project.Items.Count(i => i.Status == ProjectItemStatus.Open)} open · {_detail.Project.Items.Count(i => i.Status == ProjectItemStatus.Dropped)} dropped")" Tone="accent" />
+        <StatCard Label="Budget" Value="@(_budgetTotal == 0 ? "—" : Money.Format(_budgetTotal, "USD"))" Hint="@(_contingency == 0 ? "No contingency set" : $"plus {Money.Format(_contingency, "USD")} contingency held")" Tone="accent" />
+        <StatCard Label="Cost to date" Value="@(_cost!.Cost.ToDate == 0 ? "—" : Money.Format(_cost.Cost.ToDate, "USD"))" Hint="@VarianceText()" Tone="@(OverBudget ? "danger" : "success")" />
+    </div>
+
+    @* ---- specification ---- *@
+    <section class="card mb-6 p-5">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Specification</h2>
+            @if (canEdit)
+            {
+                <button @onclick="AddItem" class="btn btn-secondary btn-sm ml-auto">+ Add item</button>
+                <button @onclick="SaveItems" disabled="@_busy" class="btn btn-primary btn-sm">Save specification</button>
+            }
+        </div>
+        @if (_items.Count == 0)
+        {
+            <p class="text-sm text-muted">No items yet. Add the jobs this project covers.</p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                        <tr><th class="p-2">Group</th><th class="p-2">Job</th><th class="p-2">From</th><th class="p-2">Status</th><th class="p-2 text-right">Estimate (USD)</th><th class="p-2 text-right">Yard quote (USD)</th><th class="p-2"></th></tr>
+                    </thead>
+                    <tbody class="divide-y divide-line/60">
+                        @foreach (var row in _items)
+                        {
+                            <tr>
+                                <td class="p-2">@if (canEdit) { <input @bind="row.Group" class="input w-32" /> } else { @row.Group }</td>
+                                <td class="p-2">@if (canEdit) { <input @bind="row.Description" class="input min-w-[16rem]" /> } else { @row.Description }</td>
+                                <td class="p-2 whitespace-nowrap text-muted">@SourceText(row)</td>
+                                <td class="p-2 w-36">@if (canEdit) { <SelectBox TValue="ProjectItemStatus" @bind-Value="row.Status" Options="_itemStatusOptions" Small="true" /> } else { @row.Status }</td>
+                                <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.01" min="0" @bind="row.Estimated" class="input w-32 text-right" /> } else { @(row.Estimated is { } est ? Money.Format(est, "USD") : "—") }</td>
+                                <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.01" min="0" @bind="row.Quoted" class="input w-32 text-right" /> } else { @(row.Quoted is { } quote ? Money.Format(quote, "USD") : "—") }</td>
+                                <td class="p-2 text-right">@if (canEdit) { <button @onclick="() => _items.Remove(row)" class="text-xs text-rose-600 hover:underline">Remove</button> }</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <p class="mt-2 text-xs text-muted">Estimates and yard quotes are kept at the office; the vessel sees the jobs and their status, never the amounts.</p>
+        }
+    </section>
+
+    @* ---- budget and cost (office only) ---- *@
+    @* ---- budget and cost: shown to every office user; only managers can change them ---- *@
+        <section class="card mb-6 p-5">
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+                <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Budget</h2>
+                @if (canEdit)
+                {
+                    <button @onclick="AddLine" class="btn btn-secondary btn-sm ml-auto">+ Add line</button>
+                    <button @onclick="SaveBudget" disabled="@_busy" class="btn btn-primary btn-sm">Save budget</button>
+                }
+            </div>
+            @if (_lines.Count == 0)
+            {
+                <p class="text-sm text-muted">No budget lines yet.@(canEdit ? " Add the categories this project will spend on." : "")</p>
+            }
+            else
+            {
+                <table class="w-full max-w-3xl text-sm">
+                    <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Category</th><th class="p-2 text-right">Planned (USD)</th><th class="p-2 text-right">Contingency %</th><th class="p-2"></th></tr></thead>
+                    <tbody class="divide-y divide-line/60">
+                        @foreach (var line in _lines)
+                        {
+                            <tr>
+                                <td class="p-2">@if (canEdit) { <input @bind="line.Category" class="input" /> } else { @line.Category }</td>
+                                <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.01" min="0" @bind="line.PlannedUsd" class="input w-36 text-right" /> } else { @Money.Format(line.PlannedUsd, "USD") }</td>
+                                <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.5" min="0" max="100" @bind="line.ContingencyPct" class="input w-24 text-right" /> } else { @line.ContingencyPct.ToString("0.##") }</td>
+                                <td class="p-2 text-right">@if (canEdit) { <button @onclick="() => _lines.Remove(line)" class="text-xs text-rose-600 hover:underline">Remove</button> }</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (_approvals.Count > 0)
+            {
+                <p class="mt-3 text-xs text-muted">Approved at @string.Join(", then ", _approvals.Select(a => $"{Money.Format(a.TotalUsd, "USD")} on {a.At:d MMM yyyy} by {a.ApprovedByName}")). A later change to the budget does not alter what was approved.</p>
+            }
+        </section>
+
+        <section class="card mb-6 p-5">
+            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Cost so far</h2>
+            <div class="mb-4 grid grid-cols-2 gap-4 text-sm md:grid-cols-5">
+                <div><p class="label">Committed</p><p class="tabular-nums text-ink">@Money.Format(_cost!.Cost.Committed, "USD")</p><p class="text-xs text-muted">approved orders not yet invoiced</p></div>
+                <div><p class="label">Invoiced</p><p class="tabular-nums text-ink">@Money.Format(_cost.Cost.Invoiced, "USD")</p><p class="text-xs text-muted">finalized invoices, before tax</p></div>
+                <div><p class="label">Other</p><p class="tabular-nums text-ink">@Money.Format(_cost.Cost.Other, "USD")</p><p class="text-xs text-muted">entered by hand</p></div>
+                <div><p class="label">To date</p><p class="font-semibold tabular-nums text-ink">@Money.Format(_cost.Cost.ToDate, "USD")</p></div>
+                <div><p class="label">@(OverBudget ? "Over budget by" : "Left in budget")</p><p class="@("font-semibold tabular-nums " + (OverBudget ? "text-rose-600" : "text-emerald-600"))">@(_budgetTotal == 0 ? "—" : Money.Format(Math.Abs(ProjectCostRules.Variance(_budgetTotal, _cost.Cost.ToDate)), "USD"))</p></div>
+            </div>
+            @if (_cost.Unconverted > 0)
+            {
+                <p class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">@_cost.Unconverted document(s) are in a currency with no exchange rate on file and are counted at their own amount. Add the rate under Exchange Rates to correct the totals.</p>
+            }
+
+            @if (_cost.Lines.Count > 0)
+            {
+                <h3 class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Documents behind the figures</h3>
+                <div class="mb-4 overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Document</th><th class="p-2">Supplier</th><th class="p-2">Status</th><th class="p-2 text-right">Amount</th><th class="p-2 text-right">USD</th><th class="p-2">Counted as</th></tr></thead>
+                        <tbody class="divide-y divide-line/60">
+                            @foreach (var line in _cost.Lines)
+                            {
+                                <tr class="@(line.Bucket == ProjectCostBucket.NotCounted || line.Bucket == ProjectCostBucket.Settled ? "text-muted" : "")">
+                                    <td class="p-2"><DocLink Kind="@(line.Kind == ProjectLinkKind.PurchaseOrder ? DocKind.PurchaseOrder : DocKind.Invoice)" Id="line.DocId" Text="@line.Number" /></td>
+                                    <td class="p-2">@line.Supplier</td>
+                                    <td class="p-2">@line.Status</td>
+                                    <td class="p-2 text-right tabular-nums">@Money.Format(line.Amount, line.Currency)</td>
+                                    <td class="p-2 text-right tabular-nums">@Money.Format(line.AmountUsd, "USD")</td>
+                                    <td class="p-2">@BucketText(line.Bucket)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <p class="mb-4 text-sm text-muted">No orders or invoices are on this project yet. Choose the project on a requisition, order or invoice to count its cost here.</p>
+            }
+
+            <h3 class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Costs entered by hand</h3>
+            @if (_cost.Entries.Count > 0)
+            {
+                <ul class="mb-3 divide-y divide-line/60 text-sm">
+                    @foreach (var e in _cost.Entries)
+                    {
+                        <li class="flex flex-wrap items-center gap-3 py-2">
+                            <span class="text-muted">@e.Date.ToString("d MMM yyyy")</span><span>@e.Description</span>@if (e.Reference != "") { <span class="text-xs text-muted">@e.Reference</span> }
+                            <span class="ml-auto tabular-nums">@Money.Format(e.AmountUsd, "USD")</span>
+                            @if (canEdit) { <button @onclick="() => RemoveEntry(e)" class="text-xs text-rose-600 hover:underline">Remove</button> }
+                        </li>
+                    }
+                </ul>
+            }
+            @if (canEdit)
+            {
+                <div class="flex flex-wrap items-end gap-3 text-sm">
+                    <label>Date <input type="date" @bind="_entryDate" class="input mt-1" /></label>
+                    <label class="min-w-[14rem] flex-1">What for <input @bind="_entryText" class="input mt-1" placeholder="Surveyor's attendance" /></label>
+                    <label>Reference <input @bind="_entryRef" class="input mt-1 w-36" /></label>
+                    <label>Amount (USD) <input type="number" step="0.01" @bind="_entryAmount" class="input mt-1 w-36 text-right" /></label>
+                    <button @onclick="AddEntry" disabled="@_busy" class="btn btn-secondary">Add cost</button>
+                </div>
+                <p class="mt-1 text-xs text-muted">Enter a credit as a negative amount.</p>
+            }
+        </section>
+
+    @* ---- notes ---- *@
+    <section class="card mb-6 p-5">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Progress notes</h2>
+        @if (_detail.Notes.Count == 0)
+        {
+            <p class="mb-3 text-sm text-muted">No notes yet. The vessel's yard-stay reports will appear here as they come in.</p>
+        }
+        else
+        {
+            <ul class="mb-4 space-y-3 text-sm">
+                @foreach (var n in _detail.Notes.OrderByDescending(n => n.Date).ThenByDescending(n => n.At))
+                {
+                    <li class="flex gap-3">
+                        <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full" style="background-image:linear-gradient(135deg,var(--accent-from),var(--accent-to))"></span>
+                        <div class="min-w-0">
+                            <p class="text-ink-2">@n.Text</p>
+                            <p class="text-xs text-muted">@n.Date.ToString("d MMM yyyy") · @n.AuthorName · @(n.OwnerStage == SyncStages.Vessel ? "vessel" : "office")@(n.ProgressPct is { } pct ? $" · {pct}% done" : "")@(ItemOf(n.ItemId) is { } item ? " · " + item : "")</p>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+        @if (editable)
+        {
+            <div class="flex flex-wrap items-end gap-3 text-sm">
+                <label>Day <input type="date" @bind="_noteDate" class="input mt-1" /></label>
+                <label class="min-w-[18rem] flex-1">Note <input @bind="_noteText" class="input mt-1" placeholder="What happened, what is planned next" /></label>
+                <label>Progress % <input type="number" min="0" max="100" @bind="_noteProgress" class="input mt-1 w-24 text-right" /></label>
+                <div class="w-56"><label class="label">About</label><SelectBox TValue="Guid" @bind-Value="_noteItem" Options="_itemOptions" Placeholder="The whole project" AllowClear="true" Small="true" /></div>
+                <button @onclick="AddNote" disabled="@_busy" class="btn btn-secondary">Add note</button>
+            </div>
+        }
+    </section>
+
+    @* ---- history ---- *@
+    <section class="card mb-6 p-5">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">History</h2>
+        <ul class="space-y-2 text-sm">
+            <li class="text-muted">@p.CreatedAt.ToString("d MMM yyyy") · Created by @p.CreatedByName</li>
+            @foreach (var e in _detail.Events)
+            {
+                <li><span class="font-medium">@StepDone(e.Kind)</span> <span class="text-muted">· @e.Date.ToString("d MMM yyyy") · @e.ByName@(e.Note != "" ? " · " : "")</span>@e.Note</li>
+            }
+        </ul>
+    </section>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _busy, _mayManage;
+    private string? _error;
+    private string _vesselName = "";
+    private ProjectDetail? _detail;
+    private ProjectCostSummary? _cost;
+    private List<ProjectBudgetApproval> _approvals = [];
+    private decimal _budgetTotal, _contingency;
+
+    // what the page edits
+    private readonly List<ItemRow> _items = [];
+    private readonly List<LineRow> _lines = [];
+    private bool _editDetails;
+    private string _title = "", _description = "", _yard = "";
+    private DateTime? _start, _end;
+    private bool _uwild;
+    private ProjectType _type;
+    private Guid _superintendentId;
+    private List<(Guid Id, string Name)> _users = [];
+    private List<SelectOption<Guid>> _userOptions = [], _itemOptions = [];
+    private ProjectEventKind? _step;
+    private DateTime _stepDate = DateTime.UtcNow.Date;
+    private string _stepNote = "";
+    private DateTime _entryDate = DateTime.UtcNow.Date, _noteDate = DateTime.UtcNow.Date;
+    private string _entryText = "", _entryRef = "", _noteText = "";
+    private decimal _entryAmount;
+    private int? _noteProgress;
+    private Guid _noteItem;
+
+    private readonly List<SelectOption<ProjectType>> _typeOptions = [new(ProjectType.Drydock, "Drydock"), new(ProjectType.NonDrydock, "Technical project")];
+    private readonly List<SelectOption<ProjectItemStatus>> _itemStatusOptions = SelectOptions.FromEnum<ProjectItemStatus>();
+
+    private class ItemRow
+    {
+        public Guid? Id;
+        public string Group = "", Description = "", SourceRef = "";
+        public ProjectItemSource Source;
+        public Guid? SourceId;
+        public ProjectItemStatus Status;
+        public decimal? Estimated, Quoted;
+    }
+
+    private class LineRow
+    {
+        public string Category = "";
+        public decimal PlannedUsd, ContingencyPct;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _mayManage = await Svc.MayManageAsync(_companyId, _actor.UserId);
+        _users = await Svc.OfficeUsersAsync(_companyId);
+        _userOptions = SelectOptions.From(_users, u => u.Id, u => u.Name);
+        await ReloadAsync();
+        _loaded = true;
+    }
+
+    private async Task ReloadAsync()
+    {
+        _detail = await Svc.GetAsync(_companyId, ProjectId);
+        if (_detail is null) return;
+        var vessels = await Svc.EnabledVesselsAsync(_companyId);
+        _vesselName = vessels.FirstOrDefault(v => v.Id == _detail.Project.VesselId).Name ?? "";
+        _cost = await Svc.CostAsync(_companyId, ProjectId);
+        var lines = await Svc.BudgetAsync(_companyId, ProjectId);
+        _approvals = await Svc.ApprovalsAsync(_companyId, ProjectId);
+        var costs = (await Svc.ItemCostsAsync(_companyId, ProjectId)).ToDictionary(c => c.ItemId);
+        _budgetTotal = ProjectCostRules.Budget(lines);
+        _contingency = ProjectCostRules.Contingency(lines);
+
+        _items.Clear();
+        foreach (var i in _detail.Project.Items)
+        {
+            costs.TryGetValue(i.Id, out var cost);
+            _items.Add(new ItemRow { Id = i.Id, Group = i.Group, Description = i.Description, Source = i.Source, SourceId = i.SourceId, SourceRef = i.SourceRef, Status = i.Status, Estimated = cost?.EstimatedUsd, Quoted = cost?.QuotedUsd });
+        }
+        _lines.Clear();
+        _lines.AddRange(lines.Select(l => new LineRow { Category = l.Category, PlannedUsd = l.PlannedUsd, ContingencyPct = l.ContingencyPct }));
+        _itemOptions = _detail.Project.Items.Select(i => new SelectOption<Guid>(i.Id, i.Description)).ToList();
+    }
+
+    private async Task RunAsync(Func<Task> action, string success)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            await action();
+            await ReloadAsync();
+            await Toasts.Success(success);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // ---- details and steps ----
+
+    private void OpenDetails()
+    {
+        var p = _detail!.Project;
+        (_title, _description, _yard, _start, _end, _uwild, _type, _superintendentId) = (p.Title, p.Description, p.Yard, p.PlannedStart, p.PlannedEnd, p.IsUwild, p.Type, p.SuperintendentUserId ?? Guid.Empty);
+        _editDetails = true;
+    }
+
+    private Task SaveDetails() => RunAsync(async () =>
+    {
+        var name = _users.FirstOrDefault(u => u.Id == _superintendentId).Name ?? "";
+        await Svc.UpdateAsync(_companyId, ProjectId, new ProjectEdit(_type, _title, _description, _superintendentId == Guid.Empty ? null : _superintendentId, name, _start, _end, _yard, _uwild), _actor);
+        _editDetails = false;
+    }, "Details saved");
+
+    private static ProjectEventKind[] NextSteps(ProjectStatus status) => status switch
+    {
+        ProjectStatus.Planning => [ProjectEventKind.Approved],
+        ProjectStatus.Approved => [ProjectEventKind.Started, ProjectEventKind.Withdrawn],
+        ProjectStatus.Ongoing => [ProjectEventKind.Completed],
+        ProjectStatus.Complete => [ProjectEventKind.Closed],
+        _ => [],
+    };
+
+    private static string StepLabel(ProjectEventKind kind) => kind switch
+    {
+        ProjectEventKind.Approved => "Approve project", ProjectEventKind.Started => "Start work", ProjectEventKind.Completed => "Mark work complete",
+        ProjectEventKind.Closed => "Close project", _ => "Withdraw approval",
+    };
+
+    private static string StepDone(ProjectEventKind kind) => kind switch
+    {
+        ProjectEventKind.Approved => "Approved", ProjectEventKind.Started => "Work started", ProjectEventKind.Completed => "Work completed", ProjectEventKind.Closed => "Closed", _ => "Approval withdrawn",
+    };
+
+    private static string StepHelp(ProjectEventKind kind) => kind switch
+    {
+        ProjectEventKind.Approved => "The budget as it stands now is kept with the approval.",
+        ProjectEventKind.Started => "Give the day the ship reached the yard or the work began.",
+        ProjectEventKind.Completed => "Give the day the work finished or the ship left.",
+        ProjectEventKind.Closed => "Every specification item must be Done or Dropped. Closing locks the project: nothing on it can be changed afterwards.",
+        _ => "Takes the project back to planning so it can be changed and approved again.",
+    };
+
+    private void OpenStep(ProjectEventKind kind) { _step = kind; _stepNote = ""; _stepDate = DateTime.UtcNow.Date; _error = null; }
+
+    private Task ConfirmStep() => RunAsync(async () =>
+    {
+        await Svc.RecordAsync(_companyId, ProjectId, _step!.Value, _stepDate, _stepNote, _actor);
+        _step = null;
+    }, "Recorded");
+
+    // ---- specification ----
+
+    private void AddItem() => _items.Add(new ItemRow { Group = _items.LastOrDefault()?.Group ?? "" });
+
+    private Task SaveItems() => RunAsync(async () =>
+    {
+        await Svc.SaveItemsAsync(_companyId, ProjectId, _items.Select(i => new ProjectItemInput(i.Id, i.Group, i.Description, i.Source, i.SourceId, i.SourceRef, i.Status)).ToList(), _actor);
+        // New items have their ids only now; the saved items are in the same order as the rows, so each row's amounts go with its item.
+        var saved = (await Svc.GetAsync(_companyId, ProjectId))!.Project.Items;
+        for (var i = 0; i < _items.Count && i < saved.Count; i++)
+            await Svc.SetItemCostAsync(_companyId, ProjectId, saved[i].Id, _items[i].Estimated, _items[i].Quoted, _actor);
+    }, "Specification saved");
+
+    private static string SourceText(ItemRow row) => row.Source switch
+    {
+        ProjectItemSource.WorklistTask => $"Worklist {row.SourceRef}".Trim(), ProjectItemSource.PmsJob => $"Maintenance {row.SourceRef}".Trim(),
+        ProjectItemSource.ClassRequirement => "Class requirement", ProjectItemSource.OwnerRequest => "Owner request", ProjectItemSource.Other => "Other", _ => "",
+    };
+
+    private string? ItemOf(Guid? id) => id is { } item ? _detail!.Project.Items.FirstOrDefault(i => i.Id == item)?.Description : null;
+
+    // ---- budget and cost ----
+
+    private void AddLine() => _lines.Add(new LineRow());
+
+    private Task SaveBudget() => RunAsync(() => Svc.SaveBudgetAsync(_companyId, ProjectId, _lines.Select(l => new BudgetLineInput(l.Category, l.PlannedUsd, l.ContingencyPct)).ToList(), _actor), "Budget saved");
+
+    private Task AddEntry() => RunAsync(async () =>
+    {
+        await Svc.AddCostEntryAsync(_companyId, ProjectId, _entryDate, _entryText, _entryRef, _entryAmount, _actor);
+        (_entryText, _entryRef, _entryAmount) = ("", "", 0m);
+    }, "Cost added");
+
+    private Task RemoveEntry(ProjectCostEntry entry) => RunAsync(() => Svc.RemoveCostEntryAsync(_companyId, entry.Id, _actor), "Cost removed");
+
+    private bool OverBudget => _budgetTotal > 0 && _cost!.Cost.ToDate > _budgetTotal;
+
+    private string VarianceText() => _budgetTotal == 0 ? "No budget set yet" : OverBudget
+        ? $"{Money.Format(_cost!.Cost.ToDate - _budgetTotal, "USD")} over budget"
+        : $"{Money.Format(ProjectCostRules.Variance(_budgetTotal, _cost!.Cost.ToDate), "USD")} left in budget";
+
+    private static string BucketText(ProjectCostBucket bucket) => bucket switch
+    {
+        ProjectCostBucket.Committed => "Committed", ProjectCostBucket.Invoiced => "Invoiced",
+        ProjectCostBucket.Settled => "Replaced by its invoices", _ => "Not counted yet",
+    };
+
+    private string DaysText()
+    {
+        var p = _detail!.Project;
+        var planned = ProjectCostRules.PlannedDays(p.PlannedStart, p.PlannedEnd);
+        var actual = ProjectCostRules.ActualDays(_detail.ActualStart, _detail.ActualEnd, DateTime.UtcNow.Date);
+        return actual is { } a ? (planned is { } pl ? $"{a} of {pl}" : $"{a}") : planned is { } x ? $"{x} planned" : "—";
+    }
+
+    private string DaysHint()
+    {
+        if (_detail!.ActualStart is not { } start) return "Not started";
+        return _detail.ActualEnd is { } end ? $"{start:d MMM} to {end:d MMM yyyy}" : $"Started {start:d MMM yyyy}";
+    }
+
+    // ---- notes ----
+
+    private Task AddNote() => RunAsync(async () =>
+    {
+        await Svc.AddNoteAsync(_companyId, ProjectId, new NewProjectNote(_noteDate, _noteText, _noteProgress, _noteItem == Guid.Empty ? null : _noteItem), _actor);
+        (_noteText, _noteProgress, _noteItem) = ("", null, Guid.Empty);
+    }, "Note added");
+}

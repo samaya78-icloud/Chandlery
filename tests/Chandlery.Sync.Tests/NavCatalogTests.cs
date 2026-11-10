@@ -22,7 +22,7 @@ public class NavCatalogTests : IAsyncLifetime
         var authorization = new ServiceCollection().AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")))
             .AddLogging().BuildServiceProvider().GetRequiredService<IAuthorizationService>();
         _catalog = new NavCatalogService(new ApprovalService(factory), new InvoiceService(factory, new NoFiles()), worklist, pms, new RestHoursService(factory),
-            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), authorization);
+            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), authorization);
     }
 
     public Task DisposeAsync() => _s.DisposeAsync();
@@ -34,8 +34,19 @@ public class NavCatalogTests : IAsyncLifetime
         public void Delete(string key) { }
     }
 
-    private ClaimsPrincipal Person(string role, params Claim[] extra) => new(new ClaimsIdentity(
-        [new Claim(ClaimTypes.Role, role), new Claim(ClaimTypes.NameIdentifier, _s.User.UserId!.Value.ToString()), new Claim("CompanyId", _s.CompanyId.ToString()), .. extra], "test"));
+    private ClaimsPrincipal Person(string role, params Claim[] extra) => Person(role, _s.User.UserId!.Value, extra);
+
+    private ClaimsPrincipal Person(string role, Guid userId, params Claim[] extra) => new(new ClaimsIdentity(
+        [new Claim(ClaimTypes.Role, role), new Claim(ClaimTypes.NameIdentifier, userId.ToString()), new Claim("CompanyId", _s.CompanyId.ToString()), .. extra], "test"));
+
+    private async Task<Guid> AddClerkAsync(bool projectManager = false)
+    {
+        await using var db = await _s.ShoreFactory.CreateDbContextAsync();
+        var user = new AppUser { Id = Guid.CreateVersion7(), Email = $"clerk{Guid.NewGuid():N}@test.example.com", PasswordHash = "x", Role = UserRole.CompanyUser, DisplayName = "Clerk", CompanyId = _s.CompanyId, CreatedAt = DateTime.UtcNow, IsProjectManager = projectManager };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        return user.Id;
+    }
 
     private async Task SwitchOnAsync(params string[] modules)
     {
@@ -58,16 +69,17 @@ public class NavCatalogTests : IAsyncLifetime
         var admin = Person("CompanyAdmin");
         Assert.Equal(["Work", "Procurement", "Master data", "Admin"], Titles(await _catalog.GetAsync(admin, isVessel: false)));
 
-        await SwitchOnAsync(PolicyModules.Worklist, PolicyModules.Pms, PolicyModules.RestHours, PolicyModules.TankInspection, PolicyModules.RiskAssessment);
+        await SwitchOnAsync(PolicyModules.Worklist, PolicyModules.Pms, PolicyModules.RestHours, PolicyModules.TankInspection, PolicyModules.RiskAssessment, PolicyModules.Projects);
         var groups = await _catalog.GetAsync(admin, isVessel: false);
 
-        Assert.Equal(["Work", "Maintenance", "Tank inspection", "Risk assessment", "Safety", "Procurement", "Master data", "Admin"], Titles(groups));
+        Assert.Equal(["Work", "Maintenance", "Tank inspection", "Risk assessment", "Safety", "Projects", "Procurement", "Master data", "Admin"], Titles(groups));
         Assert.Contains("Worklist", Pages(groups, "Work"));
         Assert.Contains("Fleet worklist", Pages(groups, "Work"));
         Assert.Equal(["Plan", "Fleet overview", "Running hours", "Machinery", "Import a plan", "Approvals", "Template updates", "Sister vessels", "Reports"], Pages(groups, "Maintenance"));
         Assert.Equal(["Tanks", "Inspections", "Exceptions", "Review queue"], Pages(groups, "Tank inspection"));
         Assert.Equal(["Assessments", "New assessment", "Sign-off queue"], Pages(groups, "Risk assessment"));
         Assert.Equal(["Hours of rest", "Working table", "Rest reports", "Rest rules"], Pages(groups, "Safety"));
+        Assert.Equal(["Projects", "New project"], Pages(groups, "Projects"));
         Assert.Equal(["Worklist lists", "Maintenance library", "Tank checklists", "Risk library"], Pages(groups, "Admin").Skip(6));          // each module adds its setup page for the admin
         Assert.Equal("pms planned maintenance", groups.Single(g => g.Title == "Maintenance").Aliases);                                            // what the finder also matches
     }
@@ -75,9 +87,11 @@ public class NavCatalogTests : IAsyncLifetime
     [Fact]
     public async Task EveryoneSeesOnlyTheirOwnPages()
     {
-        await SwitchOnAsync(PolicyModules.Pms, PolicyModules.RiskAssessment);
+        await SwitchOnAsync(PolicyModules.Pms, PolicyModules.RiskAssessment, PolicyModules.Projects);
 
-        var user = await _catalog.GetAsync(Person("CompanyUser"), isVessel: false);
+        var user = await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync()), isVessel: false);
+        Assert.Equal(["Projects"], Pages(user, "Projects"));                                                                                  // a clerk can read projects but not start one
+        Assert.Equal(["Projects", "New project"], Pages(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync(projectManager: true)), isVessel: false), "Projects"));
         Assert.DoesNotContain("Admin", Titles(user));                                                                                         // setup pages are for the company admin
         Assert.Contains("Maintenance", Titles(user));
 

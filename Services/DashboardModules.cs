@@ -24,7 +24,7 @@ public record AttentionItem(int Count, string Text, string Href, bool Urgent);
 /// <summary>Gathers the per-module numbers for the home page, so the cards and the attention strip read from the same place.</summary>
 public class DashboardModuleService(
     WorklistService worklist, PmsReportService pms, TankTrendService tanks, RiskAssessmentService risk,
-    RestFleetService restFleet, RestReviewService restReview)
+    RestFleetService restFleet, RestReviewService restReview, ProjectService projects)
 {
     private static string Hot(int n, string tone, string cold = "success") => n > 0 ? tone : cold;
 
@@ -104,6 +104,16 @@ public class DashboardModuleService(
                 new("Breaches", f.Unresolved.ToString("N0"), "/rest/fleet", Hot(f.Unresolved, "danger"), $"Not dealt with by the Master · {f.CompensatoryOutstanding} compensatory rest owed", f.Unresolved, "rest breaches not dealt with"),
                 new("To sign", f.ToSign.ToString("N0"), "/rest/fleet", Hot(f.ToSign + f.OutOfDate, "warning"), $"Periods over and not fully signed · {f.OutOfDate} out of date", f.ToSign, "rest periods to sign"),
                 new("Not recorded", f.Missing.ToString("N0"), "/rest/fleet", Hot(f.Missing, "warning"), $"Days across {f.Vessels} vessel(s), last two months"),
+            ]));
+        }
+
+        if (!isVessel && await projects.CountsAsync(companyId) is { } pc)
+        {
+            modules.Add(new("projects", "Projects", "/projects",
+            [
+                new("Ongoing", pc.Ongoing.ToString("N0"), "/projects?status=Ongoing", "info"),
+                new("Not started", pc.NotStarted.ToString("N0"), "/projects", "accent", "Being planned or approved"),
+                new("Over budget", pc.OverBudget.ToString("N0"), "/projects", Hot(pc.OverBudget, "danger"), "Cost to date above the budget", pc.OverBudget, "projects over budget"),
             ]));
         }
 

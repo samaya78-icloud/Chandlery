@@ -1,0 +1,150 @@
+@page "/projects"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProjectService Svc
+
+<PageTitle>Projects · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Projects" Subtitle="Drydocks and technical projects, with what each has cost against its budget.">
+    <Actions>
+        @if (_mayManage)
+        {
+            <a href="/projects/new" class="btn btn-primary">+ New project</a>
+        }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Projects is switched off" Message="The module has not been switched on for any vessel. A company admin can do that under Vessel policy." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Superintendent
+            <select class="select mt-1" @bind="_superintendent">
+                <option value="">Anyone</option>
+                @foreach (var name in _superintendents) { <option value="@name">@name</option> }
+            </select>
+        </label>
+        <label>Year
+            <select class="select mt-1" @bind="_year">
+                <option value="0">Any year</option>
+                @foreach (var y in _years) { <option value="@y">@y</option> }
+            </select>
+        </label>
+        <label>Search <input class="input mt-1" @bind="_search" @bind:event="oninput" placeholder="Reference or title" /></label>
+        <div class="w-full">
+            <div class="mb-1">Status</div>
+            <div class="flex flex-wrap gap-2">
+                <button class="btn btn-sm @(_status is null ? "btn-primary" : "btn-secondary")" @onclick="() => _status = null">All (@_rows.Count(Base))</button>
+                @foreach (var s in Enum.GetValues<ProjectStatus>())
+                {
+                    var count = _rows.Count(r => Base(r) && r.Row.Status == s);
+                    <button class="btn btn-sm @(_status == s ? "btn-primary" : "btn-secondary")" @onclick="() => _status = s">@StatusChip.Describe(s).Label (@count)</button>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (Shown().Count == 0)
+    {
+        <EmptyState Title="No projects" Message="Nothing matches. Plan a new project, or clear the filters." />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                    <tr>
+                        <th class="p-3">Project</th><th class="p-3">Vessel</th><th class="p-3">Status</th><th class="p-3">Planned</th><th class="p-3 text-right">Days</th>
+                        <th class="p-3 text-right">Items</th><th class="p-3 text-right">Budget</th><th class="p-3 text-right">Cost to date</th><th class="p-3 text-right">Variance</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var r in Shown())
+                    {
+                        var p = r.Row.Project;
+                        <tr>
+                            <td class="p-3">
+                                <a href="/projects/@p.Id" class="link font-mono text-xs font-semibold">@p.Code</a>
+                                <div>@p.Title</div>
+                                <div class="text-xs text-muted">@(p.Type == ProjectType.Drydock ? "Drydock" : "Technical")@(p.IsUwild ? " · UWILD" : "")@(p.SuperintendentName == "" ? "" : " · " + p.SuperintendentName)</div>
+                            </td>
+                            <td class="p-3">@r.VesselName</td>
+                            <td class="p-3"><StatusChip Value="@r.Row.Status" /></td>
+                            <td class="p-3 whitespace-nowrap">@(p.PlannedStart is { } s ? s.ToString("d MMM yyyy") : "—")@(p.PlannedEnd is { } e ? " to " + e.ToString("d MMM yyyy") : "")</td>
+                            <td class="p-3 text-right whitespace-nowrap">@Days(r)</td>
+                            <td class="p-3 text-right whitespace-nowrap">@r.Row.ItemsDone / @(r.Row.ItemsOpen + r.Row.ItemsDone + r.Row.ItemsDropped)</td>
+                            <td class="p-3 text-right tabular-nums">@(r.Budget == 0 ? "—" : Money.Format(r.Budget, "USD"))</td>
+                            <td class="p-3 text-right tabular-nums">@(r.Cost.ToDate == 0 ? "—" : Money.Format(r.Cost.ToDate, "USD"))</td>
+                            <td class="@("p-3 text-right tabular-nums " + (r.OverBudget ? "font-semibold text-rose-600" : ""))">@(r.Budget == 0 ? "—" : (r.Variance < 0 ? "−" : "") + Money.Format(Math.Abs(r.Variance), "USD"))</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="mt-3 text-xs text-muted">Cost to date is approved orders not yet invoiced, plus finalized invoices (before tax), plus costs entered by hand, in US dollars. Variance is the budget minus that; red means over budget.</p>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    /// <summary>Opens the list on one status, as the dashboard card links to it.</summary>
+    [SupplyParameterFromQuery(Name = "status")] public string? StatusFilter { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private bool _loaded, _mayManage;
+    private ProjectStatus? _status;
+    private string _search = "", _superintendent = "";
+    private int _year;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<ProjectListRow> _rows = [];
+    private List<string> _superintendents = [];
+    private List<int> _years = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        var actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        _mayManage = await Svc.MayManageAsync(_companyId, actor.UserId);
+        if (_vessels.Count > 0)
+        {
+            _rows = await Svc.ListWithMoneyAsync(_companyId);
+            _superintendents = _rows.Select(r => r.Row.Project.SuperintendentName).Where(n => n != "").Distinct().Order().ToList();
+            _years = _rows.Select(YearOf).Distinct().OrderDescending().ToList();
+        }
+        if (Enum.TryParse<ProjectStatus>(StatusFilter, true, out var s)) _status = s;
+        _loaded = true;
+    }
+
+    private static int YearOf(ProjectListRow r) => (r.Row.Project.PlannedStart ?? r.Row.Project.CreatedAt).Year;
+
+    /// <summary>Everything but the status filter, so the status buttons can show how many each would give.</summary>
+    private bool Base(ProjectListRow r)
+        => (_vesselId == Guid.Empty || r.Row.Project.VesselId == _vesselId)
+        && (_superintendent == "" || r.Row.Project.SuperintendentName == _superintendent)
+        && (_year == 0 || YearOf(r) == _year)
+        && (_search.Trim() == "" || r.Row.Project.Code.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase) || r.Row.Project.Title.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private List<ProjectListRow> Shown() => _rows.Where(r => Base(r) && (_status is null || r.Row.Status == _status)).ToList();
+
+    private static string Days(ProjectListRow r)
+        => r.ActualDays is { } actual ? (r.PlannedDays is { } planned ? $"{actual} of {planned}" : $"{actual}") : r.PlannedDays is { } p ? $"{p} planned" : "—";
+}

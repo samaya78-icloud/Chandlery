@@ -24,6 +24,18 @@ public record DocProject(Guid ProjectId, string Code, string Title, ProjectStatu
 
 public record ProjectOption(Guid Id, string Code, string Title, ProjectStatus Status);
 
+/// <summary>A project as the list shows it: with its vessel, budget, what it has cost, and its days.</summary>
+public record ProjectListRow(ProjectRow Row, string VesselName, decimal Budget, decimal Contingency, ProjectCost Cost, int? PlannedDays, int? ActualDays)
+{
+    public decimal Variance => ProjectCostRules.Variance(Budget, Cost.ToDate);
+
+    /// <summary>Over budget only means something once a budget has been set.</summary>
+    public bool OverBudget => Budget > 0 && Cost.ToDate > Budget;
+}
+
+/// <summary>NotStarted is planning or approved: work has not begun.</summary>
+public record ProjectCounts(int Ongoing, int NotStarted, int OverBudget);
+
 public enum ProjectCostBucket { Committed, Invoiced, Settled, NotCounted }
 
 /// <summary>One document behind the cost figures. Settled is an order whose invoices have replaced it; NotCounted is one not yet approved or finalized (or rejected).</summary>
@@ -48,6 +60,44 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
     private static void RequireOffice(ChandleryDbContext db)
     {
         if (db.Node.IsVessel) throw new InvalidOperationException("Projects are planned and run by the office; onboard you can read them and add notes.");
+    }
+
+    /// <summary>A company admin, or an office user the admin has named a project manager. Everyone else can read projects and add notes and links.</summary>
+    private static async Task<bool> MayManageAsync(ChandleryDbContext db, Guid companyId, Guid? userId)
+        => userId is { } uid && await db.Users.AsNoTracking().AnyAsync(u => u.Id == uid && u.CompanyId == companyId && u.IsEnabled
+            && (u.Role == UserRole.CompanyAdmin || (u.Role == UserRole.CompanyUser && u.IsProjectManager)));
+
+    private static async Task RequireManagerAsync(ChandleryDbContext db, Guid companyId, Actor actor)
+    {
+        if (!await MayManageAsync(db, companyId, actor.UserId)) throw new InvalidOperationException("Only a company admin or a project manager can do this.");
+    }
+
+    public async Task<bool> MayManageAsync(Guid companyId, Guid? userId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return !db.Node.IsVessel && await MayManageAsync(db, companyId, userId);
+    }
+
+    /// <summary>Names (or removes) an office user as a project manager. A company admin always is one, so the flag changes nothing for them.</summary>
+    public async Task SetProjectManagerAsync(Guid companyId, Guid userId, bool isManager)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId && u.CompanyId == companyId && (u.Role == UserRole.CompanyAdmin || u.Role == UserRole.CompanyUser))
+            ?? throw new InvalidOperationException("User not found.");
+        user.IsProjectManager = isManager;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The office users a project's superintendent can be picked from.</summary>
+    public async Task<List<(Guid Id, string Name)>> OfficeUsersAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var users = await db.Users.AsNoTracking().Where(u => u.CompanyId == companyId && u.IsEnabled && (u.Role == UserRole.CompanyAdmin || u.Role == UserRole.CompanyUser)).OrderBy(u => u.DisplayName).ToListAsync();
+        return users.Select(u => (u.Id, u.DisplayName)).ToList();
     }
 
     public static Task<bool> IsEnabledForVesselAsync(ChandleryDbContext db, Guid companyId, Guid vesselId) => ModuleGate.IsEnabledAsync(db, companyId, vesselId, PolicyModules.Projects);
@@ -88,6 +138,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         if (!await db.Vessels.AnyAsync(v => v.Id == input.VesselId && v.CompanyId == companyId)) throw new InvalidOperationException("Vessel not found.");
         if (!await IsEnabledForVesselAsync(db, companyId, input.VesselId)) throw new InvalidOperationException("Projects are not switched on for this vessel.");
 
@@ -111,6 +162,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         var (project, _) = await LoadEditableAsync(db, companyId, id);
         (project.Type, project.Title, project.Description) = (edit.Type, title, (edit.Description ?? "").Trim());
         (project.SuperintendentUserId, project.SuperintendentName) = (edit.SuperintendentUserId, (edit.SuperintendentName ?? "").Trim());
@@ -133,6 +185,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         var (project, _) = await LoadEditableAsync(db, companyId, id);
 
         var keep = new HashSet<Guid>();
@@ -171,6 +224,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         await LoadEditableAsync(db, companyId, id);
         db.ProjectBudgetLines.RemoveRange(await db.ProjectBudgetLines.Where(l => l.ProjectId == id).ToListAsync());
         var order = 0;
@@ -187,12 +241,13 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The estimate and the yard's quote for one item; blank clears it.</summary>
-    public async Task SetItemCostAsync(Guid companyId, Guid projectId, Guid itemId, decimal? estimatedUsd, decimal? quotedUsd)
+    public async Task SetItemCostAsync(Guid companyId, Guid projectId, Guid itemId, decimal? estimatedUsd, decimal? quotedUsd, Actor actor)
     {
         if (estimatedUsd < 0 || quotedUsd < 0) throw new InvalidOperationException("An amount cannot be negative.");
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         var (project, _) = await LoadEditableAsync(db, companyId, projectId);
         if (project.Items.All(i => i.Id != itemId)) throw new InvalidOperationException("That item is not on this project.");
         var cost = await db.ProjectItemCosts.FirstOrDefaultAsync(c => c.ItemId == itemId);
@@ -223,6 +278,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         await LoadEditableAsync(db, companyId, projectId);
         var entry = new ProjectCostEntry { Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Date = Day(date), Description = description.Trim(), Reference = (reference ?? "").Trim(), AmountUsd = amountUsd, ByName = actor.Name, At = DateTime.UtcNow };
         db.ProjectCostEntries.Add(entry);
@@ -230,11 +286,12 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         return entry;
     }
 
-    public async Task RemoveCostEntryAsync(Guid companyId, Guid entryId)
+    public async Task RemoveCostEntryAsync(Guid companyId, Guid entryId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         var entry = await db.ProjectCostEntries.FirstOrDefaultAsync(e => e.Id == entryId && e.CompanyId == companyId) ?? throw new InvalidOperationException("Cost entry not found.");
         await LoadEditableAsync(db, companyId, entry.ProjectId);
         db.ProjectCostEntries.Remove(entry);
@@ -259,6 +316,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
         var project = await db.Projects.AsNoTracking().Include(p => p.Items).FirstOrDefaultAsync(p => p.Id == id && p.CompanyId == companyId) ?? throw new InvalidOperationException("Project not found.");
         var events = await db.ProjectStatusEvents.AsNoTracking().Where(e => e.ProjectId == id).ToListAsync();
         var status = ProjectStatusRules.Of(events);
@@ -562,5 +620,33 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
             return new ProjectRow(p, ProjectStatusRules.Of(e), ProjectStatusRules.ActualStart(e), ProjectStatusRules.ActualEnd(e),
                 p.Items.Count(i => i.Status == ProjectItemStatus.Open), p.Items.Count(i => i.Status == ProjectItemStatus.Done), p.Items.Count(i => i.Status == ProjectItemStatus.Dropped));
         }).ToList();
+    }
+
+    /// <summary>The projects with their budget, cost to date and days, for the list and the dashboard. Office only: it reads cost.</summary>
+    public async Task<List<ProjectListRow>> ListWithMoneyAsync(Guid companyId, Guid? vesselId = null)
+    {
+        var rows = await ListAsync(companyId, vesselId);
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        var vessels = await db.Vessels.AsNoTracking().Where(v => v.CompanyId == companyId).ToDictionaryAsync(v => v.Id, v => v.Name);
+        var lines = (await db.ProjectBudgetLines.AsNoTracking().Where(l => l.CompanyId == companyId).ToListAsync()).ToLookup(l => l.ProjectId);
+        var result = new List<ProjectListRow>();
+        foreach (var row in rows)
+        {
+            var budget = lines[row.Project.Id].ToList();
+            var cost = (await CostAsync(companyId, row.Project.Id)).Cost;
+            result.Add(new ProjectListRow(row, vessels.GetValueOrDefault(row.Project.VesselId) ?? "", ProjectCostRules.Budget(budget), ProjectCostRules.Contingency(budget), cost,
+                ProjectCostRules.PlannedDays(row.Project.PlannedStart, row.Project.PlannedEnd), ProjectCostRules.ActualDays(row.ActualStart, row.ActualEnd, DateTime.UtcNow.Date)));
+        }
+        return result;
+    }
+
+    /// <summary>What the dashboard shows; null when the module is off for every vessel.</summary>
+    public async Task<ProjectCounts?> CountsAsync(Guid companyId)
+    {
+        if (!await IsEnabledForCompanyAsync(companyId)) return null;
+        var live = (await ListWithMoneyAsync(companyId)).Where(r => r.Row.Status != ProjectStatus.Closed).ToList();
+        return new ProjectCounts(live.Count(r => r.Row.Status == ProjectStatus.Ongoing), live.Count(r => r.Row.Status is ProjectStatus.Planning or ProjectStatus.Approved), live.Count(r => r.OverBudget));
     }
 }

@@ -46,6 +46,9 @@ namespace Chandlery.Migrations
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsProjectManager")
+                        .HasColumnType("boolean");
+
                     b.Property<bool>("IsRiskReviewer")
                         .HasColumnType("boolean");
 

@@ -189,7 +189,7 @@ public class ProjectSyncTests : IAsyncLifetime
         await _shore.SaveItemsAsync(_s.CompanyId, project.Id, TwoItems(), _s.User);
         var items = (await _shore.GetAsync(_s.CompanyId, project.Id))!.Project.Items;
         await _shore.SaveBudgetAsync(_s.CompanyId, project.Id, [new("Yard", 90_000m, 10m), new("Paint", 30_000m)], _s.User);
-        await _shore.SetItemCostAsync(_s.CompanyId, project.Id, items[0].Id, 40_000m, 38_500m);
+        await _shore.SetItemCostAsync(_s.CompanyId, project.Id, items[0].Id, 40_000m, 38_500m, _s.User);
         await _shore.AddCostEntryAsync(_s.CompanyId, project.Id, Today, "Surveyor's attendance", "INV-77", 1_200m, _s.User);
         var approved = await _shore.RecordAsync(_s.CompanyId, project.Id, ProjectEventKind.Approved, Today, "Budget agreed", _s.User);
         Assert.Equal(120_000m, Assert.Single(await _shore.ApprovalsAsync(_s.CompanyId, project.Id)).TotalUsd);       // what was approved is kept
@@ -242,7 +242,7 @@ public class ProjectSyncTests : IAsyncLifetime
         // Removing an item removes its estimate; steps must follow in order.
         await _shore.SaveItemsAsync(_s.CompanyId, project.Id, TwoItems(), _s.User);
         var items = (await _shore.GetAsync(_s.CompanyId, project.Id))!.Project.Items;
-        await _shore.SetItemCostAsync(_s.CompanyId, project.Id, items[0].Id, 100m, null);
+        await _shore.SetItemCostAsync(_s.CompanyId, project.Id, items[0].Id, 100m, null, _s.User);
         await _shore.SaveItemsAsync(_s.CompanyId, project.Id, [new(items[1].Id, items[1].Group, items[1].Description, items[1].Source, items[1].SourceId, items[1].SourceRef)], _s.User);
         Assert.Empty(await _shore.ItemCostsAsync(_s.CompanyId, project.Id));
         var early = await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.RecordAsync(_s.CompanyId, project.Id, ProjectEventKind.Started, Today, "", _s.User));
@@ -370,7 +370,7 @@ public class ProjectSyncTests : IAsyncLifetime
             () => _shore.SaveItemsAsync(_s.CompanyId, project.Id, [new(null, "Hull", "One more job")], _s.User),
             () => _shore.SaveBudgetAsync(_s.CompanyId, project.Id, [new("Yard", 1m)], _s.User),
             () => _shore.AddCostEntryAsync(_s.CompanyId, project.Id, Today, "Late bill", "", 100m, _s.User),
-            () => _shore.SetItemCostAsync(_s.CompanyId, project.Id, items[0].Id, 1m, 1m),
+            () => _shore.SetItemCostAsync(_s.CompanyId, project.Id, items[0].Id, 1m, 1m, _s.User),
             () => _shore.RecordAsync(_s.CompanyId, project.Id, ProjectEventKind.Started, Today, "", _s.User),
         })
             Assert.Contains("closed and locked", (await Assert.ThrowsAsync<InvalidOperationException>(attempt)).Message);
