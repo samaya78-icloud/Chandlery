@@ -43,6 +43,7 @@ else
     </PageHeader>
 
     <RelatedDocuments CompanyId="_companyId" Kind="DocKind.Invoice" Id="inv.Id" Version="_auditVersion" />
+    <ProjectTag CompanyId="_companyId" Kind="ProjectLinkKind.Invoice" DocId="inv.Id" VesselId="@(inv.VesselId ?? _detail.Po?.VesselId)" />
 
     @if (_detail.Match is { } m)
     {

@@ -19,6 +19,20 @@ public record NewProjectNote(DateTime Date, string Text, int? ProgressPct = null
 
 public record ProjectDetail(Project Project, List<ProjectStatusEvent> Events, List<ProjectNote> Notes, ProjectStatus Status, DateTime? ActualStart, DateTime? ActualEnd);
 
+/// <summary>The project a document is on. Inherited means it has no link of its own and takes the project of its requisition or order.</summary>
+public record DocProject(Guid ProjectId, string Code, string Title, ProjectStatus Status, bool Inherited);
+
+public record ProjectOption(Guid Id, string Code, string Title, ProjectStatus Status);
+
+public enum ProjectCostBucket { Committed, Invoiced, Settled, NotCounted }
+
+/// <summary>One document behind the cost figures. Settled is an order whose invoices have replaced it; NotCounted is one not yet approved or finalized (or rejected).</summary>
+public record ProjectCostLine(ProjectLinkKind Kind, Guid DocId, string Number, string Supplier, string Status, string Currency, decimal Amount, decimal AmountUsd, ProjectCostBucket Bucket);
+
+public record ProjectCostSummary(ProjectCost Cost, List<ProjectCostLine> Lines, List<ProjectCostEntry> Entries, int Unconverted);
+
+internal record ProjectDocs(HashSet<Guid> Requisitions, List<PurchaseOrder> Orders, List<Invoice> Invoices);
+
 public record ProjectRow(Project Project, ProjectStatus Status, DateTime? ActualStart, DateTime? ActualEnd, int ItemsOpen, int ItemsDone, int ItemsDropped);
 
 /// <summary>
@@ -320,7 +334,8 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
 
     /// <summary>
     /// Says a requisition, order or invoice belongs to the project. A document belongs to one project: linking it to another moves it. Written by whichever side makes the link; the document
-    /// must be for the same vessel.
+    /// must be for the same vessel. An order or invoice with no link of its own already belongs to the project of what it came from, but saying so again writes a link of its own, which then holds even
+    /// if the requisition is moved later.
     /// </summary>
     public async Task<ProjectLink> LinkAsync(Guid companyId, Guid projectId, ProjectLinkKind kind, Guid docId, Actor actor)
     {
@@ -330,20 +345,34 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         if (!await IsEnabledForVesselAsync(db, companyId, project.VesselId)) throw new InvalidOperationException("Projects are not switched on for this vessel.");
         if (!await BelongsToVesselAsync(db, companyId, project.VesselId, kind, docId)) throw new InvalidOperationException($"That {KindLabel(kind)} was not found for this vessel.");
 
-        var held = ProjectLinkRules.Effective(await db.ProjectLinks.AsNoTracking().Where(l => l.Kind == kind && l.DocId == docId).ToListAsync());
-        if (held.TryGetValue((kind, docId), out var already) && already == projectId)
-            return await db.ProjectLinks.AsNoTracking().Where(l => l.Kind == kind && l.DocId == docId && l.ProjectId == projectId && l.Added).OrderByDescending(l => l.At).ThenByDescending(l => l.Id).FirstAsync();
+        var own = await db.ProjectLinks.AsNoTracking().Where(l => l.Kind == kind && l.DocId == docId).ToListAsync();
+        var latest = own.OrderBy(l => l.At).ThenBy(l => l.Id).LastOrDefault();
+        if (latest is { Added: true } && latest.ProjectId == projectId) return latest;               // already so: nothing to add
         return await WriteLinkAsync(db, companyId, project, kind, docId, added: true, actor);
     }
 
+    /// <summary>Takes a document off the project it belongs to (its own link, or the one it takes from its requisition or order).</summary>
     public async Task<ProjectLink> UnlinkAsync(Guid companyId, Guid projectId, ProjectLinkKind kind, Guid docId, Actor actor)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var (project, _) = await LoadEditableAsync(db, companyId, projectId);
-        var held = ProjectLinkRules.Effective(await db.ProjectLinks.AsNoTracking().Where(l => l.Kind == kind && l.DocId == docId).ToListAsync());
-        if (!held.TryGetValue((kind, docId), out var current) || current != projectId) throw new InvalidOperationException($"That {KindLabel(kind)} is not linked to this project.");
+        var (current, _) = await ResolveAsync(db, companyId, kind, docId);
+        if (current != projectId) throw new InvalidOperationException($"That {KindLabel(kind)} is not linked to this project.");
         return await WriteLinkAsync(db, companyId, project, kind, docId, added: false, actor);
+    }
+
+    /// <summary>Puts a document on a project, moves it, or (with null) takes it off whichever project it is on. Does nothing when it is already so.</summary>
+    public async Task SetProjectAsync(Guid companyId, ProjectLinkKind kind, Guid docId, Guid? projectId, Actor actor)
+    {
+        var current = await ProjectOfDocAsync(companyId, kind, docId);
+        if (projectId is { } target)
+        {
+            if (current?.ProjectId == target) return;
+            await LinkAsync(companyId, target, kind, docId, actor);
+        }
+        else if (current is not null)
+            await UnlinkAsync(companyId, current.ProjectId, kind, docId, actor);
     }
 
     private static async Task<ProjectLink> WriteLinkAsync(ChandleryDbContext db, Guid companyId, Project project, ProjectLinkKind kind, Guid docId, bool added, Actor actor)
@@ -365,25 +394,143 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
                 && (i.VesselId == vesselId || (i.PurchaseOrderId != null && db.PurchaseOrders.Any(p => p.Id == i.PurchaseOrderId && p.VesselId == vesselId)))),
     };
 
+    /// <summary>The project a document is on, by its own latest link or else by what it came from; and whether it is only by what it came from.</summary>
+    private static async Task<(Guid? Project, bool Inherited)> ResolveAsync(ChandleryDbContext db, Guid companyId, ProjectLinkKind kind, Guid docId)
+    {
+        var own = await db.ProjectLinks.AsNoTracking().Where(l => l.Kind == kind && l.DocId == docId).ToListAsync();
+        Guid? parent = null;
+        if (own.Count == 0)
+        {
+            if (kind == ProjectLinkKind.PurchaseOrder)
+            {
+                var requisitionId = await db.PurchaseOrders.AsNoTracking().Where(p => p.Id == docId && p.CompanyId == companyId).Select(p => p.RequisitionId).FirstOrDefaultAsync();
+                if (requisitionId is { } r) parent = (await ResolveAsync(db, companyId, ProjectLinkKind.Requisition, r)).Project;
+            }
+            else if (kind == ProjectLinkKind.Invoice)
+            {
+                var orderId = await db.Invoices.AsNoTracking().Where(i => i.Id == docId && i.CompanyId == companyId).Select(i => i.PurchaseOrderId).FirstOrDefaultAsync();
+                if (orderId is { } o) parent = (await ResolveAsync(db, companyId, ProjectLinkKind.PurchaseOrder, o)).Project;
+            }
+        }
+        return ProjectInheritance.Resolve(own, parent);
+    }
+
     /// <summary>The project a document belongs to, or null.</summary>
-    public async Task<Guid?> ProjectOfAsync(Guid companyId, ProjectLinkKind kind, Guid docId)
+    public async Task<Guid?> ProjectOfAsync(Guid companyId, ProjectLinkKind kind, Guid docId) => (await ProjectOfDocAsync(companyId, kind, docId))?.ProjectId;
+
+    /// <summary>The project a document belongs to, with what to show about it; null when it is on none.</summary>
+    public async Task<DocProject?> ProjectOfDocAsync(Guid companyId, ProjectLinkKind kind, Guid docId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        var links = await db.ProjectLinks.AsNoTracking().Where(l => l.Kind == kind && l.DocId == docId).ToListAsync();
-        return ProjectLinkRules.Effective(links).TryGetValue((kind, docId), out var project) ? project : null;
+        var (id, inherited) = await ResolveAsync(db, companyId, kind, docId);
+        if (id is not { } projectId) return null;
+        var project = await db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId);
+        return project is null ? null : new DocProject(project.Id, project.Code, project.Title, ProjectStatusRules.Of(await db.ProjectStatusEvents.AsNoTracking().Where(e => e.ProjectId == projectId).ToListAsync()), inherited);
     }
 
-    /// <summary>The documents that belong to a project now, from the links written.</summary>
+    /// <summary>The projects of a vessel that can still take documents (not closed). Empty when the module is off for it.</summary>
+    public async Task<List<ProjectOption>> OpenProjectsAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (!await IsEnabledForVesselAsync(db, companyId, vesselId)) return [];
+        var projects = await db.Projects.AsNoTracking().Where(p => p.CompanyId == companyId && p.VesselId == vesselId).OrderByDescending(p => p.CreatedAt).ToListAsync();
+        var ids = projects.Select(p => p.Id).ToList();
+        var events = (await db.ProjectStatusEvents.AsNoTracking().Where(e => ids.Contains(e.ProjectId)).ToListAsync()).ToLookup(e => e.ProjectId);
+        return projects.Select(p => new ProjectOption(p.Id, p.Code, p.Title, ProjectStatusRules.Of(events[p.Id]))).Where(o => ProjectStatusRules.IsEditable(o.Status)).ToList();
+    }
+
+    /// <summary>What belongs to a project now: its requisitions, and the orders and invoices that are on it by their own link or by what they came from.</summary>
+    private static async Task<ProjectDocs> DocsAsync(ChandleryDbContext db, Guid companyId, Guid projectId)
+    {
+        // Documents that have ever been linked to this project are the starting point; whether each still belongs is decided from every link written about it.
+        var named = await db.ProjectLinks.AsNoTracking().Where(l => l.ProjectId == projectId).Select(l => new { l.Kind, l.DocId }).Distinct().ToListAsync();
+        async Task<Dictionary<Guid, List<ProjectLink>>> EventsAsync(ProjectLinkKind kind, IReadOnlyCollection<Guid> ids)
+            => (await db.ProjectLinks.AsNoTracking().Where(l => l.Kind == kind && ids.Contains(l.DocId)).ToListAsync()).GroupBy(l => l.DocId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var requisitionIds = named.Where(n => n.Kind == ProjectLinkKind.Requisition).Select(n => n.DocId).ToList();
+        var requisitionEvents = await EventsAsync(ProjectLinkKind.Requisition, requisitionIds);
+        var requisitions = requisitionIds.Where(id => ProjectInheritance.Resolve(requisitionEvents.GetValueOrDefault(id) ?? [], null).Project == projectId).ToHashSet();
+
+        var directOrders = named.Where(n => n.Kind == ProjectLinkKind.PurchaseOrder).Select(n => n.DocId).ToList();
+        var candidateOrders = await db.PurchaseOrders.AsNoTracking().Where(p => p.CompanyId == companyId && (directOrders.Contains(p.Id) || (p.RequisitionId != null && requisitions.Contains(p.RequisitionId.Value)))).ToListAsync();
+        var orderEvents = await EventsAsync(ProjectLinkKind.PurchaseOrder, candidateOrders.Select(p => p.Id).ToList());
+        var orders = candidateOrders.Where(p => ProjectInheritance.Resolve(orderEvents.GetValueOrDefault(p.Id) ?? [], p.RequisitionId is { } r && requisitions.Contains(r) ? projectId : null).Project == projectId).ToList();
+
+        var orderIds = orders.Select(p => p.Id).ToHashSet();
+        var directInvoices = named.Where(n => n.Kind == ProjectLinkKind.Invoice).Select(n => n.DocId).ToList();
+        var candidateInvoices = await db.Invoices.AsNoTracking().Include(i => i.Lines).Where(i => i.CompanyId == companyId && (directInvoices.Contains(i.Id) || (i.PurchaseOrderId != null && orderIds.Contains(i.PurchaseOrderId.Value)))).ToListAsync();
+        var invoiceEvents = await EventsAsync(ProjectLinkKind.Invoice, candidateInvoices.Select(i => i.Id).ToList());
+        var invoices = candidateInvoices.Where(i => ProjectInheritance.Resolve(invoiceEvents.GetValueOrDefault(i.Id) ?? [], i.PurchaseOrderId is { } o && orderIds.Contains(o) ? projectId : null).Project == projectId).ToList();
+        return new ProjectDocs(requisitions, orders, invoices);
+    }
+
+    /// <summary>The documents that belong to a project now.</summary>
     public async Task<List<(ProjectLinkKind Kind, Guid DocId)>> LinksOfAsync(Guid companyId, Guid projectId)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        // A document may have been moved to another project, so the latest link for each of this project's documents must be read, not only this project's own.
-        var docs = await db.ProjectLinks.AsNoTracking().Where(l => l.ProjectId == projectId).Select(l => new { l.Kind, l.DocId }).Distinct().ToListAsync();
-        var docIds = docs.Select(d => d.DocId).ToList();
-        var all = await db.ProjectLinks.AsNoTracking().Where(l => docIds.Contains(l.DocId)).ToListAsync();
-        return ProjectLinkRules.Effective(all).Where(kv => kv.Value == projectId).Select(kv => kv.Key).OrderBy(k => k.Kind).ThenBy(k => k.DocId).ToList();
+        var docs = await DocsAsync(db, companyId, projectId);
+        return docs.Requisitions.Select(id => (ProjectLinkKind.Requisition, id))
+            .Concat(docs.Orders.Select(p => (ProjectLinkKind.PurchaseOrder, p.Id))).Concat(docs.Invoices.Select(i => (ProjectLinkKind.Invoice, i.Id)))
+            .OrderBy(k => k.Item1).ThenBy(k => k.Item2).ToList();
+    }
+
+    /// <summary>
+    /// What the project has cost so far, in US dollars: approved orders not yet invoiced (committed), finalized invoices (invoiced), and entries made by hand (other), with the document behind
+    /// every figure. An order or invoice in another currency is converted at the rate it carries, else the company's rate for its date; when there is none it is counted at its own amount and
+    /// reported. Office only: a vessel is never shown cost.
+    /// </summary>
+    public async Task<ProjectCostSummary> CostAsync(Guid companyId, Guid projectId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        if (!await db.Projects.AnyAsync(p => p.Id == projectId && p.CompanyId == companyId)) throw new InvalidOperationException("Project not found.");
+        var docs = await DocsAsync(db, companyId, projectId);
+        var suppliers = await db.Suppliers.AsNoTracking().Where(s => docs.Orders.Select(o => o.SupplierId).Concat(docs.Invoices.Select(i => i.SupplierId)).Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
+        var unconverted = 0;
+        var rates = new Dictionary<(string, DateTime), decimal?>();
+
+        async Task<decimal> UsdAsync(decimal amount, string currency, decimal? stored, DateTime date)
+        {
+            if (currency == "USD") return amount;
+            var rate = stored;
+            if (rate is null)
+            {
+                var key = (currency, date.Date);
+                if (!rates.TryGetValue(key, out rate)) rates[key] = rate = (await Fx.LookupAsync(db, companyId, currency, date))?.UnitsPerUsd;
+            }
+            if (rate is null) { unconverted++; return amount; }
+            return Fx.ToUsd(amount, rate.Value);
+        }
+
+        var lines = new List<ProjectCostLine>();
+        var costOrders = new List<CostPo>();
+        var costInvoices = new List<CostInvoice>();
+        var invoicedOrders = docs.Invoices.Where(i => i.Status == InvoiceStatus.Finalized && i.PurchaseOrderId is not null).Select(i => i.PurchaseOrderId!.Value).ToHashSet();
+
+        foreach (var po in docs.Orders.OrderBy(p => p.CreatedDate))
+        {
+            var usd = await UsdAsync(po.Total, po.Currency, po.UsdRate, po.CreatedDate);
+            var counted = po.Status == PoStatus.Approved && !po.IsDummy;
+            if (counted) costOrders.Add(new CostPo(po.Id, usd));
+            var bucket = !counted ? ProjectCostBucket.NotCounted : invoicedOrders.Contains(po.Id) ? ProjectCostBucket.Settled : ProjectCostBucket.Committed;
+            lines.Add(new ProjectCostLine(ProjectLinkKind.PurchaseOrder, po.Id, po.PoNumber, suppliers.GetValueOrDefault(po.SupplierId) ?? "", po.IsDummy ? "Record-only" : po.Status.ToString(), po.Currency, po.Total, usd, bucket));
+        }
+        foreach (var inv in docs.Invoices.OrderBy(i => i.InvoiceDate))
+        {
+            var counted = inv.Status == InvoiceStatus.Finalized;
+            var usd = await UsdAsync(inv.TotalExclTax, inv.Currency, inv.UsdRate, inv.InvoiceDate);
+            if (counted) costInvoices.Add(new CostInvoice(inv.PurchaseOrderId, usd));
+            lines.Add(new ProjectCostLine(ProjectLinkKind.Invoice, inv.Id, inv.InvoiceNumber, suppliers.GetValueOrDefault(inv.SupplierId) ?? "", inv.Status.ToString(), inv.Currency, inv.TotalExclTax, usd,
+                counted ? ProjectCostBucket.Invoiced : ProjectCostBucket.NotCounted));
+        }
+
+        var entries = await db.ProjectCostEntries.AsNoTracking().Where(e => e.ProjectId == projectId).ToListAsync();
+        var cost = ProjectCostRules.Of(costOrders, costInvoices, entries.Select(e => e.AmountUsd));
+        return new ProjectCostSummary(cost, lines, entries.OrderBy(e => e.Date).ThenBy(e => e.At).ToList(), unconverted);
     }
 
     // ---- reading ----

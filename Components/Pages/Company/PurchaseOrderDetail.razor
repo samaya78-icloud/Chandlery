@@ -75,6 +75,7 @@ else
 
     <RelatedDocuments CompanyId="_companyId" Kind="DocKind.PurchaseOrder" Id="_po.Id" Version="_auditVersion" />
     <LinkedTasks CompanyId="_companyId" LinkType="order" TargetId="_po.Id" />
+    <ProjectTag CompanyId="_companyId" Kind="ProjectLinkKind.PurchaseOrder" DocId="_po.Id" VesselId="_po.VesselId" />
 
     @if (_po.IsSpot && (_vesselName != "" || _portName != "" || _po.SupplierRef != "" || _po.Remarks != ""))
     {

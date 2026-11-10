@@ -5,6 +5,7 @@
 @inject ProcurementService Procurement
 @inject FxService FxSvc
 @inject NavigationManager Navigation
+@inject ProjectService Projects
 
 <PageTitle>New Spot PO · Chandlery</PageTitle>
 
@@ -22,6 +23,7 @@
                 <label class="label">Vessel</label>
                 <SelectBox TValue="Guid" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="Choose a vessel…" />
             </div>
+            <ProjectPicker CompanyId="_companyId" VesselId="@(_vesselId == Guid.Empty ? null : _vesselId)" @bind-Value="_projectId" />
             <div>
                 <label class="label">Department @if (_departments.Count > 0) { <span class="text-rose-500">*</span> }</label>
                 <SelectBox TValue="Guid" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "No department")" />
@@ -123,6 +125,7 @@
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private Guid _companyId;
+    private Guid? _projectId;
     private Actor _actor = Actor.System;
     private Guid _vesselId;
     private Guid _departmentId;
@@ -205,6 +208,7 @@
         try
         {
             var po = await Procurement.CreateSpotPoAsync(_companyId, request, _actor);
+            await LinkProjectAsync(ProjectLinkKind.PurchaseOrder, po.Id);
             Navigation.NavigateTo(NodeContext.Current.IsVessel ? $"/vessel/orders/{po.Id}" : $"/company/purchase-orders/{po.Id}");
         }
         catch (InvalidOperationException ex)
@@ -212,5 +216,13 @@
             _error = ex.Message;
             _busy = false;
         }
+    }
+
+    /// <summary>Puts the document just saved on the project chosen on the form. The document is saved either way; a project that cannot take it (closed meanwhile) leaves it where it was.</summary>
+    private async Task LinkProjectAsync(ProjectLinkKind kind, Guid docId)
+    {
+        if (_projectId is not { } project) return;
+        try { await Projects.LinkAsync(_companyId, project, kind, docId, _actor); }
+        catch (InvalidOperationException) { }
     }
 }

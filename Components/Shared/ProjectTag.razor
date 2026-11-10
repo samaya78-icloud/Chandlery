@@ -1,0 +1,89 @@
+@inject ProjectService Projects
+@inject AuthenticationStateProvider Auth
+@inject ToastService Toasts
+
+@* Which project a requisition, order or invoice belongs to, and a way to change it. Shown only where Projects is switched on for the vessel and there is something to show or choose. *@
+@if (_show)
+{
+    <div class="card mb-6 p-4 text-sm">
+        <h2 class="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Project</h2>
+        <div class="flex flex-wrap items-center gap-3">
+            @if (_current is { } c)
+            {
+                <span class="font-mono font-semibold">@c.Code</span>
+                <span>@c.Title</span>
+                <StatusChip Value="@c.Status" />
+                @if (c.Inherited)
+                {
+                    <span class="text-xs text-muted">through its @(Kind == ProjectLinkKind.PurchaseOrder ? "requisition" : "purchase order")</span>
+                }
+            }
+            else
+            {
+                <span class="text-muted">Not on a project.</span>
+            }
+
+            @if (_options.Count > 0 || _current is not null)
+            {
+                <span class="ml-auto flex flex-wrap items-center gap-2">
+                    <span class="w-72 max-w-full"><SelectBox TValue="Guid" @bind-Value="_pick" Options="_options" Placeholder="Choose a project…" AllowClear="true" Small="true" /></span>
+                    <button type="button" @onclick="Save" disabled="@(_busy || _pick == (_current?.ProjectId ?? Guid.Empty))" class="btn btn-secondary btn-sm">@(_pick == Guid.Empty && _current is not null ? "Take off project" : "Save")</button>
+                </span>
+            }
+        </div>
+        @if (_error is not null)
+        {
+            <p class="mt-2 text-rose-600">@_error</p>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public ProjectLinkKind Kind { get; set; }
+    [Parameter, EditorRequired] public Guid DocId { get; set; }
+
+    /// <summary>The vessel the document is for; without one there is no project to offer.</summary>
+    [Parameter] public Guid? VesselId { get; set; }
+
+    private DocProject? _current;
+    private List<SelectOption<Guid>> _options = [];
+    private Guid _pick;
+    private bool _show, _busy;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _show = false;
+        if (VesselId is not { } vessel) return;
+        var open = await Projects.OpenProjectsAsync(CompanyId, vessel);
+        _current = await Projects.ProjectOfDocAsync(CompanyId, Kind, DocId);
+        _options = open.Select(p => new SelectOption<Guid>(p.Id, $"{p.Code} · {p.Title}", p.Status.ToString())).ToList();
+        _pick = _current?.ProjectId ?? Guid.Empty;
+        // Off for this vessel, or nothing to choose and nothing chosen: say nothing.
+        _show = _current is not null || open.Count > 0;
+    }
+
+    private async Task Save()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User;
+            await Projects.SetProjectAsync(CompanyId, Kind, DocId, _pick == Guid.Empty ? null : _pick, Actor.From(user));
+            await LoadAsync();
+            await Toasts.Success(_current is null ? "Taken off the project" : "Project saved");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

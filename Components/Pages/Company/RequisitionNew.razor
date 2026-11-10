@@ -7,6 +7,7 @@
 @inject NavigationManager Navigation
 @inject WorklistService Worklist
 @inject PmsIntegrationService PmsLinks
+@inject ProjectService Projects
 
 <PageTitle>New Requisition · Chandlery</PageTitle>
 
@@ -46,6 +47,7 @@
                     <p class="mt-1 text-xs text-slate-400">No vessels yet &mdash; <a href="/company/vessels" class="text-indigo-600 underline">add one</a> first.</p>
                 }
             </div>
+            <ProjectPicker CompanyId="_companyId" VesselId="@(_reqn.VesselId == Guid.Empty ? null : _reqn.VesselId)" @bind-Value="_projectId" />
             <div>
                 <label class="mb-1 block text-sm font-medium text-slate-700">Department @if (_departments.Count > 0) { <span class="text-rose-500">*</span> }</label>
                 <SelectBox TValue="Guid" @bind-Value="_departmentId" Options="_departmentOptions" Placeholder="@(_departments.Count > 0 ? "Select department…" : "Not specified")" />
@@ -125,6 +127,7 @@
     [SupplyParameterFromQuery(Name = "pmsjob")] public Guid? PmsJobId { get; set; }
 
     private Guid _companyId;
+    private Guid? _projectId;
     private Guid _departmentId;
     private Guid _portId;
     private Actor _actor = Actor.System;
@@ -190,6 +193,7 @@
         try
         {
             var created = await Requisitions.CreateAsync(_companyId, _reqn, _actor);
+            await LinkProjectAsync(ProjectLinkKind.Requisition, created.Id);
             if (_fromTask is not null)
             {
                 try { await Worklist.AddEntryAsync(_companyId, _fromTask.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Requisition, LinkTarget: created.Id, LinkLabel: $"Requisition {created.ReqnNumber}"), _actor); }
@@ -202,5 +206,13 @@
             _error = ex.Message;
             _busy = false;
         }
+    }
+
+    /// <summary>Puts the document just saved on the project chosen on the form. The document is saved either way; a project that cannot take it (closed meanwhile) leaves it where it was.</summary>
+    private async Task LinkProjectAsync(ProjectLinkKind kind, Guid docId)
+    {
+        if (_projectId is not { } project) return;
+        try { await Projects.LinkAsync(_companyId, project, kind, docId, _actor); }
+        catch (InvalidOperationException) { }
     }
 }

@@ -1,0 +1,34 @@
+@inject ProjectService Projects
+
+@* The project choice on a form that creates a requisition, order or invoice: the page links the new document after it is saved. Hidden when the vessel has no open project. *@
+@if (_options.Count > 0)
+{
+    <div>
+        <label class="label">Project</label>
+        <SelectBox TValue="Guid" Value="@(Value ?? Guid.Empty)" ValueChanged="Changed" Options="_options" Placeholder="Not on a project" AllowClear="true" />
+        <p class="mt-1 text-xs text-muted">Costs of this document count towards the project.</p>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter] public Guid? VesselId { get; set; }
+    [Parameter] public Guid? Value { get; set; }
+    [Parameter] public EventCallback<Guid?> ValueChanged { get; set; }
+
+    private List<SelectOption<Guid>> _options = [];
+    private Guid? _loadedFor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedFor == VesselId && _loadedFor is not null) return;
+        _loadedFor = VesselId;
+        _options = VesselId is { } vessel
+            ? (await Projects.OpenProjectsAsync(CompanyId, vessel)).Select(p => new SelectOption<Guid>(p.Id, $"{p.Code} · {p.Title}", p.Status.ToString())).ToList()
+            : [];
+        // A choice made for another vessel no longer applies.
+        if (Value is { } chosen && _options.All(o => o.Value != chosen)) await ValueChanged.InvokeAsync(null);
+    }
+
+    private Task Changed(Guid id) => ValueChanged.InvokeAsync(id == Guid.Empty ? null : id);
+}

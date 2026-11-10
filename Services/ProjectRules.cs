@@ -56,6 +56,21 @@ public static class ProjectLinkRules
             .Where(l => l.Added).ToDictionary(l => (l.Kind, l.DocId), l => l.ProjectId);
 }
 
+/// <summary>How a document finds its project when the links written about it are weighed against where it came from.</summary>
+public static class ProjectInheritance
+{
+    /// <summary>
+    /// A document's own latest link decides (a removal means none). A document with no link of its own takes the project of what it came from: a purchase order that of its
+    /// requisition, an invoice that of its order. Reading it this way needs no copy to be made when an order is raised, whichever way it was raised.
+    /// </summary>
+    public static (Guid? Project, bool Inherited) Resolve(IEnumerable<ProjectLink> own, Guid? parentProject)
+    {
+        var latest = own.OrderBy(l => l.At).ThenBy(l => l.Id).LastOrDefault();
+        if (latest is not null) return (latest.Added ? latest.ProjectId : null, false);
+        return (parentProject, parentProject is not null);
+    }
+}
+
 /// <summary>A purchase order linked to a project and approved, in US dollars at the rate it carries.</summary>
 public record CostPo(Guid Id, decimal TotalUsd);
 

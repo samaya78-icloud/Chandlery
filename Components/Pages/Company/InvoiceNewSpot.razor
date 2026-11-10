@@ -5,6 +5,7 @@
 @inject InvoiceService InvoiceSvc
 @inject FxService FxSvc
 @inject NavigationManager Navigation
+@inject ProjectService Projects
 
 <PageTitle>New Spot Invoice · Chandlery</PageTitle>
 
@@ -38,6 +39,7 @@
                 <label class="label">Vessel</label>
                 <SelectBox TValue="Guid" @bind-Value="_vesselId" Options="_vesselOptions" Placeholder="None" AllowClear="true" />
             </div>
+            <ProjectPicker CompanyId="_companyId" VesselId="@(_vesselId == Guid.Empty ? null : _vesselId)" @bind-Value="_projectId" />
             <div><label class="label">Cost centre</label><input @bind="_req.CostCentre" class="input" /></div>
             <div class="md:col-span-3">
                 <label class="label">Pay into (the supplier's saved accounts)</label>
@@ -95,6 +97,7 @@
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private Guid _companyId;
+    private Guid? _projectId;
     private Actor _actor = Actor.System;
     private readonly NewSpotInvoice _req = new();
     private readonly List<UploadedFile> _uploads = new();
@@ -169,6 +172,7 @@
         try
         {
             var invoice = await InvoiceSvc.CreateSpotAsync(_companyId, _req, _uploads, _actor);
+            await LinkProjectAsync(ProjectLinkKind.Invoice, invoice.Id);
             Navigation.NavigateTo($"/company/invoices/{invoice.Id}");
         }
         catch (InvalidOperationException ex)
@@ -176,5 +180,13 @@
             _error = ex.Message;
             _busy = false;
         }
+    }
+
+    /// <summary>Puts the document just saved on the project chosen on the form. The document is saved either way; a project that cannot take it (closed meanwhile) leaves it where it was.</summary>
+    private async Task LinkProjectAsync(ProjectLinkKind kind, Guid docId)
+    {
+        if (_projectId is not { } project) return;
+        try { await Projects.LinkAsync(_companyId, project, kind, docId, _actor); }
+        catch (InvalidOperationException) { }
     }
 }
