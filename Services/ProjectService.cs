@@ -34,7 +34,10 @@ public record ProjectListRow(ProjectRow Row, string VesselName, decimal Budget, 
 }
 
 /// <summary>NotStarted is planning or approved: work has not begun.</summary>
-public record ProjectCounts(int Ongoing, int NotStarted, int OverBudget);
+public record ProjectCounts(int Ongoing, int NotStarted, int OverBudget, int RequestsWaiting = 0);
+
+/// <summary>A request from the vessel with the office's answer, if there is one yet.</summary>
+public record ProjectRequestView(ProjectItemRequest Request, ProjectItemDecision? Decision);
 
 public record ImportTask(Guid Id, string Code, string Title, bool Urgent, DateTime? Target);
 
@@ -776,6 +779,78 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         return jobItems.Where(i => !recorded.Contains(i.SourceId!.Value)).Select(i => i.Id).ToHashSet();
     }
 
+    // ---- requests from the vessel ----
+
+    /// <summary>The vessel asks for another job on the project. Written once; the office adds it to the specification or declines it, with a reason.</summary>
+    public async Task<ProjectItemRequest> AddItemRequestAsync(Guid companyId, Guid projectId, string description, string reason, Actor actor)
+    {
+        var text = (description ?? "").Trim();
+        if (text == "") throw new InvalidOperationException("Describe the job you are asking for.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var (project, _) = await LoadEditableAsync(db, companyId, projectId);
+        if (!await IsEnabledForVesselAsync(db, companyId, project.VesselId)) throw new InvalidOperationException("Projects are not switched on for this vessel.");
+        if (project.Items.Count >= MaxItems) throw new InvalidOperationException($"A project can hold at most {MaxItems} specification items.");
+
+        var request = new ProjectItemRequest
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = project.VesselId, ProjectId = projectId, Description = text, Reason = (reason ?? "").Trim(),
+            RequestedByUserId = actor.UserId, RequestedByName = actor.Name, At = DateTime.UtcNow,
+        };
+        db.ProjectItemRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request;
+    }
+
+    /// <summary>The requests made on a project, oldest first, each with the answer if there is one.</summary>
+    public async Task<List<ProjectRequestView>> RequestsAsync(Guid companyId, Guid projectId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var requests = await db.ProjectItemRequests.AsNoTracking().Where(r => r.ProjectId == projectId).OrderBy(r => r.At).ThenBy(r => r.Id).ToListAsync();
+        var ids = requests.Select(r => r.Id).ToList();
+        var decisions = (await db.ProjectItemDecisions.AsNoTracking().Where(d => ids.Contains(d.RequestId)).ToListAsync()).ToDictionary(d => d.RequestId);
+        return requests.Select(r => new ProjectRequestView(r, decisions.GetValueOrDefault(r.Id))).ToList();
+    }
+
+    /// <summary>
+    /// The office answers a request. Accepting adds the job to the specification (under the group given) and records which item it became; declining needs a reason. A request is
+    /// answered once.
+    /// </summary>
+    public async Task<ProjectItemDecision> DecideRequestAsync(Guid companyId, Guid requestId, bool accept, string group, string note, Actor actor)
+    {
+        if (!accept && string.IsNullOrWhiteSpace(note)) throw new InvalidOperationException("Say why the request is declined.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
+        var request = await db.ProjectItemRequests.AsNoTracking().FirstOrDefaultAsync(r => r.Id == requestId && r.CompanyId == companyId) ?? throw new InvalidOperationException("Request not found.");
+        if (await db.ProjectItemDecisions.AnyAsync(d => d.RequestId == requestId)) throw new InvalidOperationException("This request has already been answered.");
+        var (project, _) = await LoadEditableAsync(db, companyId, request.ProjectId);
+
+        Guid? itemId = null;
+        if (accept)
+        {
+            if (project.Items.Count >= MaxItems) throw new InvalidOperationException($"A project can hold at most {MaxItems} specification items.");
+            var item = new ProjectItem
+            {
+                Id = Guid.CreateVersion7(), Group = string.IsNullOrWhiteSpace(group) ? "Vessel requests" : group.Trim(), Description = request.Description, Source = ProjectItemSource.VesselRequest,
+                SourceId = request.Id, SourceRef = "Vessel request", Status = ProjectItemStatus.Open, SortOrder = project.Items.Count == 0 ? 0 : project.Items.Max(i => i.SortOrder) + 1,
+            };
+            project.Items.Add(item);
+            db.Entry(item).State = EntityState.Added;
+            itemId = item.Id;
+        }
+        var decision = new ProjectItemDecision
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = request.VesselId, ProjectId = request.ProjectId, RequestId = requestId, Accepted = accept, Note = (note ?? "").Trim(),
+            ItemId = itemId, DecidedByUserId = actor.UserId, DecidedByName = actor.Name, At = DateTime.UtcNow,
+        };
+        db.ProjectItemDecisions.Add(decision);
+        await db.SaveChangesAsync();
+        return decision;
+    }
+
     // ---- reading ----
 
     public async Task<ProjectDetail?> GetAsync(Guid companyId, Guid id)
@@ -807,20 +882,20 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         }).ToList();
     }
 
-    /// <summary>The projects with their budget, cost to date and days, for the list and the dashboard. Office only: it reads cost.</summary>
+    /// <summary>The projects with their budget, cost to date and days, for the list and the dashboard. Onboard the money is left empty: a vessel is never shown budget or cost.</summary>
     public async Task<List<ProjectListRow>> ListWithMoneyAsync(Guid companyId, Guid? vesselId = null)
     {
         var rows = await ListAsync(companyId, vesselId);
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        RequireOffice(db);
+        var onVessel = db.Node.IsVessel;
         var vessels = await db.Vessels.AsNoTracking().Where(v => v.CompanyId == companyId).ToDictionaryAsync(v => v.Id, v => v.Name);
         var lines = (await db.ProjectBudgetLines.AsNoTracking().Where(l => l.CompanyId == companyId).ToListAsync()).ToLookup(l => l.ProjectId);
         var result = new List<ProjectListRow>();
         foreach (var row in rows)
         {
-            var budget = lines[row.Project.Id].ToList();
-            var cost = (await CostAsync(companyId, row.Project.Id)).Cost;
+            var budget = onVessel ? [] : lines[row.Project.Id].ToList();
+            var cost = onVessel ? new ProjectCost(0, 0, 0) : (await CostAsync(companyId, row.Project.Id)).Cost;
             result.Add(new ProjectListRow(row, vessels.GetValueOrDefault(row.Project.VesselId) ?? "", ProjectCostRules.Budget(budget), ProjectCostRules.Contingency(budget), cost,
                 ProjectCostRules.PlannedDays(row.Project.PlannedStart, row.Project.PlannedEnd), ProjectCostRules.ActualDays(row.ActualStart, row.ActualEnd, DateTime.UtcNow.Date)));
         }
@@ -832,6 +907,10 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
     {
         if (!await IsEnabledForCompanyAsync(companyId)) return null;
         var live = (await ListWithMoneyAsync(companyId)).Where(r => r.Row.Status != ProjectStatus.Closed).ToList();
-        return new ProjectCounts(live.Count(r => r.Row.Status == ProjectStatus.Ongoing), live.Count(r => r.Row.Status is ProjectStatus.Planning or ProjectStatus.Approved), live.Count(r => r.OverBudget));
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var liveIds = live.Select(r => r.Row.Project.Id).ToList();
+        var waiting = await db.ProjectItemRequests.AsNoTracking().CountAsync(r => liveIds.Contains(r.ProjectId) && !db.ProjectItemDecisions.Any(d => d.RequestId == r.Id));
+        return new ProjectCounts(live.Count(r => r.Row.Status == ProjectStatus.Ongoing), live.Count(r => r.Row.Status is ProjectStatus.Planning or ProjectStatus.Approved), live.Count(r => r.OverBudget), waiting);
     }
 }

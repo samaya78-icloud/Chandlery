@@ -1,5 +1,6 @@
 @page "/projects/{ProjectId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject ProjectService Svc
 @inject ToastService Toasts
@@ -28,7 +29,7 @@ else
             @if (p.IsUwild) { <StatusChip Label="UWILD" Tone="info" /> }
         </Badges>
         <Facts>
-            <DocLink Kind="DocKind.Vessel" Id="p.VesselId" Text="@_vesselName" />
+            @if (_onVessel) { <span>@_vesselName</span> } else { <DocLink Kind="DocKind.Vessel" Id="p.VesselId" Text="@_vesselName" /> }
             @if (p.SuperintendentName != "") { <span>&middot; @p.SuperintendentName in charge</span> }
             @if (p.Yard != "") { <span>&middot; @p.Yard</span> }
             @if (p.PlannedStart is { } ps) { <span>&middot; planned @ps.ToString("d MMM yyyy")@(p.PlannedEnd is { } pe ? " to " + pe.ToString("d MMM yyyy") : "")</span> }
@@ -109,8 +110,11 @@ else
     <div class="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard Label="Days" Value="@DaysText()" Hint="@DaysHint()" Tone="info" />
         <StatCard Label="Specification" Value="@($"{_detail.Project.Items.Count(i => i.Status == ProjectItemStatus.Done)} of {_detail.Project.Items.Count}")" Hint="@($"{_detail.Project.Items.Count(i => i.Status == ProjectItemStatus.Open)} open · {_detail.Project.Items.Count(i => i.Status == ProjectItemStatus.Dropped)} dropped")" Tone="accent" />
+        @if (!_onVessel)
+        {
         <StatCard Label="Budget" Value="@(_budgetTotal == 0 ? "—" : Money.Format(_budgetTotal, "USD"))" Hint="@(_contingency == 0 ? "No contingency set" : $"plus {Money.Format(_contingency, "USD")} contingency held")" Tone="accent" />
         <StatCard Label="Cost to date" Value="@(_cost!.Cost.ToDate == 0 ? "—" : Money.Format(_cost.Cost.ToDate, "USD"))" Hint="@VarianceText()" Tone="@(OverBudget ? "danger" : "success")" />
+        }
     </div>
 
     @* ---- specification ---- *@
@@ -197,7 +201,7 @@ else
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead class="text-left text-xs uppercase tracking-wide text-muted">
-                        <tr><th class="p-2">Group</th><th class="p-2">Job</th><th class="p-2">From</th><th class="p-2">Status</th><th class="p-2 text-right">Estimate (USD)</th><th class="p-2 text-right">Yard quote (USD)</th><th class="p-2"></th></tr>
+                        <tr><th class="p-2">Group</th><th class="p-2">Job</th><th class="p-2">From</th><th class="p-2">Status</th>@if (!_onVessel) { <th class="p-2 text-right">Estimate (USD)</th><th class="p-2 text-right">Yard quote (USD)</th> }<th class="p-2"></th></tr>
                     </thead>
                     <tbody class="divide-y divide-line/60">
                         @foreach (var row in _items)
@@ -215,20 +219,79 @@ else
                                     else { @SourceText(row) }
                                 </td>
                                 <td class="p-2 w-36">@if (canEdit) { <SelectBox TValue="ProjectItemStatus" @bind-Value="row.Status" Options="_itemStatusOptions" Small="true" /> } else { @row.Status }</td>
+                                @if (!_onVessel)
+                                {
                                 <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.01" min="0" @bind="row.Estimated" class="input w-32 text-right" /> } else { @(row.Estimated is { } est ? Money.Format(est, "USD") : "—") }</td>
                                 <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.01" min="0" @bind="row.Quoted" class="input w-32 text-right" /> } else { @(row.Quoted is { } quote ? Money.Format(quote, "USD") : "—") }</td>
+                                }
                                 <td class="p-2 text-right">@if (canEdit) { <button @onclick="() => _items.Remove(row)" class="text-xs text-rose-600 hover:underline">Remove</button> }</td>
                             </tr>
                         }
                     </tbody>
                 </table>
             </div>
-            <p class="mt-2 text-xs text-muted">Estimates and yard quotes are kept at the office; the vessel sees the jobs and their status, never the amounts.</p>
+            @if (!_onVessel)
+            {
+                <p class="mt-2 text-xs text-muted">Estimates and yard quotes are kept at the office; the vessel sees the jobs and their status, never the amounts.</p>
+            }
         }
     </section>
 
-    @* ---- budget and cost (office only) ---- *@
-    @* ---- budget and cost: shown to every office user; only managers can change them ---- *@
+    @* ---- requests from the vessel ---- *@
+    @if (_requests.Count > 0 || (_onVessel && editable))
+    {
+        <section class="card mb-6 p-5">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">@(_onVessel ? "Jobs you have asked for" : "Requests from the vessel")</h2>
+            @if (_onVessel)
+            {
+                <p class="mb-3 text-sm text-muted">Found something that needs doing while the work is going on? Ask for it to be added. The office will add it to the specification, or tell you why not.</p>
+            }
+            @if (_requests.Count == 0)
+            {
+                <p class="mb-3 text-sm text-muted">No requests yet.</p>
+            }
+            else
+            {
+                <ul class="mb-4 divide-y divide-line/60 text-sm">
+                    @foreach (var v in _requests)
+                    {
+                        var r = v.Request;
+                        <li class="py-3">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <span class="font-medium">@r.Description</span>
+                                @if (v.Decision is null) { <StatusChip Label="Waiting" Tone="warning" /> }
+                                else if (v.Decision.Accepted) { <StatusChip Label="Added to the specification" Tone="success" /> }
+                                else { <StatusChip Label="Declined" Tone="danger" /> }
+                            </div>
+                            @if (r.Reason != "") { <p class="mt-1 text-ink-2">@r.Reason</p> }
+                            <p class="text-xs text-muted">@r.RequestedByName · @r.At.ToString("d MMM yyyy HH:mm")@AnswerText(v)</p>
+                            @if (v.Decision is null && canEdit && _answers.TryGetValue(r.Id, out var answer))
+                            {
+                                <div class="mt-2 flex flex-wrap items-end gap-3">
+                                    <label class="text-xs text-muted">Group <input @bind="answer.Group" class="input mt-1 w-40" /></label>
+                                    <button @onclick="() => DecideAsync(r.Id, true)" disabled="@_busy" class="btn btn-primary btn-sm">Add to the specification</button>
+                                    <label class="min-w-[14rem] flex-1 text-xs text-muted">Reason, if declined <input @bind="answer.Note" class="input mt-1" /></label>
+                                    <button @onclick="() => DecideAsync(r.Id, false)" disabled="@_busy" class="btn btn-secondary btn-sm">Decline</button>
+                                </div>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+            @if (_onVessel && editable)
+            {
+                <div class="space-y-3 text-sm">
+                    <label class="block">The job <input @bind="_requestText" class="input mt-1" placeholder="What needs doing" /></label>
+                    <label class="block">What was found, and where <textarea @bind="_requestReason" rows="2" class="textarea mt-1"></textarea></label>
+                    <button @onclick="SendRequestAsync" disabled="@_busy" class="btn btn-primary">Send request</button>
+                </div>
+            }
+        </section>
+    }
+
+    @* ---- budget and cost: office only, shown to every office user; only managers can change them ---- *@
+    @if (!_onVessel)
+    {
         <section class="card mb-6 p-5">
             <div class="mb-3 flex flex-wrap items-center gap-3">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Budget</h2>
@@ -333,6 +396,8 @@ else
             }
         </section>
 
+    }
+
     @* ---- notes ---- *@
     <section class="card mb-6 p-5">
         <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Progress notes</h2>
@@ -387,6 +452,10 @@ else
     private Guid _companyId;
     private Actor _actor = Actor.System;
     private bool _loaded, _busy, _mayManage, _isAdmin;
+    private readonly bool _onVessel = NodeContext.Current.IsVessel;
+    private List<ProjectRequestView> _requests = [];
+    private readonly Dictionary<Guid, AnswerRow> _answers = [];
+    private string _requestText = "", _requestReason = "";
     private string? _error;
     private string _vesselName = "";
     private ProjectDetail? _detail;
@@ -437,6 +506,11 @@ else
         public decimal? Estimated, Quoted;
     }
 
+    private class AnswerRow
+    {
+        public string Group = "Vessel requests", Note = "";
+    }
+
     private class LineRow
     {
         public string Category = "";
@@ -450,7 +524,7 @@ else
         _actor = Actor.From(state.User);
         _mayManage = await Svc.MayManageAsync(_companyId, _actor.UserId);
         _isAdmin = state.User.IsInRole("CompanyAdmin");
-        _users = await Svc.OfficeUsersAsync(_companyId);
+        _users = _onVessel ? [] : await Svc.OfficeUsersAsync(_companyId);
         _userOptions = SelectOptions.From(_users, u => u.Id, u => u.Name);
         await ReloadAsync();
         _loaded = true;
@@ -462,11 +536,14 @@ else
         if (_detail is null) return;
         var vessels = await Svc.EnabledVesselsAsync(_companyId);
         _vesselName = vessels.FirstOrDefault(v => v.Id == _detail.Project.VesselId).Name ?? "";
-        _cost = await Svc.CostAsync(_companyId, ProjectId);
-        var lines = await Svc.BudgetAsync(_companyId, ProjectId);
-        _approvals = await Svc.ApprovalsAsync(_companyId, ProjectId);
-        _pmsWaiting = await Svc.PmsWaitingAsync(_companyId, ProjectId);
-        var costs = (await Svc.ItemCostsAsync(_companyId, ProjectId)).ToDictionary(c => c.ItemId);
+        // Budget, cost and estimates are the office's; a vessel never reads them.
+        _cost = _onVessel ? null : await Svc.CostAsync(_companyId, ProjectId);
+        List<ProjectBudgetLine> lines = _onVessel ? [] : await Svc.BudgetAsync(_companyId, ProjectId);
+        _approvals = _onVessel ? [] : await Svc.ApprovalsAsync(_companyId, ProjectId);
+        _pmsWaiting = _onVessel ? [] : await Svc.PmsWaitingAsync(_companyId, ProjectId);
+        var costs = _onVessel ? new Dictionary<Guid, ProjectItemCost>() : (await Svc.ItemCostsAsync(_companyId, ProjectId)).ToDictionary(c => c.ItemId);
+        _requests = await Svc.RequestsAsync(_companyId, ProjectId);
+        foreach (var waiting in _requests.Where(r => r.Decision is null)) _answers.TryAdd(waiting.Request.Id, new AnswerRow());
         _budgetTotal = ProjectCostRules.Budget(lines);
         _contingency = ProjectCostRules.Contingency(lines);
 
@@ -608,10 +685,25 @@ else
         await LoadCandidatesAsync();
     }, "Added to the specification");
 
+    private Task SendRequestAsync() => RunAsync(async () =>
+    {
+        await Svc.AddItemRequestAsync(_companyId, ProjectId, _requestText, _requestReason, _actor);
+        (_requestText, _requestReason) = ("", "");
+    }, "Request sent");
+
+    private Task DecideAsync(Guid requestId, bool accept) => RunAsync(async () =>
+    {
+        var answer = _answers[requestId];
+        await Svc.DecideRequestAsync(_companyId, requestId, accept, answer.Group, answer.Note, _actor);
+    }, accept ? "Added to the specification" : "Declined");
+
+    private static string AnswerText(ProjectRequestView v)
+        => v.Decision is { } d ? $" · answered by {d.DecidedByName} on {d.At:d MMM yyyy}{(d.Note != "" ? " · " + d.Note : "")}" : "";
+
     private static string SourceText(ItemRow row) => row.Source switch
     {
         ProjectItemSource.WorklistTask => $"Worklist {row.SourceRef}".Trim(), ProjectItemSource.PmsJob => $"Maintenance {row.SourceRef}".Trim(),
-        ProjectItemSource.ClassRequirement => "Class requirement", ProjectItemSource.OwnerRequest => "Owner request", ProjectItemSource.Other => "Other", _ => "",
+        ProjectItemSource.ClassRequirement => "Class requirement", ProjectItemSource.OwnerRequest => "Owner request", ProjectItemSource.Other => "Other", ProjectItemSource.VesselRequest => "Vessel request", _ => "",
     };
 
     private string? ItemOf(Guid? id) => id is { } item ? _detail!.Project.Items.FirstOrDefault(i => i.Id == item)?.Description : null;

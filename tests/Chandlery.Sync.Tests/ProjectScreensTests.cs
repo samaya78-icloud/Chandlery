@@ -122,7 +122,11 @@ public class ProjectScreensTests : IAsyncLifetime
         Assert.True(rows["Finished long ago"].OverBudget);
         Assert.Equal(new ProjectCounts(Ongoing: 1, NotStarted: 2, OverBudget: 1), await _shore.CountsAsync(_s.CompanyId));
 
-        // A vessel installation cannot read the money.
-        await Assert.ThrowsAsync<InvalidOperationException>(() => new ProjectService(_s.VesselFactory).ListWithMoneyAsync(_s.CompanyId));
+        // Onboard the same list has no money in it: the vessel holds none, and reads none.
+        await _s.SettleUntilQuietAsync();
+        var onboard = await new ProjectService(_s.VesselFactory).ListWithMoneyAsync(_s.CompanyId);
+        Assert.Equal(4, onboard.Count);
+        Assert.All(onboard, r => Assert.Equal((0m, 0m, 0m, false), (r.Budget, r.Contingency, r.Cost.ToDate, r.OverBudget)));
+        Assert.Equal(new ProjectCounts(Ongoing: 1, NotStarted: 2, OverBudget: 0), await new ProjectService(_s.VesselFactory).CountsAsync(_s.CompanyId));
     }
 }

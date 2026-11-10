@@ -56,6 +56,8 @@ public static class Aggregates
         new(nameof(ProjectStatusEvent), typeof(ProjectStatusEvent)),
         new(nameof(ProjectNote), typeof(ProjectNote)),
         new(nameof(ProjectLink), typeof(ProjectLink)),
+        new(nameof(ProjectItemRequest), typeof(ProjectItemRequest)),
+        new(nameof(ProjectItemDecision), typeof(ProjectItemDecision)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
@@ -63,7 +65,7 @@ public static class Aggregates
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
-        || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink)
+        || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink) || clr == typeof(ProjectItemRequest) || clr == typeof(ProjectItemDecision)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
@@ -127,6 +129,8 @@ public static class Aggregates
         ProjectStatusEvent pe => pe.OwnerStage,
         ProjectNote pn => pn.OwnerStage,
         ProjectLink pl => pl.OwnerStage,
+        ProjectItemRequest pq => pq.OwnerStage,
+        ProjectItemDecision pd => pd.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -163,6 +167,8 @@ public static class Aggregates
         else if (root is ProjectStatusEvent projectEvent) projectEvent.OwnerStage = stage;
         else if (root is ProjectNote projectNote) projectNote.OwnerStage = stage;
         else if (root is ProjectLink projectLink) projectLink.OwnerStage = stage;
+        else if (root is ProjectItemRequest itemRequest) itemRequest.OwnerStage = stage;
+        else if (root is ProjectItemDecision itemDecision) itemDecision.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

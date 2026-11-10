@@ -43,7 +43,7 @@ public static class WorklistLinkTypes
         TankInspection => $"/tanks/inspections/{target}",
         RiskAssessment => $"/risk/{target}",
         RestBreach => $"/rest/breaches?note={target}",
-        Project => onVessel ? "#" : $"/projects/{target}",       // onboard project screens come later
+        Project => $"/projects/{target}",
         _ => "#",
     };
 }

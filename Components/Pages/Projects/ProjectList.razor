@@ -1,11 +1,12 @@
 @page "/projects"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject ProjectService Svc
 
 <PageTitle>Projects · Chandlery</PageTitle>
 
-<PageHeader Eyebrow="Fleet" Title="Projects" Subtitle="Drydocks and technical projects, with what each has cost against its budget.">
+<PageHeader Eyebrow="@(_onVessel ? "Vessel" : "Fleet")" Title="Projects" Subtitle="@(_onVessel ? "Drydocks and technical projects for this vessel: what is planned, how far it has got, and the jobs on it." : "Drydocks and technical projects, with what each has cost against its budget.")">
     <Actions>
         @if (_mayManage)
         {
@@ -71,7 +72,7 @@ else
                 <thead class="text-left text-xs uppercase tracking-wide text-muted">
                     <tr>
                         <th class="p-3">Project</th><th class="p-3">Vessel</th><th class="p-3">Status</th><th class="p-3">Planned</th><th class="p-3 text-right">Days</th>
-                        <th class="p-3 text-right">Items</th><th class="p-3 text-right">Budget</th><th class="p-3 text-right">Cost to date</th><th class="p-3 text-right">Variance</th>
+                        <th class="p-3 text-right">Items</th>@if (!_onVessel) { <th class="p-3 text-right">Budget</th><th class="p-3 text-right">Cost to date</th><th class="p-3 text-right">Variance</th> }
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-line/60">
@@ -89,15 +90,21 @@ else
                             <td class="p-3 whitespace-nowrap">@(p.PlannedStart is { } s ? s.ToString("d MMM yyyy") : "—")@(p.PlannedEnd is { } e ? " to " + e.ToString("d MMM yyyy") : "")</td>
                             <td class="p-3 text-right whitespace-nowrap">@Days(r)</td>
                             <td class="p-3 text-right whitespace-nowrap">@r.Row.ItemsDone / @(r.Row.ItemsOpen + r.Row.ItemsDone + r.Row.ItemsDropped)</td>
+                            @if (!_onVessel)
+                            {
                             <td class="p-3 text-right tabular-nums">@(r.Budget == 0 ? "—" : Money.Format(r.Budget, "USD"))</td>
                             <td class="p-3 text-right tabular-nums">@(r.Cost.ToDate == 0 ? "—" : Money.Format(r.Cost.ToDate, "USD"))</td>
                             <td class="@("p-3 text-right tabular-nums " + (r.OverBudget ? "font-semibold text-rose-600" : ""))">@(r.Budget == 0 ? "—" : (r.Variance < 0 ? "−" : "") + Money.Format(Math.Abs(r.Variance), "USD"))</td>
+                            }
                         </tr>
                     }
                 </tbody>
             </table>
         </div>
+        @if (!_onVessel)
+        {
         <p class="mt-3 text-xs text-muted">Cost to date is approved orders not yet invoiced, plus finalized invoices (before tax), plus costs entered by hand, in US dollars. Variance is the budget minus that; red means over budget.</p>
+        }
     }
 }
 
@@ -109,6 +116,7 @@ else
 
     private Guid _companyId, _vesselId;
     private bool _loaded, _mayManage;
+    private readonly bool _onVessel = NodeContext.Current.IsVessel;
     private ProjectStatus? _status;
     private string _search = "", _superintendent = "";
     private int _year;

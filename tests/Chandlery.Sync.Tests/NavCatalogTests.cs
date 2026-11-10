@@ -96,7 +96,8 @@ public class NavCatalogTests : IAsyncLifetime
         Assert.Contains("Maintenance", Titles(user));
 
         var onboard = await _catalog.GetAsync(Person("CompanyUser"), isVessel: true);
-        Assert.Equal(["Onboard", "Maintenance", "Risk assessment"], Titles(onboard));
+        Assert.Equal(["Onboard", "Maintenance", "Risk assessment", "Projects"], Titles(onboard));
+        Assert.Equal(["Projects"], Pages(onboard, "Projects"));                                                                               // the vessel reads its projects but never plans one
         Assert.Equal(["Plan", "Running hours", "Machinery", "Import a plan", "Approvals"], Pages(onboard, "Maintenance"));                  // the vessel's own set
 
         var crewAdmin = await _catalog.GetAsync(Person("CompanyUser", new Claim("CrewAdmin", "true")), isVessel: true);

@@ -8,7 +8,7 @@ public enum ProjectStatus { Planning, Approved, Ongoing, Complete, Closed }
 /// <summary>What the office recorded about a project's progress. Withdrawn takes an approved project back to Planning.</summary>
 public enum ProjectEventKind { Approved, Started, Completed, Closed, Withdrawn }
 
-public enum ProjectItemSource { Manual, WorklistTask, PmsJob, ClassRequirement, OwnerRequest, Other }
+public enum ProjectItemSource { Manual, WorklistTask, PmsJob, ClassRequirement, OwnerRequest, Other, VesselRequest }
 
 public enum ProjectItemStatus { Open, Done, Dropped }
 
@@ -131,6 +131,41 @@ public class ProjectLink
     public string ByName { get; set; } = "";
     public DateTime At { get; set; }
     public string OwnerStage { get; set; } = SyncStages.Vessel;
+}
+
+/// <summary>A job the vessel asks to have added to the project (something found once the work began). Written once, onboard; the office answers it with a <see cref="ProjectItemDecision"/>.</summary>
+public class ProjectItemRequest
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid ProjectId { get; set; }
+    public string Description { get; set; } = "";
+
+    /// <summary>Why it is needed: what was found, and where.</summary>
+    public string Reason { get; set; } = "";
+    public Guid? RequestedByUserId { get; set; }
+    public string RequestedByName { get; set; } = "";
+    public DateTime At { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Vessel;
+}
+
+/// <summary>The office's answer to a request: added to the specification (the item it became is named) or declined with a reason. Written once.</summary>
+public class ProjectItemDecision
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+    public Guid ProjectId { get; set; }
+    public Guid RequestId { get; set; }
+    public bool Accepted { get; set; }
+    public string Note { get; set; } = "";
+    /// <summary>The specification item the request became, when it was accepted.</summary>
+    public Guid? ItemId { get; set; }
+    public Guid? DecidedByUserId { get; set; }
+    public string DecidedByName { get; set; } = "";
+    public DateTime At { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Office;
 }
 
 // ---- what stays at the office: budget and money. Not synced; a vessel installation cannot even write them. ----

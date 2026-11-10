@@ -107,14 +107,18 @@ public class DashboardModuleService(
             ]));
         }
 
-        if (!isVessel && await projects.CountsAsync(companyId) is { } pc)
+        if (await projects.CountsAsync(companyId) is { } pc)
         {
-            modules.Add(new("projects", "Projects", "/projects",
-            [
+            var stats = new List<ModuleStat>
+            {
                 new("Ongoing", pc.Ongoing.ToString("N0"), "/projects?status=Ongoing", "info"),
                 new("Not started", pc.NotStarted.ToString("N0"), "/projects", "accent", "Being planned or approved"),
-                new("Over budget", pc.OverBudget.ToString("N0"), "/projects", Hot(pc.OverBudget, "danger"), "Cost to date above the budget", pc.OverBudget, "projects over budget"),
-            ]));
+            };
+            // The office answers requests and watches the budget; the vessel waits for answers and sees no money.
+            stats.Add(new(isVessel ? "Requests waiting" : "Vessel requests to answer", pc.RequestsWaiting.ToString("N0"), "/projects", Hot(pc.RequestsWaiting, isVessel ? "info" : "warning"),
+                isVessel ? "Jobs you asked for, not answered yet" : "Jobs the vessel asked to add", isVessel ? 0 : pc.RequestsWaiting, "vessel requests to answer"));
+            if (!isVessel) stats.Add(new("Over budget", pc.OverBudget.ToString("N0"), "/projects", Hot(pc.OverBudget, "danger"), "Cost to date above the budget", pc.OverBudget, "projects over budget"));
+            modules.Add(new("projects", "Projects", "/projects", stats));
         }
 
         return modules;

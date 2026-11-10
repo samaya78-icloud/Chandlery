@@ -144,10 +144,10 @@ public class NavCatalogService(
             if (!isVessel) admin.Add(new("/company/risk-library", "Risk library", "risk"));
         }
 
-        if (!isVessel && await projects.IsEnabledForCompanyAsync(companyId))
+        if (await projects.IsEnabledForCompanyAsync(companyId))
         {
             projectItems.Add(new("/projects", "Projects", "project"));
-            if (await projects.MayManageAsync(companyId, userId)) projectItems.Add(new("/projects/new", "New project", "project"));
+            if (!isVessel && await projects.MayManageAsync(companyId, userId)) projectItems.Add(new("/projects/new", "New project", "project"));
         }
 
         var groups = new List<NavGroup> { new(isVessel ? "Onboard" : "Work", isVessel ? onboard : work) };

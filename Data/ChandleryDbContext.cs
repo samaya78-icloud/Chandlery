@@ -92,6 +92,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<ProjectStatusEvent> ProjectStatusEvents => Set<ProjectStatusEvent>();
     public DbSet<ProjectNote> ProjectNotes => Set<ProjectNote>();
     public DbSet<ProjectLink> ProjectLinks => Set<ProjectLink>();
+    public DbSet<ProjectItemRequest> ProjectItemRequests => Set<ProjectItemRequest>();
+    public DbSet<ProjectItemDecision> ProjectItemDecisions => Set<ProjectItemDecision>();
     public DbSet<ProjectBudgetLine> ProjectBudgetLines => Set<ProjectBudgetLine>();
     public DbSet<ProjectItemCost> ProjectItemCosts => Set<ProjectItemCost>();
     public DbSet<ProjectCostEntry> ProjectCostEntries => Set<ProjectCostEntry>();
@@ -881,6 +883,30 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasIndex(l => new { l.Kind, l.DocId });
             b.HasIndex(l => l.ProjectId);
             b.HasQueryFilter(l => CurrentCompanyId == null || l.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectItemRequest>(b =>
+        {
+            b.Property(r => r.Description).HasMaxLength(1000);
+            b.Property(r => r.Reason).HasMaxLength(2000);
+            b.Property(r => r.RequestedByName).HasMaxLength(120);
+            b.Property(r => r.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Project>().WithMany().HasForeignKey(r => r.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(r => r.ProjectId);
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectItemDecision>(b =>
+        {
+            b.Property(d => d.Note).HasMaxLength(2000);
+            b.Property(d => d.DecidedByName).HasMaxLength(120);
+            b.Property(d => d.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(d => d.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Project>().WithMany().HasForeignKey(d => d.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<ProjectItemRequest>().WithMany().HasForeignKey(d => d.RequestId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(d => d.RequestId).IsUnique();
+            b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
         });
         modelBuilder.Entity<ProjectBudgetLine>(b =>
         {
