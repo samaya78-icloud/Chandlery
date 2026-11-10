@@ -1,5 +1,6 @@
 @implements IAsyncDisposable
 @inject SearchService Search
+@inject NavCatalogService Catalog
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
 
@@ -11,7 +12,7 @@
             <div class="flex items-center gap-3 border-b border-line px-4 py-3">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
                 <input @ref="_input" @bind="_term" @bind:event="oninput" @bind:after="OnTermChanged" @onkeydown="OnKey"
-                       placeholder="Search RFQs, POs, suppliers, items… or type a command"
+                       placeholder="Search pages, RFQs, POs, suppliers, items… or type a command"
                        class="w-full bg-transparent text-base text-ink outline-none placeholder:text-muted" autocomplete="off" />
                 <kbd class="rounded-md border border-line px-1.5 py-0.5 text-[11px] font-semibold text-muted">Esc</kbd>
             </div>
@@ -68,11 +69,14 @@
     private Guid? _companyId;
     private Guid? _supplierId;
     private bool _isCompany;
+    private List<NavGroup>? _pages;
+    private System.Security.Claims.ClaimsPrincipal? _user;
     private CancellationTokenSource? _debounce;
 
     protected override async Task OnInitializedAsync()
     {
         var user = (await AuthStateTask!).User;
+        _user = user;
         _isCompany = user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser");
         if (Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var c)) _companyId = c;
         if (Guid.TryParse(user.FindFirst("SupplierId")?.Value, out var s)) _supplierId = s;
@@ -93,11 +97,13 @@
     }
 
     [JSInvokable]
-    public void Toggle()
+    public async Task Toggle()
     {
         if (_open) { _open = false; }
         else
         {
+            // The pages a person can reach depend on their role and which modules are on, so read them once, the first time the finder opens.
+            _pages ??= _user is null ? [] : await Catalog.GetAsync(_user, NodeContext.Current.IsVessel);
             _open = true;
             _term = "";
             _active = 0;
@@ -163,27 +169,14 @@
         var all = new List<SearchHit>();
         if (_isCompany)
         {
-            all.Add(new("Go to", "Dashboard", "Overview and work queues", "/"));
-            all.Add(new("Go to", "My Approvals", "Purchase orders waiting for you", "/company/approvals"));
-            all.Add(new("Go to", "Requisitions", "", "/company/requisitions"));
-            all.Add(new("Go to", "RFQs", "", "/company/rfqs"));
-            all.Add(new("Go to", "Purchase Orders", "", "/company/purchase-orders"));
-            all.Add(new("Go to", "Invoices", "", "/company/invoices"));
-            all.Add(new("Go to", "Suppliers", "", "/company/suppliers"));
-            all.Add(new("Go to", "Catalog (items and categories)", "", "/company/items"));
-            all.Add(new("Go to", "Vessels", "", "/company/vessels"));
             all.Add(new("Create", "New requisition", "Enter items once, quote many suppliers", "/company/requisitions/new"));
             all.Add(new("Create", "New spot PO", "Order directly from a supplier", "/company/purchase-orders/new-spot"));
             all.Add(new("Create", "New spot invoice", "An invoice with no purchase order", "/company/invoices/new-spot"));
         }
-        else
-        {
-            all.Add(new("Go to", "Dashboard", "", "/"));
-            all.Add(new("Go to", "RFQs", "", "/supplier/rfqs"));
-            all.Add(new("Go to", "Purchase Orders", "", "/supplier/purchase-orders"));
-            all.Add(new("Go to", "Invoices", "", "/supplier/invoices"));
-            all.Add(new("Go to", "Bank Accounts", "Where buyers pay you", "/supplier/profile"));
-        }
+        // Every page in the menu, under the menu's own headings, so typing a module's name ("tank", "risk", "rest") lists all of its pages.
+        foreach (var group in _pages ?? [])
+            foreach (var item in group.Items)
+                all.Add(new(group.Title, item.Label, "", item.Href));
         all.Add(new("Appearance", "Dark mode", "", "cmd:mode:dark"));
         all.Add(new("Appearance", "Light mode", "", "cmd:mode:light"));
         all.Add(new("Appearance", "Theme: Aurora", "", "cmd:theme:aurora"));
@@ -194,8 +187,13 @@
 
         return string.IsNullOrEmpty(term)
             ? all
-            : all.Where(h => h.Title.Contains(term, StringComparison.OrdinalIgnoreCase)).ToList();
+            : all.Where(h => h.Title.Contains(term, StringComparison.OrdinalIgnoreCase) || GroupMatches(h.Group, term)).ToList();
     }
+
+    /// <summary>A menu heading matches by its name or by the other words it goes by, so every page of a module turns up when the module is named.</summary>
+    private bool GroupMatches(string group, string term) =>
+        (_pages ?? []).FirstOrDefault(g => g.Title == group) is { } g
+        && (g.Title.Contains(term, StringComparison.OrdinalIgnoreCase) || g.Aliases.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     public async ValueTask DisposeAsync()
     {

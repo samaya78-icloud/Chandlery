@@ -1,130 +1,25 @@
-@inject ApprovalService ApprovalSvc
-@inject InvoiceService InvoiceSvc
-@inject WorklistService WorklistSvc
-@inject PmsService PmsSvc
-@inject RestHoursService RestSvc
-@inject TankService TankSvc
-@inject TankInspectionService TankReviewSvc
-@inject TankTrendService TankTrendSvc
-@inject RiskLibraryService RiskLibSvc
-@inject RiskAssessmentService RiskSvc
+@inject NavCatalogService Catalog
 
 <nav class="site-nav">
-    <AuthorizeView Roles="CompanyAdmin,CompanyUser">
-        <Authorized>
-            @if (NodeContext.Current.IsVessel)
-            {
-                @Group("Onboard", _vesselItems)
-                @if (_maintenanceItems.Count > 0) { @Group("Maintenance", _maintenanceItems) }
-                @if (_tankItems.Count > 0) { @Group("Tank inspection", _tankItems) }
-                @if (_riskItems.Count > 0) { @Group("Risk assessment", _riskItems) }
-                @if (_safetyItems.Count > 0) { @Group("Safety", _safetyItems) }
-            }
-            else
-            {
-                @Group("Work", _workItems)
-                @if (_maintenanceItems.Count > 0) { @Group("Maintenance", _maintenanceItems) }
-                @if (_tankItems.Count > 0) { @Group("Tank inspection", _tankItems) }
-                @if (_riskItems.Count > 0) { @Group("Risk assessment", _riskItems) }
-                @if (_safetyItems.Count > 0) { @Group("Safety", _safetyItems) }
-                @Group("Procurement", _procurementItems)
-                @Group("Master data", _masterItems)
-            }
-        </Authorized>
-    </AuthorizeView>
-
-    @if (!NodeContext.Current.IsVessel)
+    @foreach (var group in _groups)
     {
-        <AuthorizeView Roles="CompanyAdmin">
-            <Authorized>
-                @Group("Admin", _adminItems)
-            </Authorized>
-        </AuthorizeView>
+        @Group(group.Title, group.Items)
     }
-
-    <AuthorizeView Policy="CrewAdmin">
-        <Authorized>
-            @Group("Vessel", _crewAdminItems)
-        </Authorized>
-    </AuthorizeView>
-
-    <AuthorizeView Roles="SupplierAdmin,SupplierUser">
-        <Authorized>
-            @Group("Workspace", _supplierItems)
-        </Authorized>
-    </AuthorizeView>
 </nav>
 
 @code {
-    private record NavItem(string Href, string Label, MarkupString Icon, int Badge = 0);
-
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    private int _pendingApprovals;
+    private List<NavGroup> _groups = [];
 
     protected override async Task OnInitializedAsync()
     {
         var user = (await AuthStateTask!).User;
-        if ((user.IsInRole("CompanyAdmin") || user.IsInRole("CompanyUser"))
-            && Guid.TryParse(user.FindFirst("CompanyId")?.Value, out var companyId)
-            && Guid.TryParse(user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var userId))
-        {
-            if (await WorklistSvc.IsEnabledForCompanyAsync(companyId))
-            {
-                var item = new NavItem("/worklist", "Worklist", WorklistIcon);
-                _workItems.Insert(1, item);
-                _vesselItems.Insert(1, item);
-                _workItems.Insert(2, new NavItem("/worklist/fleet", "Fleet worklist", WorklistIcon));
-                _adminItems.Add(new NavItem("/company/worklist-lists", "Worklist lists", WorklistIcon));
-            }
-            if (await PmsSvc.IsEnabledForCompanyAsync(companyId))
-            {
-                var waiting = (await PmsSvc.PendingDeferralsAsync(companyId)).Count;
-                if (NodeContext.Current.IsVessel)
-                {
-                    _maintenanceItems.AddRange([new NavItem("/pms", "Plan", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon), new NavItem("/pms/machinery", "Machinery", PmsIcon),
-                        new NavItem("/pms/import", "Import a plan", PmsIcon), new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting)]);
-                }
-                else
-                {
-                    waiting += (await PmsSvc.PlanChangesAsync(companyId, pendingOnly: true)).Count;
-                    _maintenanceItems.AddRange([new NavItem("/pms", "Plan", PmsIcon), new NavItem("/pms/fleet", "Fleet overview", PmsIcon), new NavItem("/pms/hours", "Running hours", PmsIcon),
-                        new NavItem("/pms/machinery", "Machinery", PmsIcon), new NavItem("/pms/import", "Import a plan", PmsIcon), new NavItem("/pms/approvals", "Approvals", PmsIcon, waiting), new NavItem("/pms/template-updates", "Template updates", PmsIcon),
-                        new NavItem("/pms/sister-vessels", "Sister vessels", PmsIcon), new NavItem("/pms/reports", "Reports", PmsIcon)]);
-                    _adminItems.Add(new NavItem("/company/pms-library", "Maintenance library", PmsIcon));
-                }
-            }
-            if (await RestSvc.IsEnabledForCompanyAsync(companyId) && !NodeContext.Current.IsVessel)
-                _safetyItems.AddRange([new NavItem("/rest/fleet", "Hours of rest", RestIcon), new NavItem("/rest/table", "Working table", RestIcon), new NavItem("/rest/reports", "Rest reports", RestIcon), new NavItem("/rest/rules", "Rest rules", RestIcon)]);
-            else if (await RestSvc.IsEnabledForCompanyAsync(companyId))
-                _safetyItems.AddRange([new NavItem("/rest", "Hours of rest", RestIcon), new NavItem("/rest/sheet", "Month sheet", RestIcon), new NavItem("/rest/sign", "Sign hours", RestIcon), new NavItem("/rest/breaches", "Breaches", RestIcon), new NavItem("/rest/table", "Working table", RestIcon)]);
-            if (await TankSvc.IsEnabledForCompanyAsync(companyId))
-            {
-                _tankItems.Add(new NavItem("/tanks", "Tanks", TankIcon));
-                _tankItems.Add(new NavItem("/tanks/inspections", "Inspections", TankIcon));
-                _tankItems.Add(new NavItem("/tanks/exceptions", "Exceptions", TankIcon, (await TankTrendSvc.CountsAsync(companyId))?.CurrentExceptions ?? 0));
-                if (!NodeContext.Current.IsVessel)
-                {
-                    var waiting = await TankReviewSvc.ReviewWaitingAsync(companyId);
-                    _tankItems.Add(new NavItem("/tanks/review", "Review queue", TankIcon, waiting.Count));
-                    if ((await TankSvc.EnabledVesselsAsync(companyId)).Count > 1) _tankItems.Add(new NavItem("/tanks/copy", "Copy to sister vessels", TankIcon));
-                    _adminItems.Add(new NavItem("/company/tank-checklists", "Tank checklists", TankIcon));
-                }
-            }
-            if (await RiskLibSvc.IsEnabledForCompanyAsync(companyId))
-            {
-                _riskItems.Add(new NavItem("/risk", "Assessments", RiskIcon, (await RiskSvc.CountsAsync(companyId))?.DueForReview ?? 0));
-                _riskItems.Add(new NavItem("/risk/new", "New assessment", RiskIcon));
-                _riskItems.Add(new NavItem("/risk/review", "Sign-off queue", RiskIcon, (await RiskSvc.SignOffQueueAsync(companyId)).Count));
-                if (!NodeContext.Current.IsVessel) _adminItems.Add(new NavItem("/company/risk-library", "Risk library", RiskIcon));
-            }
-            _pendingApprovals = await ApprovalSvc.GetPendingCountForUserAsync(companyId, userId)
-                                + (await InvoiceSvc.GetPendingForUserAsync(companyId, userId)).Count;
-        }
+        _groups = await Catalog.GetAsync(user, NodeContext.Current.IsVessel);
     }
 
     /// <summary>A menu group. Clicking its heading shows or hides its entries (the choice is remembered in the browser, see app.js).</summary>
-    private RenderFragment Group(string title, IEnumerable<NavItem> items) => __builder =>
+    private RenderFragment Group(string title, IEnumerable<NavEntry> items) => __builder =>
     {
         var slug = title.ToLowerInvariant().Replace(' ', '-');
         <div class="nav-group" data-nav-group="@slug">
@@ -135,9 +30,9 @@
             <div class="nav-group-items">
                 @foreach (var item in items)
                 {
-                    var badge = item.Href == "/company/approvals" ? _pendingApprovals : item.Badge;
+                    var badge = item.Badge;
                     <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" or "/tanks" or "/rest" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
-                        <span class="nav-icon">@item.Icon</span>
+                        <span class="nav-icon">@IconFor(item.Icon)</span>
                         <span class="nav-label">@item.Label</span>
                         @if (badge > 0)
                         {
@@ -176,72 +71,17 @@
     private static readonly MarkupString WorklistIcon = Icon("<path d='M9 6h11M9 12h11M9 18h11'/><path d='m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2'/>");
     private static readonly MarkupString PmsIcon = Icon("<path d='M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4Z'/>");
     private static readonly MarkupString RestIcon = Icon("<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>");
-    private readonly List<NavItem> _safetyItems = new();
     private static readonly MarkupString TankIcon = Icon("<path d='M5 7c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z'/><path d='M5 7v10c0 1.7 3.1 3 7 3s7-1.3 7-3V7'/><path d='M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3'/>");
     private static readonly MarkupString RiskIcon = Icon("<path d='M12 3 2 20h20L12 3Z'/><path d='M12 10v5'/><path d='M12 18v.01'/>");
     private static readonly MarkupString HomeIcon = Icon("<path d='m3 11 9-8 9 8M5 10v10h5v-6h4v6h5V10'/>");
 
-    private readonly List<NavItem> _workItems = new()
+    private static readonly Dictionary<string, MarkupString> Icons = new()
     {
-        new("/", "Dashboard", HomeIcon),
-        new("/company/approvals", "My Approvals", ApprovalIcon),
+        ["home"] = HomeIcon, ["approval"] = ApprovalIcon, ["reqn"] = ReqnIcon, ["rfq"] = RfqIcon, ["po"] = PoIcon, ["invoice"] = InvoiceIcon,
+        ["supplier"] = SupplierIcon, ["item"] = ItemIcon, ["vessel"] = VesselIcon, ["team"] = TeamIcon, ["department"] = DepartmentIcon, ["port"] = PortIcon,
+        ["unit"] = UnitIcon, ["matrix"] = MatrixIcon, ["tax"] = TaxIcon, ["currency"] = CurrencyIcon, ["rates"] = RatesIcon, ["profile"] = ProfileIcon,
+        ["bank"] = BankIcon, ["worklist"] = WorklistIcon, ["pms"] = PmsIcon, ["rest"] = RestIcon, ["tank"] = TankIcon, ["risk"] = RiskIcon,
     };
 
-    private readonly List<NavItem> _procurementItems = new()
-    {
-        new("/company/requisitions", "Requisitions", ReqnIcon),
-        new("/company/rfqs", "RFQs", RfqIcon),
-        new("/company/purchase-orders", "Purchase Orders", PoIcon),
-        new("/company/invoices", "Invoices", InvoiceIcon),
-        new("/company/onboard-orders", "Onboard orders", PoIcon),
-    };
-
-    private readonly List<NavItem> _masterItems = new()
-    {
-        new("/company/suppliers", "Suppliers", SupplierIcon),
-        new("/company/items", "Catalog", ItemIcon),
-        new("/company/vessels", "Vessels", VesselIcon),
-        new("/company/crew", "Crew", TeamIcon),
-        new("/company/departments", "Departments", DepartmentIcon),
-        new("/company/ports", "Ports", PortIcon),
-        new("/company/uoms", "Units of Measure", UnitIcon),
-    };
-
-    private readonly List<NavItem> _adminItems = new()
-    {
-        new("/company/approval-matrix", "Approval Matrix", MatrixIcon),
-        new("/company/tax-codes", "Tax Codes", TaxIcon),
-        new("/company/currencies", "Currencies", CurrencyIcon),
-        new("/company/exchange-rates", "Exchange Rates", RatesIcon),
-        new("/company/profile", "Company Profile", ProfileIcon),
-        new("/company/team", "Team", TeamIcon),
-    };
-
-    private readonly List<NavItem> _maintenanceItems = new();
-    private readonly List<NavItem> _tankItems = new();
-    private readonly List<NavItem> _riskItems = new();
-
-    private readonly List<NavItem> _vesselItems = new()
-    {
-        new("/", "Dashboard", HomeIcon),
-        new("/company/requisitions", "Requisitions", ReqnIcon),
-        new("/vessel/rfqs", "RFQs", RfqIcon),
-        new("/vessel/orders", "Orders", PoIcon),
-        new("/vessel/port-calls", "Port calls", PortIcon),
-        new("/company/items", "Catalogue", ItemIcon),
-    };
-
-    private readonly List<NavItem> _crewAdminItems = new()
-    {
-        new("/crew", "Crew logins", TeamIcon),
-    };
-
-    private readonly List<NavItem> _supplierItems = new()
-    {
-        new("/", "Dashboard", HomeIcon),
-        new("/supplier/rfqs", "RFQs", RfqIcon),
-        new("/supplier/purchase-orders", "Purchase Orders", PoIcon),
-        new("/supplier/invoices", "Invoices", InvoiceIcon),
-        new("/supplier/profile", "Bank Accounts", BankIcon),
-    };
+    private static MarkupString IconFor(string name) => Icons.TryGetValue(name, out var icon) ? icon : default;
 }
