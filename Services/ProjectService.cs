@@ -36,6 +36,14 @@ public record ProjectListRow(ProjectRow Row, string VesselName, decimal Budget, 
 /// <summary>NotStarted is planning or approved: work has not begun.</summary>
 public record ProjectCounts(int Ongoing, int NotStarted, int OverBudget);
 
+public record ImportTask(Guid Id, string Code, string Title, bool Urgent, DateTime? Target);
+
+public record ImportJob(Guid Id, string Code, string Title, string Machinery, DateTime? Due, bool Critical);
+
+public record ImportCandidates(string? NatureName, bool WorklistOn, bool PmsOn, List<ImportTask> Tasks, List<ImportJob> Jobs);
+
+public record ProjectImportOutcome(int Added, List<string> Notes);
+
 public enum ProjectCostBucket { Committed, Invoiced, Settled, NotCounted }
 
 /// <summary>One document behind the cost figures. Settled is an order whose invoices have replaced it; NotCounted is one not yet approved or finalized (or rejected).</summary>
@@ -51,7 +59,7 @@ public record ProjectRow(Project Project, ProjectStatus Status, DateTime? Actual
 /// Projects: planned and run by the office, with the vessel adding notes and links. A project's status is worked out from the events the office records and a closed project is
 /// locked. Budget, estimates and cost entries are kept in tables that never leave the office, and a vessel installation cannot write them.
 /// </summary>
-public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
+public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, WorklistService? worklist = null)
 {
     public const int MaxItems = 300;
 
@@ -175,7 +183,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
     /// Replaces the specification with the items given (an id keeps the item; one that is missing is removed). The same Worklist task or PMS job may be named by only one item, so an
     /// import repeated by mistake adds nothing.
     /// </summary>
-    public async Task SaveItemsAsync(Guid companyId, Guid id, IReadOnlyList<ProjectItemInput> items, Actor actor)
+    public async Task<List<string>> SaveItemsAsync(Guid companyId, Guid id, IReadOnlyList<ProjectItemInput> items, Actor actor)
     {
         if (items.Count > MaxItems) throw new InvalidOperationException($"A project can hold at most {MaxItems} specification items.");
         if (items.Any(i => string.IsNullOrWhiteSpace(i.Description))) throw new InvalidOperationException("Describe every specification item.");
@@ -189,10 +197,12 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         var (project, _) = await LoadEditableAsync(db, companyId, id);
 
         var keep = new HashSet<Guid>();
+        var justDone = new List<Guid>();
         var order = 0;
         foreach (var input in items)
         {
             var item = input.Id is { } existing ? project.Items.FirstOrDefault(i => i.Id == existing) : null;
+            var before = item?.Status ?? ProjectItemStatus.Open;
             if (item is null)
             {
                 item = new ProjectItem { Id = Guid.CreateVersion7() };
@@ -202,6 +212,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
             (item.Group, item.Description) = (string.IsNullOrWhiteSpace(input.Group) ? "General" : input.Group.Trim(), input.Description.Trim());
             (item.Source, item.SourceId, item.SourceRef, item.Status, item.SortOrder) = (input.Source, input.SourceId, (input.SourceRef ?? "").Trim(), input.Status, order++);
             keep.Add(item.Id);
+            if (item.Source == ProjectItemSource.WorklistTask && item.SourceId is { } taskId && item.Status == ProjectItemStatus.Done && before != ProjectItemStatus.Done) justDone.Add(taskId);
         }
         var removed = project.Items.Where(i => !keep.Contains(i.Id)).ToList();
         foreach (var gone in removed) project.Items.Remove(gone);
@@ -211,6 +222,27 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
             db.ProjectItemCosts.RemoveRange(await db.ProjectItemCosts.Where(c => goneIds.Contains(c.ItemId)).ToListAsync());
         }
         await db.SaveChangesAsync();
+
+        // An item marked Done closes the Worklist task it came from. The task keeps its own rules: one that needs the office to verify it stays open until it is verified.
+        var notes = new List<string>();
+        foreach (var taskId in justDone) await CompleteTaskAsync(companyId, taskId, project.Code, actor, notes);
+        return notes;
+    }
+
+    private async Task CompleteTaskAsync(Guid companyId, Guid taskId, string projectCode, Actor actor, List<string> notes)
+    {
+        if (worklist is null) return;
+        var detail = await worklist.GetAsync(companyId, taskId);
+        if (detail is null || detail.Task.Status is WorklistStatus.Completed or WorklistStatus.Cancelled) return;
+        try
+        {
+            await worklist.AddEntryAsync(companyId, taskId, new WorklistEntryInput(WorklistEntryType.Completed, Text: $"Done at the yard (project {projectCode})."), actor);
+            notes.Add(detail.Task.RequiresVerification ? $"Worklist task {detail.Task.Code} is completed; the office still has to verify it." : $"Worklist task {detail.Task.Code} is completed.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            notes.Add($"Worklist task {detail.Task.Code} could not be completed: {ex.Message}");
+        }
     }
 
     // ---- money (office only; never leaves the office) ----
@@ -589,6 +621,159 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory)
         var entries = await db.ProjectCostEntries.AsNoTracking().Where(e => e.ProjectId == projectId).ToListAsync();
         var cost = ProjectCostRules.Of(costOrders, costInvoices, entries.Select(e => e.AmountUsd));
         return new ProjectCostSummary(cost, lines, entries.OrderBy(e => e.Date).ThenBy(e => e.At).ToList(), unconverted);
+    }
+
+    // ---- adding from the Worklist and maintenance ----
+
+    /// <summary>The Worklist natures a company can name as "deferred to drydock".</summary>
+    public async Task<List<(Guid Id, string Name)>> NatureOptionsAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return (await NaturesAsync(db, companyId)).Select(n => (n.Id, n.Name)).ToList();
+    }
+
+    private static async Task<List<WorklistListItem>> NaturesAsync(ChandleryDbContext db, Guid companyId)
+        => await db.WorklistListItems.AsNoTracking().Where(i => i.CompanyId == companyId && i.Kind == WorklistListKind.Nature && i.IsActive).OrderBy(i => i.SortOrder).ThenBy(i => i.Name).ToListAsync();
+
+    /// <summary>The nature in use as "deferred to drydock": the one chosen, else one whose name says drydock; null when there is none.</summary>
+    public async Task<(Guid Id, string Name)?> DrydockNatureAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var chosen = await db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.ProjectDrydockNatureId).FirstOrDefaultAsync();
+        var natures = await NaturesAsync(db, companyId);
+        var id = ProjectImportRules.ResolveNature(chosen, natures.Select(n => (n.Id, n.Name)));
+        return id is { } found ? (found, natures.First(n => n.Id == found).Name) : null;
+    }
+
+    /// <summary>A company admin names the nature that means "deferred to drydock" (null goes back to looking for one whose name says so).</summary>
+    public async Task SetDrydockNatureAsync(Guid companyId, Guid? natureId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        if (actor.UserId is not { } uid || !await db.Users.AsNoTracking().AnyAsync(u => u.Id == uid && u.CompanyId == companyId && u.IsEnabled && u.Role == UserRole.CompanyAdmin))
+            throw new InvalidOperationException("Only a company admin can choose this.");
+        if (natureId is { } nature && !await db.WorklistListItems.AnyAsync(i => i.Id == nature && i.CompanyId == companyId && i.Kind == WorklistListKind.Nature && i.IsActive))
+            throw new InvalidOperationException("That nature is not in the list.");
+        var company = await db.Companies.FirstOrDefaultAsync(c => c.Id == companyId) ?? throw new InvalidOperationException("Company not found.");
+        company.ProjectDrydockNatureId = natureId;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// What can be added to this project's specification: the vessel's open Worklist tasks of the drydock nature, and its maintenance jobs due within the window (or overdue). Anything already
+    /// on the specification is left out.
+    /// </summary>
+    public async Task<ImportCandidates> ImportCandidatesAsync(Guid companyId, Guid projectId, int dueWithinDays = 90)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        var project = await db.Projects.AsNoTracking().Include(p => p.Items).FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId) ?? throw new InvalidOperationException("Project not found.");
+        var onSpec = project.Items.Where(i => i.SourceId != null).Select(i => (i.Source, i.SourceId!.Value)).ToHashSet();
+        var today = DateTime.UtcNow.Date;
+
+        var worklistOn = await WorklistService.IsEnabledForVesselAsync(db, companyId, project.VesselId);
+        var nature = await DrydockNatureAsync(companyId);
+        var tasks = new List<ImportTask>();
+        if (worklistOn && nature is { } n)
+        {
+            var found = await db.WorklistTasks.AsNoTracking().Where(t => t.CompanyId == companyId && t.VesselId == project.VesselId && t.NatureId == n.Id).ToListAsync();
+            tasks = found.Where(t => !t.IsClosed && !onSpec.Contains((ProjectItemSource.WorklistTask, t.Id)))
+                .OrderBy(t => t.TargetDate == null).ThenBy(t => t.TargetDate).ThenBy(t => t.Code)
+                .Select(t => new ImportTask(t.Id, t.Code, t.Title, t.Priority == WorklistPriority.Urgent, t.TargetDate)).ToList();
+        }
+
+        var pmsOn = await ModuleGate.IsEnabledAsync(db, companyId, project.VesselId, PolicyModules.Pms);
+        var jobs = new List<ImportJob>();
+        if (pmsOn)
+        {
+            var machinery = await db.MachineryItems.AsNoTracking().Where(m => m.VesselId == project.VesselId).ToDictionaryAsync(m => m.Id, m => m.Name);
+            var found = await db.PlannedJobs.AsNoTracking().Where(j => j.CompanyId == companyId && j.VesselId == project.VesselId && j.IsActive && j.NextDueDate != null).ToListAsync();
+            jobs = found.Where(j => ProjectImportRules.JobIsDue(j.NextDueDate, today, dueWithinDays) && !onSpec.Contains((ProjectItemSource.PmsJob, j.Id)))
+                .OrderBy(j => j.NextDueDate).ThenBy(j => j.Code)
+                .Select(j => new ImportJob(j.Id, j.Code, j.Title, machinery.GetValueOrDefault(j.MachineryItemId) ?? "", j.NextDueDate, j.IsCritical)).ToList();
+        }
+        return new ImportCandidates(nature?.Name, worklistOn, pmsOn, tasks, jobs);
+    }
+
+    /// <summary>
+    /// Adds the chosen tasks and jobs to the specification in one step. Each item remembers where it came from, so adding the same one twice adds nothing; a task also gets a note on its
+    /// own timeline saying it is on the project. Only tasks and jobs of this project's vessel can be added.
+    /// </summary>
+    public async Task<ProjectImportOutcome> ImportAsync(Guid companyId, Guid projectId, IReadOnlyCollection<Guid> taskIds, IReadOnlyCollection<Guid> jobIds, Actor actor)
+    {
+        if (taskIds.Count + jobIds.Count == 0) throw new InvalidOperationException("Choose at least one task or job to add.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
+        var (project, _) = await LoadEditableAsync(db, companyId, projectId);
+        var onSpec = project.Items.Where(i => i.SourceId != null).Select(i => (i.Source, i.SourceId!.Value)).ToHashSet();
+        var notes = new List<string>();
+        var linked = new List<WorklistTask>();
+        var order = project.Items.Count == 0 ? 0 : project.Items.Max(i => i.SortOrder) + 1;
+        var added = 0;
+
+        void Add(ProjectItemSource source, Guid sourceId, string group, string description, string reference)
+        {
+            if (project.Items.Count >= MaxItems) throw new InvalidOperationException($"A project can hold at most {MaxItems} specification items.");
+            var item = new ProjectItem { Id = Guid.CreateVersion7(), Group = group, Description = description, Source = source, SourceId = sourceId, SourceRef = reference, Status = ProjectItemStatus.Open, SortOrder = order++ };
+            project.Items.Add(item);
+            db.Entry(item).State = EntityState.Added;
+            onSpec.Add((source, sourceId));
+            added++;
+        }
+
+        var tasks = await db.WorklistTasks.AsNoTracking().Where(t => t.CompanyId == companyId && taskIds.Contains(t.Id)).ToListAsync();
+        notes.AddRange(taskIds.Where(id => tasks.All(t => t.Id != id)).Select(_ => "A task could not be found."));
+        foreach (var task in tasks)
+        {
+            if (task.VesselId != project.VesselId) throw new InvalidOperationException($"Task {task.Code} is for another vessel.");
+            if (onSpec.Contains((ProjectItemSource.WorklistTask, task.Id))) { notes.Add($"{task.Code} is already on the specification."); continue; }
+            Add(ProjectItemSource.WorklistTask, task.Id, "Deferred jobs", task.Title, task.Code);
+            linked.Add(task);
+        }
+
+        var jobs = await db.PlannedJobs.AsNoTracking().Where(j => j.CompanyId == companyId && jobIds.Contains(j.Id)).ToListAsync();
+        notes.AddRange(jobIds.Where(id => jobs.All(j => j.Id != id)).Select(_ => "A maintenance job could not be found."));
+        var machinery = await db.MachineryItems.AsNoTracking().Where(m => m.VesselId == project.VesselId).ToDictionaryAsync(m => m.Id, m => m.Name);
+        foreach (var job in jobs)
+        {
+            if (job.VesselId != project.VesselId) throw new InvalidOperationException($"Job {job.Code} is for another vessel.");
+            if (onSpec.Contains((ProjectItemSource.PmsJob, job.Id))) { notes.Add($"{job.Code} is already on the specification."); continue; }
+            Add(ProjectItemSource.PmsJob, job.Id, machinery.GetValueOrDefault(job.MachineryItemId) ?? "Machinery", job.Title, job.Code);
+        }
+        await db.SaveChangesAsync();
+
+        if (worklist is not null)
+            foreach (var task in linked)
+            {
+                try { await worklist.AddEntryAsync(companyId, task.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Project, LinkTarget: project.Id, LinkLabel: $"Project {project.Code}"), actor); }
+                catch (InvalidOperationException ex) { notes.Add($"{task.Code} is on the specification, but its task could not be told: {ex.Message}"); }
+            }
+        return new ProjectImportOutcome(added, notes);
+    }
+
+    /// <summary>
+    /// The specification items for maintenance jobs that are Done here but whose completion has not been recorded in maintenance since the work began. Recording it stays a maintenance
+    /// action, so the job rules apply; this only says which are waiting for it.
+    /// </summary>
+    public async Task<HashSet<Guid>> PmsWaitingAsync(Guid companyId, Guid projectId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var project = await db.Projects.AsNoTracking().Include(p => p.Items).FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId);
+        if (project is null) return [];
+        var jobItems = project.Items.Where(i => i.Source == ProjectItemSource.PmsJob && i.SourceId != null && i.Status == ProjectItemStatus.Done).ToList();
+        if (jobItems.Count == 0) return [];
+        var events = await db.ProjectStatusEvents.AsNoTracking().Where(e => e.ProjectId == projectId).ToListAsync();
+        var since = (ProjectStatusRules.ActualStart(events) ?? project.PlannedStart ?? project.CreatedAt).Date;
+        var ids = jobItems.Select(i => i.SourceId!.Value).ToList();
+        var recorded = (await db.JobCompletions.AsNoTracking().Where(c => ids.Contains(c.PlannedJobId) && c.DoneDate >= since).Select(c => c.PlannedJobId).Distinct().ToListAsync()).ToHashSet();
+        return jobItems.Where(i => !recorded.Contains(i.SourceId!.Value)).Select(i => i.Id).ToHashSet();
     }
 
     // ---- reading ----

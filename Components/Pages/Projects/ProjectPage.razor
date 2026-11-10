@@ -53,6 +53,12 @@ else
     {
         <div class="mb-6 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
     }
+    @if (_info.Count > 0)
+    {
+        <div class="mb-6 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:bg-sky-500/10 dark:text-sky-200">
+            <ul class="space-y-1">@foreach (var note in _info) { <li>@note</li> }</ul>
+        </div>
+    }
 
     @if (_step is { } step)
     {
@@ -113,10 +119,75 @@ else
             <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Specification</h2>
             @if (canEdit)
             {
-                <button @onclick="AddItem" class="btn btn-secondary btn-sm ml-auto">+ Add item</button>
+                <button @onclick="ToggleImport" class="btn btn-secondary btn-sm ml-auto">@(_importOpen ? "Close import" : "Import from Worklist and maintenance")</button>
+                <button @onclick="AddItem" class="btn btn-secondary btn-sm">+ Add item</button>
                 <button @onclick="SaveItems" disabled="@_busy" class="btn btn-primary btn-sm">Save specification</button>
             }
         </div>
+        @if (_importOpen && _candidates is { } cand)
+        {
+            <div class="mb-5 space-y-4 rounded-xl border border-line bg-surface-2/60 p-4 text-sm">
+                <div>
+                    <div class="mb-2 flex flex-wrap items-center gap-3">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-muted">Worklist tasks deferred to drydock</h3>
+                        @if (!cand.WorklistOn) { <span class="text-muted">The worklist is not switched on for this vessel.</span> }
+                        else if (cand.NatureName is null) { <span class="text-muted">No nature is marked as "deferred to drydock" yet.@(_isAdmin ? " Choose one here." : " A company admin can choose one here.")</span> }
+                        else { <span class="text-muted">open tasks of the nature "@cand.NatureName"</span> }
+                        @if (_isAdmin && cand.WorklistOn)
+                        {
+                            <span class="ml-auto flex items-center gap-2">
+                                <span class="w-56"><SelectBox TValue="Guid" @bind-Value="_natureChoice" Options="_natureOptions" Placeholder="Choose the nature…" AllowClear="true" Small="true" /></span>
+                                <button @onclick="SaveNature" disabled="@_busy" class="btn btn-secondary btn-sm">Use this nature</button>
+                            </span>
+                        }
+                    </div>
+                    @if (cand.Tasks.Count == 0 && cand.NatureName is not null)
+                    {
+                        <p class="text-muted">No open tasks of that nature that are not already on this project.</p>
+                    }
+                    @foreach (var t in cand.Tasks)
+                    {
+                        <label class="flex flex-wrap items-center gap-3 py-1">
+                            <input type="checkbox" checked="@_pickTasks.Contains(t.Id)" @onchange="e => Pick(_pickTasks, t.Id, e.Value is true)" />
+                            <span class="font-mono text-xs font-semibold">@t.Code</span><span>@t.Title</span>
+                            @if (t.Urgent) { <StatusChip Label="Urgent" Tone="danger" /> }
+                            @if (t.Target is { } target) { <span class="text-xs text-muted">target @target.ToString("d MMM yyyy")</span> }
+                        </label>
+                    }
+                </div>
+
+                <div>
+                    <div class="mb-2 flex flex-wrap items-center gap-3">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-muted">Maintenance jobs coming due</h3>
+                        @if (!cand.PmsOn) { <span class="text-muted">Maintenance is not switched on for this vessel.</span> }
+                        else
+                        {
+                            <span class="ml-auto flex items-center gap-2 text-muted">due within <input type="number" min="0" max="730" @bind="_dueDays" class="input w-20 text-right" /> days
+                                <button @onclick="LoadCandidatesAsync" class="btn btn-secondary btn-sm">Show</button></span>
+                        }
+                    </div>
+                    @if (cand.PmsOn && cand.Jobs.Count == 0)
+                    {
+                        <p class="text-muted">No jobs due in that time that are not already on this project.</p>
+                    }
+                    @foreach (var j in cand.Jobs)
+                    {
+                        <label class="flex flex-wrap items-center gap-3 py-1">
+                            <input type="checkbox" checked="@_pickJobs.Contains(j.Id)" @onchange="e => Pick(_pickJobs, j.Id, e.Value is true)" />
+                            <span class="font-mono text-xs font-semibold">@j.Code</span><span>@j.Title</span>
+                            @if (j.Machinery != "") { <span class="text-xs text-muted">@j.Machinery</span> }
+                            @if (j.Critical) { <StatusChip Label="Critical" Tone="danger" /> }
+                            @if (j.Due is { } due) { <span class="@("text-xs " + (due.Date < DateTime.UtcNow.Date ? "text-rose-600" : "text-muted"))">@(due.Date < DateTime.UtcNow.Date ? "overdue since" : "due") @due.ToString("d MMM yyyy")</span> }
+                        </label>
+                    }
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <button @onclick="ImportPicked" disabled="@(_busy || _pickTasks.Count + _pickJobs.Count == 0)" class="btn btn-primary btn-sm">Add selected (@(_pickTasks.Count + _pickJobs.Count))</button>
+                    <span class="text-xs text-muted">Each is added as a job on the specification, remembers where it came from, and cannot be added twice.</span>
+                </div>
+            </div>
+        }
         @if (_items.Count == 0)
         {
             <p class="text-sm text-muted">No items yet. Add the jobs this project covers.</p>
@@ -134,7 +205,15 @@ else
                             <tr>
                                 <td class="p-2">@if (canEdit) { <input @bind="row.Group" class="input w-32" /> } else { @row.Group }</td>
                                 <td class="p-2">@if (canEdit) { <input @bind="row.Description" class="input min-w-[16rem]" /> } else { @row.Description }</td>
-                                <td class="p-2 whitespace-nowrap text-muted">@SourceText(row)</td>
+                                <td class="p-2 whitespace-nowrap text-muted">
+                                    @if (row.Source == ProjectItemSource.WorklistTask && row.SourceId is { } taskId) { <a href="/worklist/@taskId" class="link">@SourceText(row)</a> }
+                                    else if (row.Source == ProjectItemSource.PmsJob && row.SourceId is { } jobId)
+                                    {
+                                        <a href="/pms/jobs/@jobId" class="link">@SourceText(row)</a>
+                                        @if (row.Id is { } itemId && _pmsWaiting.Contains(itemId)) { <div class="text-xs text-amber-600">Record the job as done in maintenance</div> }
+                                    }
+                                    else { @SourceText(row) }
+                                </td>
                                 <td class="p-2 w-36">@if (canEdit) { <SelectBox TValue="ProjectItemStatus" @bind-Value="row.Status" Options="_itemStatusOptions" Small="true" /> } else { @row.Status }</td>
                                 <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.01" min="0" @bind="row.Estimated" class="input w-32 text-right" /> } else { @(row.Estimated is { } est ? Money.Format(est, "USD") : "—") }</td>
                                 <td class="p-2 text-right">@if (canEdit) { <input type="number" step="0.01" min="0" @bind="row.Quoted" class="input w-32 text-right" /> } else { @(row.Quoted is { } quote ? Money.Format(quote, "USD") : "—") }</td>
@@ -307,13 +386,23 @@ else
 
     private Guid _companyId;
     private Actor _actor = Actor.System;
-    private bool _loaded, _busy, _mayManage;
+    private bool _loaded, _busy, _mayManage, _isAdmin;
     private string? _error;
     private string _vesselName = "";
     private ProjectDetail? _detail;
     private ProjectCostSummary? _cost;
     private List<ProjectBudgetApproval> _approvals = [];
     private decimal _budgetTotal, _contingency;
+
+    // adding from the Worklist and maintenance
+    private List<string> _info = [];
+    private bool _importOpen;
+    private ImportCandidates? _candidates;
+    private readonly HashSet<Guid> _pickTasks = [], _pickJobs = [];
+    private int _dueDays = 90;
+    private Guid _natureChoice;
+    private List<SelectOption<Guid>> _natureOptions = [];
+    private HashSet<Guid> _pmsWaiting = [];
 
     // what the page edits
     private readonly List<ItemRow> _items = [];
@@ -360,6 +449,7 @@ else
         _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(state.User);
         _mayManage = await Svc.MayManageAsync(_companyId, _actor.UserId);
+        _isAdmin = state.User.IsInRole("CompanyAdmin");
         _users = await Svc.OfficeUsersAsync(_companyId);
         _userOptions = SelectOptions.From(_users, u => u.Id, u => u.Name);
         await ReloadAsync();
@@ -375,6 +465,7 @@ else
         _cost = await Svc.CostAsync(_companyId, ProjectId);
         var lines = await Svc.BudgetAsync(_companyId, ProjectId);
         _approvals = await Svc.ApprovalsAsync(_companyId, ProjectId);
+        _pmsWaiting = await Svc.PmsWaitingAsync(_companyId, ProjectId);
         var costs = (await Svc.ItemCostsAsync(_companyId, ProjectId)).ToDictionary(c => c.ItemId);
         _budgetTotal = ProjectCostRules.Budget(lines);
         _contingency = ProjectCostRules.Contingency(lines);
@@ -393,6 +484,7 @@ else
     private async Task RunAsync(Func<Task> action, string success)
     {
         _error = null;
+        _info = [];
         _busy = true;
         try
         {
@@ -469,12 +561,52 @@ else
 
     private Task SaveItems() => RunAsync(async () =>
     {
-        await Svc.SaveItemsAsync(_companyId, ProjectId, _items.Select(i => new ProjectItemInput(i.Id, i.Group, i.Description, i.Source, i.SourceId, i.SourceRef, i.Status)).ToList(), _actor);
+        _info = await Svc.SaveItemsAsync(_companyId, ProjectId, _items.Select(i => new ProjectItemInput(i.Id, i.Group, i.Description, i.Source, i.SourceId, i.SourceRef, i.Status)).ToList(), _actor);
         // New items have their ids only now; the saved items are in the same order as the rows, so each row's amounts go with its item.
         var saved = (await Svc.GetAsync(_companyId, ProjectId))!.Project.Items;
         for (var i = 0; i < _items.Count && i < saved.Count; i++)
             await Svc.SetItemCostAsync(_companyId, ProjectId, saved[i].Id, _items[i].Estimated, _items[i].Quoted, _actor);
     }, "Specification saved");
+
+    private async Task ToggleImport()
+    {
+        _importOpen = !_importOpen;
+        if (_importOpen) await LoadCandidatesAsync();
+    }
+
+    private async Task LoadCandidatesAsync()
+    {
+        _error = null;
+        try
+        {
+            _candidates = await Svc.ImportCandidatesAsync(_companyId, ProjectId, Math.Clamp(_dueDays, 0, 730));
+            _pickTasks.RemoveWhere(id => _candidates.Tasks.All(t => t.Id != id));
+            _pickJobs.RemoveWhere(id => _candidates.Jobs.All(j => j.Id != id));
+            _natureOptions = (await Svc.NatureOptionsAsync(_companyId)).Select(n => new SelectOption<Guid>(n.Id, n.Name)).ToList();
+            _natureChoice = (await Svc.DrydockNatureAsync(_companyId))?.Id ?? Guid.Empty;
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private static void Pick(HashSet<Guid> set, Guid id, bool on)
+    {
+        if (on) set.Add(id); else set.Remove(id);
+    }
+
+    private Task SaveNature() => RunAsync(async () =>
+    {
+        await Svc.SetDrydockNatureAsync(_companyId, _natureChoice == Guid.Empty ? null : _natureChoice, _actor);
+        await LoadCandidatesAsync();
+    }, "Saved");
+
+    private Task ImportPicked() => RunAsync(async () =>
+    {
+        var outcome = await Svc.ImportAsync(_companyId, ProjectId, _pickTasks.ToList(), _pickJobs.ToList(), _actor);
+        _info = outcome.Notes;
+        _pickTasks.Clear();
+        _pickJobs.Clear();
+        await LoadCandidatesAsync();
+    }, "Added to the specification");
 
     private static string SourceText(ItemRow row) => row.Source switch
     {

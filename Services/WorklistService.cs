@@ -31,6 +31,7 @@ public static class WorklistLinkTypes
     public const string TankInspection = "tankinspection";
     public const string RiskAssessment = "riskassessment";
     public const string RestBreach = "restbreach";
+    public const string Project = "project";
 
     /// <summary>Where the link opens, on the office or on a vessel.</summary>
     public static string Href(string type, Guid target, bool onVessel) => type switch
@@ -42,6 +43,7 @@ public static class WorklistLinkTypes
         TankInspection => $"/tanks/inspections/{target}",
         RiskAssessment => $"/risk/{target}",
         RestBreach => $"/rest/breaches?note={target}",
+        Project => onVessel ? "#" : $"/projects/{target}",       // onboard project screens come later
         _ => "#",
     };
 }

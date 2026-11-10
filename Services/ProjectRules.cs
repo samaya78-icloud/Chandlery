@@ -56,6 +56,26 @@ public static class ProjectLinkRules
             .Where(l => l.Added).ToDictionary(l => (l.Kind, l.DocId), l => l.ProjectId);
 }
 
+/// <summary>Which Worklist tasks and PMS jobs are offered for a project's specification.</summary>
+public static class ProjectImportRules
+{
+    /// <summary>The nature that means "deferred to drydock": the one the company chose if it is still in use, else the first whose name says drydock; null when there is none to use.</summary>
+    public static Guid? ResolveNature(Guid? chosen, IEnumerable<(Guid Id, string Name)> natures)
+    {
+        var list = natures.ToList();
+        if (chosen is { } id && list.Any(n => n.Id == id)) return id;
+        foreach (var (natureId, name) in list)
+        {
+            var plain = name.Replace("-", "").Replace(" ", "");
+            if (plain.Contains("drydock", StringComparison.OrdinalIgnoreCase)) return natureId;
+        }
+        return null;
+    }
+
+    /// <summary>A job is offered when its next due date falls within the window (an overdue job always does); a job with no due date is not.</summary>
+    public static bool JobIsDue(DateTime? nextDue, DateTime today, int withinDays) => nextDue is { } due && due.Date <= today.Date.AddDays(withinDays);
+}
+
 /// <summary>How a document finds its project when the links written about it are weighed against where it came from.</summary>
 public static class ProjectInheritance
 {

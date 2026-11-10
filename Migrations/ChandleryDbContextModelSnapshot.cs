@@ -369,6 +369,9 @@ namespace Chandlery.Migrations
                     b.Property<Guid?>("OriginNodeId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ProjectDrydockNatureId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("RegistrationNumber")
                         .HasColumnType("text");
 

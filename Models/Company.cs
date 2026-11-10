@@ -25,4 +25,7 @@ public class Company
 
     /// <summary>When on, putting off a critical maintenance job needs a signed risk assessment of the vessel to be named.</summary>
     public bool RiskRequiredForCriticalDeferral { get; set; }
+
+    /// <summary>The Worklist nature that means "deferred to drydock", used to find the tasks to import into a project. When none is chosen, a nature whose name says drydock is used.</summary>
+    public Guid? ProjectDrydockNatureId { get; set; }
 }
