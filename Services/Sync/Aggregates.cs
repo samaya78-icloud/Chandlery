@@ -52,6 +52,10 @@ public static class Aggregates
         new(nameof(WorkArrangementSignOff), typeof(WorkArrangementSignOff)),
         new(nameof(RiskAssessment), typeof(RiskAssessment)),
         new(nameof(RaSignOff), typeof(RaSignOff)),
+        new(nameof(Project), typeof(Project)),
+        new(nameof(ProjectStatusEvent), typeof(ProjectStatusEvent)),
+        new(nameof(ProjectNote), typeof(ProjectNote)),
+        new(nameof(ProjectLink), typeof(ProjectLink)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
@@ -59,6 +63,7 @@ public static class Aggregates
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
+        || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
 
     private static readonly Dictionary<string, AggregateType> ByName = Types.ToDictionary(t => t.DocType);
@@ -118,6 +123,10 @@ public static class Aggregates
         WorkArrangementSignOff ws => ws.OwnerStage,
         RiskAssessment ra => ra.OwnerStage,
         RaSignOff rs => rs.OwnerStage,
+        Project pr => pr.OwnerStage,
+        ProjectStatusEvent pe => pe.OwnerStage,
+        ProjectNote pn => pn.OwnerStage,
+        ProjectLink pl => pl.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -150,6 +159,10 @@ public static class Aggregates
         else if (root is WorkArrangementSignOff arrangementSign) arrangementSign.OwnerStage = stage;
         else if (root is RiskAssessment assessment) assessment.OwnerStage = stage;
         else if (root is RaSignOff signOff) signOff.OwnerStage = stage;
+        else if (root is Project project) project.OwnerStage = stage;
+        else if (root is ProjectStatusEvent projectEvent) projectEvent.OwnerStage = stage;
+        else if (root is ProjectNote projectNote) projectNote.OwnerStage = stage;
+        else if (root is ProjectLink projectLink) projectLink.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

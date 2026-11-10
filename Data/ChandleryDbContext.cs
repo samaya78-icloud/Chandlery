@@ -87,6 +87,15 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<RaActivity> RaActivities => Set<RaActivity>();
     public DbSet<RaHazard> RaHazards => Set<RaHazard>();
     public DbSet<RaSignOff> RaSignOffs => Set<RaSignOff>();
+    public DbSet<Project> Projects => Set<Project>();
+    public DbSet<ProjectItem> ProjectItems => Set<ProjectItem>();
+    public DbSet<ProjectStatusEvent> ProjectStatusEvents => Set<ProjectStatusEvent>();
+    public DbSet<ProjectNote> ProjectNotes => Set<ProjectNote>();
+    public DbSet<ProjectLink> ProjectLinks => Set<ProjectLink>();
+    public DbSet<ProjectBudgetLine> ProjectBudgetLines => Set<ProjectBudgetLine>();
+    public DbSet<ProjectItemCost> ProjectItemCosts => Set<ProjectItemCost>();
+    public DbSet<ProjectCostEntry> ProjectCostEntries => Set<ProjectCostEntry>();
+    public DbSet<ProjectBudgetApproval> ProjectBudgetApprovals => Set<ProjectBudgetApproval>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -816,6 +825,104 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
         });
 
+        // ---- projects: the project, its items and the history around it sync; budget and money stay at the office ----
+        modelBuilder.Entity<Project>(b =>
+        {
+            b.Property(p => p.Code).HasMaxLength(40);
+            b.Property(p => p.Title).HasMaxLength(200);
+            b.Property(p => p.Description).HasMaxLength(4000);
+            b.Property(p => p.SuperintendentName).HasMaxLength(120);
+            b.Property(p => p.Yard).HasMaxLength(200);
+            b.Property(p => p.CreatedByName).HasMaxLength(120);
+            b.Property(p => p.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(p => p.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(p => p.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(p => p.Items).WithOne().HasForeignKey(i => i.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(p => new { p.CompanyId, p.Code }).IsUnique();
+            b.HasIndex(p => new { p.VesselId, p.CreatedAt });
+            b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectItem>(b =>
+        {
+            b.Property(i => i.Group).HasMaxLength(100);
+            b.Property(i => i.Description).HasMaxLength(1000);
+            b.Property(i => i.SourceRef).HasMaxLength(60);
+            b.HasIndex(i => i.ProjectId);
+        });
+        modelBuilder.Entity<ProjectStatusEvent>(b =>
+        {
+            b.Property(e => e.Note).HasMaxLength(2000);
+            b.Property(e => e.ByName).HasMaxLength(120);
+            b.Property(e => e.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(e => e.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Project>().WithMany().HasForeignKey(e => e.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(e => e.ProjectId);
+            b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectNote>(b =>
+        {
+            b.Property(n => n.Text).HasMaxLength(4000);
+            b.Property(n => n.AuthorName).HasMaxLength(120);
+            b.Property(n => n.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(n => n.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(n => n.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Project>().WithMany().HasForeignKey(n => n.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(n => new { n.ProjectId, n.Date });
+            b.HasQueryFilter(n => CurrentCompanyId == null || n.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectLink>(b =>
+        {
+            b.Property(l => l.ByName).HasMaxLength(120);
+            b.Property(l => l.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(l => l.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(l => l.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Project>().WithMany().HasForeignKey(l => l.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(l => new { l.Kind, l.DocId });
+            b.HasIndex(l => l.ProjectId);
+            b.HasQueryFilter(l => CurrentCompanyId == null || l.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectBudgetLine>(b =>
+        {
+            b.Property(l => l.Category).HasMaxLength(100);
+            b.Property(l => l.PlannedUsd).HasPrecision(18, 2);
+            b.Property(l => l.ContingencyPct).HasPrecision(5, 2);
+            b.HasOne<Company>().WithMany().HasForeignKey(l => l.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Project>().WithMany().HasForeignKey(l => l.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(l => l.ProjectId);
+            b.HasQueryFilter(l => CurrentCompanyId == null || l.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectItemCost>(b =>
+        {
+            b.Property(c => c.EstimatedUsd).HasPrecision(18, 2);
+            b.Property(c => c.QuotedUsd).HasPrecision(18, 2);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Project>().WithMany().HasForeignKey(c => c.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(c => c.ItemId).IsUnique();
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectCostEntry>(b =>
+        {
+            b.Property(e => e.Description).HasMaxLength(500);
+            b.Property(e => e.Reference).HasMaxLength(100);
+            b.Property(e => e.AmountUsd).HasPrecision(18, 2);
+            b.Property(e => e.ByName).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Project>().WithMany().HasForeignKey(e => e.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(e => e.ProjectId);
+            b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectBudgetApproval>(b =>
+        {
+            b.Property(a => a.TotalUsd).HasPrecision(18, 2);
+            b.Property(a => a.ContingencyUsd).HasPrecision(18, 2);
+            b.Property(a => a.ApprovedByName).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(a => a.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Project>().WithMany().HasForeignKey(a => a.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(a => a.ProjectId);
+            b.HasQueryFilter(a => CurrentCompanyId == null || a.CompanyId == CurrentCompanyId);
+        });
+
         modelBuilder.Entity<PoDispatch>(b =>
         {
             b.Property(d => d.AcknowledgedByName).HasMaxLength(120);
@@ -1054,7 +1161,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -1118,6 +1225,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         Tank tk => tk.Name,
         TankInspection ti => ti.Code,
         RiskAssessment ra => ra.Code,
+        Project pr => pr.Code,
         _ => "",
     };
 
@@ -1148,6 +1256,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<RiskAssessment>().FirstOrDefault(e => e.Entity.Id == assessmentId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A part of a risk assessment was changed without loading the assessment; load it with its team, activities and hazards.");
+        return parent;
+    }
+
+    /// <summary>A specification item is its own table but part of the project: changing one moves the project's version.</summary>
+    private EntityEntry? ProjectOf(EntityEntry item)
+    {
+        var property = item.Property("ProjectId");
+        var projectId = (Guid)(item.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Project>().FirstOrDefault(e => e.Entity.Id == projectId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of a project was changed without loading the project; load it with its specification items.");
         return parent;
     }
 

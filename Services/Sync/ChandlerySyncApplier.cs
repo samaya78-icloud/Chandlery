@@ -321,6 +321,9 @@ public sealed class ChandlerySyncApplier(IDbContextFactory<ChandleryDbContext> f
         // A signed risk assessment is locked in the same way: a changed copy of it is ignored.
         if (existing is RiskAssessment signedCopy && RaStatusRules.Of(signedCopy.SubmissionCount, await db.RaSignOffs.AsNoTracking().Where(s => s.AssessmentId == signedCopy.Id).ToListAsync(ct)) == RaStatus.Signed) return;
 
+        // A closed project is locked in the same way: a changed copy of it is ignored.
+        if (existing is Project closedProject && ProjectStatusRules.Of(await db.ProjectStatusEvents.AsNoTracking().Where(e => e.ProjectId == closedProject.Id).ToListAsync(ct)) == ProjectStatus.Closed) return;
+
         // A vessel may only send for the vessel it runs.
         if (atHub)
         {

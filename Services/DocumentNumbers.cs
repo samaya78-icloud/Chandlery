@@ -26,6 +26,7 @@ public static class DocumentNumbers
         DocType.Worklist => "WL",
         DocType.TankInspection => "TI",
         DocType.RiskAssessment => "RA",
+        DocType.Project => "PR",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 
