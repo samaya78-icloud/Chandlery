@@ -97,7 +97,7 @@ public class DashboardModuleService(
                 ]));
             }
         }
-        else if (await restFleet.CountsAsync(companyId) is { Any: true } f)
+        else if (await restFleet.CountsAsync(companyId) is { } f)   // null only when no vessel has the module on; all zeros still shows an "All clear" card
         {
             modules.Add(new("rest", "Hours of rest", "/rest/fleet",
             [
