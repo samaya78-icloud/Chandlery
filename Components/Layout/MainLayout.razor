@@ -3,8 +3,8 @@
 <div class="app-backdrop"></div>
 <div class="drawer-overlay"></div>
 
-<aside class="sidebar print:hidden">
-    <div class="flex h-16 shrink-0 items-center gap-3 px-5">
+<aside id="site-menu" class="sidebar print:hidden" aria-label="Main menu">
+    <div class="flex h-16 shrink-0 items-center gap-3 px-5 lg:hidden">
         <div class="brand-mark">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6"/></svg>
         </div>
@@ -18,20 +18,20 @@
         <NavMenu />
     </div>
 
-    <div class="hidden shrink-0 border-t border-line p-3 lg:block">
-        <button type="button" data-toggle-nav class="nav-link w-full" title="Collapse or expand the menu" style="margin:0;width:100%">
-            <span class="nav-icon nav-collapse-icon transition-transform">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg>
-            </span>
-            <span class="nav-label">Collapse menu</span>
-        </button>
-    </div>
 </aside>
 
 <div class="app-main">
     <header class="topbar glass print:hidden">
-        <button type="button" data-toggle-drawer class="btn btn-ghost btn-sm lg:hidden" aria-label="Open menu">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        @* The menu opens from the logo: on hover on a wide screen, on a tap or click anywhere else (and on a phone, as a drawer). *@
+        <button type="button" data-menu-trigger class="brand-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="site-menu" title="Menu">
+            <span class="brand-mark">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v14M7 12h10M5 15c0 3 3 6 7 6s7-3 7-6"/></svg>
+            </span>
+            <span class="hidden sm:block">
+                <span class="block font-display text-lg font-extrabold leading-none text-ink">Chandlery</span>
+                <span class="mt-1 block text-[11px] font-medium leading-none text-muted">Procurement workspace</span>
+            </span>
+            <svg class="brand-chevron hidden sm:block" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
         </button>
 
         <AuthorizeView>

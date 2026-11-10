@@ -6,7 +6,7 @@
 (function () {
   var root = document.documentElement;
   var THEMES = ['aurora', 'sunset', 'forest', 'orchid', 'graphite'];
-  var KEY_THEME = 'chandlery.theme', KEY_MODE = 'chandlery.mode', KEY_NAV = 'chandlery.nav', KEY_GROUPS = 'chandlery.navclosed';
+  var KEY_THEME = 'chandlery.theme', KEY_MODE = 'chandlery.mode', KEY_GROUPS = 'chandlery.navclosed';
   var dark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   function read(key, fallback) {
@@ -23,15 +23,14 @@
     root.setAttribute('data-theme', theme);
     root.setAttribute('data-pref', pref);
     root.setAttribute('data-mode', pref === 'system' ? (dark && dark.matches ? 'dark' : 'light') : pref);
-    root.setAttribute('data-nav', read(KEY_NAV, 'expanded'));
-    // Menu groups the person has closed (space-separated names); the stylesheet hides them, so there is no flash on load.
-    var closed = read(KEY_GROUPS, '');
-    root.setAttribute('data-nav-closed', closed);
-    var heads = document.querySelectorAll('[data-toggle-group]');
-    for (var g = 0; g < heads.length; g++) {
-      var group = heads[g].closest('[data-nav-group]');
-      var hidden = !!group && (' ' + closed + ' ').indexOf(' ' + group.getAttribute('data-nav-group') + ' ') >= 0;
-      heads[g].setAttribute('aria-expanded', String(!hidden));
+    // Menu groups the person has closed (space-separated names). The menu is out of sight until opened, so marking them here causes no flash.
+    var closed = ' ' + read(KEY_GROUPS, '') + ' ';
+    var groups = document.querySelectorAll('[data-nav-group]');
+    for (var g = 0; g < groups.length; g++) {
+      var hidden = closed.indexOf(' ' + groups[g].getAttribute('data-nav-group') + ' ') >= 0;
+      if (hidden) groups[g].setAttribute('data-closed', ''); else groups[g].removeAttribute('data-closed');
+      var head = groups[g].querySelector('[data-toggle-group]');
+      if (head) head.setAttribute('aria-expanded', String(!hidden));
     }
     if (!root.hasAttribute('data-drawer')) root.setAttribute('data-drawer', 'closed');
 
@@ -52,7 +51,7 @@
   function hookBlazor() {
     if (window.Blazor && window.Blazor.addEventListener) {
       window.Blazor.addEventListener('enhancedload', function () {
-        root.setAttribute('data-drawer', 'closed');
+        setMenu(false, false);
         apply();
       });
     } else {
@@ -60,6 +59,34 @@
     }
   }
   hookBlazor();
+
+  // The main menu. Open on hover (a wide screen with a pointer), or pinned open by a click or tap; a phone gets it as a drawer.
+  var hoverQuery = window.matchMedia ? window.matchMedia('(min-width: 1024px) and (hover: hover)') : null;
+  var menuTimer = 0;
+  var MENU_PARTS = '[data-menu-trigger], .sidebar';
+
+  function canHover() { return !!hoverQuery && hoverQuery.matches; }
+  function menuIsOpen() { return root.getAttribute('data-drawer') === 'open'; }
+  function menuIsPinned() { return root.getAttribute('data-pinned') === 'true'; }
+  function setMenu(open, pinned) {
+    clearTimeout(menuTimer);
+    root.setAttribute('data-drawer', open ? 'open' : 'closed');
+    root.setAttribute('data-pinned', open && pinned ? 'true' : 'false');
+    var trigger = document.querySelector('[data-menu-trigger]');
+    if (trigger) trigger.setAttribute('aria-expanded', String(open));
+  }
+
+  document.addEventListener('mouseover', function (e) {
+    if (!canHover() || !e.target.closest || !e.target.closest(MENU_PARTS)) return;
+    clearTimeout(menuTimer);
+    if (!menuIsOpen()) setMenu(true, false);
+  });
+  document.addEventListener('mouseout', function (e) {
+    if (!canHover() || menuIsPinned() || !e.target.closest || !e.target.closest(MENU_PARTS)) return;
+    if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest(MENU_PARTS)) return;   // moving between the logo and the menu
+    clearTimeout(menuTimer);
+    menuTimer = setTimeout(function () { if (!menuIsPinned()) setMenu(false, false); }, 250);
+  });
 
   function closeMenus(except) {
     var open = document.querySelectorAll('details.menu[open]');
@@ -91,13 +118,19 @@
       }
       return;
     }
-    if (target.closest && target.closest('[data-toggle-nav]')) {
-      write(KEY_NAV, root.getAttribute('data-nav') === 'collapsed' ? 'expanded' : 'collapsed');
-      apply();
+    if (target.closest && target.closest('[data-menu-trigger]')) {
+      var open = menuIsOpen();
+      // With a pointer, the menu is already open from hovering: a click pins it, a second click closes it. Otherwise a click toggles.
+      var nowOpen = canHover() ? !(open && menuIsPinned()) : !open;
+      setMenu(nowOpen, nowOpen && canHover());
+      if (nowOpen && e.detail === 0) {          // opened from the keyboard: move into the menu
+        var first = document.querySelector('.sidebar .nav-link');
+        if (first) first.focus();
+      }
       return;
     }
-    if (target.closest && target.closest('[data-toggle-drawer]')) {
-      root.setAttribute('data-drawer', root.getAttribute('data-drawer') === 'open' ? 'closed' : 'open');
+    if (target.closest && target.closest('.sidebar .nav-link')) {
+      setMenu(false, false);                    // going somewhere: put the menu away (the link still navigates)
       return;
     }
     if ((el = target.closest && target.closest('[data-fill-email]'))) {
@@ -108,9 +141,10 @@
       return;
     }
     if (target.closest && target.closest('.drawer-overlay')) {
-      root.setAttribute('data-drawer', 'closed');
+      setMenu(false, false);
       return;
     }
+    if (menuIsOpen() && !(target.closest && target.closest(MENU_PARTS))) setMenu(false, false);   // a click elsewhere closes a pinned menu
 
     // Close any open dropdown when clicking elsewhere
     var inMenu = target.closest && target.closest('details.menu');
@@ -120,7 +154,11 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       closeMenus(null);
-      root.setAttribute('data-drawer', 'closed');
+      if (menuIsOpen()) {
+        setMenu(false, false);
+        var trigger = document.querySelector('[data-menu-trigger]');
+        if (trigger && document.activeElement && document.activeElement.closest && document.activeElement.closest('.sidebar')) trigger.focus();
+      }
     }
   });
 

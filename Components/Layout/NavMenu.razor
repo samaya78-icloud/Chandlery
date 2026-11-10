@@ -9,7 +9,7 @@
 @inject RiskLibraryService RiskLibSvc
 @inject RiskAssessmentService RiskSvc
 
-<nav class="flex flex-col pt-1">
+<nav class="site-nav">
     <AuthorizeView Roles="CompanyAdmin,CompanyUser">
         <Authorized>
             @if (NodeContext.Current.IsVessel)
