@@ -11,6 +11,7 @@
 <PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Safety meetings"
             Subtitle="The safety committee, toolbox talks and briefings, with their minutes and the actions that came out of them.">
     <Actions>
+        @if (_loaded && _blocked is null) { <a href="/drills/reports/meetings.csv@(NodeContext.Current.IsVessel ? "" : $"?vessel={_vessel}")" class="btn btn-secondary">CSV</a> }
         @if (_mayConduct) { <a href="/meetings/new" class="btn btn-primary">Record a meeting</a> }
     </Actions>
 </PageHeader>
@@ -89,6 +90,7 @@ else
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] public Guid? VesselQuery { get; set; }
 
     private Guid _companyId, _vessel, _type;
     private Actor _actor = default!;
@@ -113,7 +115,7 @@ else
             _vessel = mine;
             _mayConduct = me.IsMaster || me.Has(CrewAuthority.ConductDrills);
         }
-        else _vessel = _vessels[0].Id;
+        else _vessel = VesselQuery is { } q && _vessels.Any(v => v.Id == q) ? q : _vessels[0].Id;
         _types = await Svc.TypesAsync(_companyId, includeInactive: true);
         await LoadAsync();
         _loaded = true;

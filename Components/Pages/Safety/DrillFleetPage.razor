@@ -1,0 +1,118 @@
+@page "/drills/fleet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject DrillFleetService Svc
+
+<PageTitle>Fleet drill status · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Fleet drill status"
+            Subtitle="Every vessel against every drill and meeting, the ones that need attention first. Worked out from what each vessel has recorded and sent ashore.">
+    <Actions>
+        @if (_view is not null) { <a href="/drills/reports/fleet.csv" class="btn btn-secondary">CSV</a> }
+        <a href="/drills/history" class="btn btn-secondary">History</a>
+        <a href="/meetings" class="btn btn-secondary">Meetings</a>
+        <AuthorizeView Roles="CompanyAdmin"><a href="/drills/types" class="btn btn-secondary">Types and rules</a></AuthorizeView>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else if (_view is null || _view.Vessels.Count == 0)
+{
+    <EmptyState Title="No vessels" Message="The Drills and Meetings module has not been switched on for any vessel." />
+}
+else
+{
+    var v = _view;
+    <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+        <span class="text-muted">As at @v.Today.ToString("d MMM yyyy")</span>
+        @if (v.Overdue == 0) { <StatusChip Label="Nothing overdue" Tone="success" /> }
+        else { <StatusChip Label="@($"{v.Overdue} overdue")" Tone="danger" /> }
+        @{ var quarter = v.Vessels.Count(x => x.QuarterTriggered); }
+        @if (quarter > 0) { <StatusChip Label="@($"{quarter} vessel{(quarter == 1 ? "" : "s")} with over a quarter of the crew missing drills last month")" Tone="warning" /> }
+    </div>
+
+    <div class="card mb-6 overflow-x-auto">
+        <table class="w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wide text-muted">
+                <tr>
+                    <th class="px-4 py-3">Vessel</th>
+                    @foreach (var t in v.Types) { <th class="px-3 py-3">@t.Name</th> }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in v.Vessels)
+                {
+                    <tr class="border-t border-line/60 align-top">
+                        <td class="px-4 py-3"><a class="link font-semibold" href="/drills?vessel=@row.VesselId">@row.Name</a>
+                            @if (row.QuarterTriggered) { <div class="text-xs text-amber-700">quarter of crew rule</div> }</td>
+                        @foreach (var t in v.Types)
+                        {
+                            <td class="px-3 py-3">
+                                @if (!row.Cells.TryGetValue(t.Id, out var cell)) { <span class="text-xs text-muted">Not applicable</span> }
+                                else
+                                {
+                                    var (label, tone) = DrillLook.Status(cell.Status);
+                                    // The ship has held one but some crew have no record: say so, rather than "never held".
+                                    if (cell.Status == DrillStatus.NeverHeld && cell.LastHeld is not null) label = "Crew without a record";
+                                    <StatusChip Label="@(cell.Status == DrillStatus.NotDue ? DrillLook.Day(cell.Due) : label)" Tone="@tone" />
+                                    <div class="mt-1 text-xs text-muted">last @DrillLook.Day(cell.LastHeld)@(cell.PeopleLate > 0 ? $", {cell.PeopleLate} crew late" : "")</div>
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (v.MeetingTypes.Count > 0)
+    {
+        <h2 class="mb-2 text-base font-semibold text-ink">Safety meetings</h2>
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="px-4 py-3">Vessel</th>@foreach (var t in v.MeetingTypes) { <th class="px-3 py-3">@t.Name</th> }</tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in v.Meetings)
+                    {
+                        <tr class="border-t border-line/60 align-top">
+                            <td class="px-4 py-3"><a class="link font-semibold" href="/meetings?vessel=@row.VesselId">@row.Name</a></td>
+                            @foreach (var t in v.MeetingTypes)
+                            {
+                                <td class="px-3 py-3">
+                                    @if (!row.Cells.TryGetValue(t.Id, out var cell)) { <span class="text-xs text-muted">–</span> }
+                                    else
+                                    {
+                                        var (label, tone) = DrillLook.Status(cell.Status);
+                                        <StatusChip Label="@(cell.Status == DrillStatus.NotDue ? DrillLook.Day(cell.Due) : label)" Tone="@tone" />
+                                        <div class="mt-1 text-xs text-muted">last @DrillLook.Day(cell.LastHeld)</div>
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private DrillFleetView? _view;
+    private bool _loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _view = await Svc.FleetAsync(companyId, Actor.From(state.User));
+        _loaded = true;
+    }
+}

@@ -55,6 +55,7 @@ builder.Services.AddScoped<RestCapacityService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<DrillService>();
 builder.Services.AddScoped<MeetingService>();
+builder.Services.AddScoped<DrillFleetService>();
 builder.Services.AddScoped<RiskAssessmentService>();
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<RiskLibraryService>();
@@ -443,6 +444,73 @@ app.MapGet("/incidents/{incidentId:guid}/pdf", async (Guid incidentId, HttpConte
     await using var db = await factory.CreateDbContextAsync();
     var company = await db.Companies.IgnoreQueryFilters().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
     return Results.File(IncidentPdf.Build(detail, company, await library.GetMatrixAsync(companyId)), "application/pdf", IncidentPdf.FileName(detail));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// Drill and meeting records as PDFs, and the figures as CSV. Each is read through the service, so a person gets only what they may see (onboard: the vessel's own).
+app.MapGet("/drills/{drillId:guid}/pdf", async (Guid drillId, HttpContext http, DrillService drills, IDbContextFactory<ChandleryDbContext> factory) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    DrillDetail? detail;
+    try { detail = await drills.GetAsync(companyId, drillId, Actor.From(http.User)); }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    if (detail is null) return Results.NotFound();
+    await using var db = await factory.CreateDbContextAsync();
+    var company = await db.Companies.IgnoreQueryFilters().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+    return Results.File(DrillPdf.Build(detail, company), "application/pdf", DrillPdf.FileName(detail));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+app.MapGet("/meetings/{meetingId:guid}/pdf", async (Guid meetingId, HttpContext http, MeetingService meetings, IDbContextFactory<ChandleryDbContext> factory) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    MeetingDetail? detail;
+    try { detail = await meetings.GetAsync(companyId, meetingId, Actor.From(http.User)); }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    if (detail is null) return Results.NotFound();
+    await using var db = await factory.CreateDbContextAsync();
+    var company = await db.Companies.IgnoreQueryFilters().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+    return Results.File(DrillPdf.Build(detail, company), "application/pdf", DrillPdf.FileName(detail));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// The drill log of one vessel for a period (?vessel=guid, ?from=yyyy-MM-dd, ?to=yyyy-MM-dd; the last 12 months when left out). Onboard: the vessel's own.
+app.MapGet("/drills/reports/log.pdf", async (Guid? vessel, string? from, string? to, HttpContext http, DrillService drills, IDbContextFactory<ChandleryDbContext> factory) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var end = DateTime.UtcNow.Date;
+    var start = end.AddYears(-1);
+    var ok = System.Globalization.DateTimeStyles.AdjustToUniversal;
+    if (from is not null && !DateTime.TryParseExact(from, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, ok, out start)) return Results.NotFound();
+    if (to is not null && !DateTime.TryParseExact(to, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, ok, out end)) return Results.NotFound();
+    if (!NodeContext.Current.IsVessel && vessel is null) return Results.NotFound();
+    List<DrillRow> rows;
+    try { rows = (await drills.ListAsync(companyId, Actor.From(http.User), vessel)).Where(r => r.Drill.StartedAt.Date >= start.Date && r.Drill.StartedAt.Date <= end.Date).ToList(); }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    await using var db = await factory.CreateDbContextAsync();
+    var company = await db.Companies.IgnoreQueryFilters().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+    var name = rows.Select(r => r.VesselName).FirstOrDefault() ?? (vessel is { } v ? await db.Vessels.Where(x => x.Id == v).Select(x => x.Name).FirstOrDefaultAsync() : null) ?? "Vessel";
+    return Results.File(DrillPdf.BuildLog(rows, name, company, start, end), "application/pdf", DrillPdf.LogFileName(name, start, end));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// Drill and meeting figures as CSV: register (drills), meetings (the meeting register), fleet (office: vessel by drill type), participation (?vessel=guid: crew by drill type).
+app.MapGet("/drills/reports/{kind}.csv", async (string kind, Guid? vessel, HttpContext http, DrillService drills, MeetingService meetings, DrillFleetService fleet) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var actor = Actor.From(http.User);
+    string? csv;
+    try
+    {
+        csv = kind switch
+        {
+            "register" => DrillReports.RegisterCsv(await drills.ListAsync(companyId, actor, vessel)),
+            "meetings" => DrillReports.MeetingsCsv(await meetings.ListAsync(companyId, actor, vessel)),
+            "fleet" => DrillReports.FleetCsv(await fleet.FleetAsync(companyId, actor)),
+            "participation" when vessel is { } v => DrillReports.ParticipationCsv(await drills.ParticipationAsync(companyId, v, actor)),
+            _ => null,
+        };
+    }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    if (csv is null) return Results.NotFound();
+    var utf8 = new System.Text.UTF8Encoding(true);
+    return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"drills-{kind}-{DateTime.UtcNow:yyyyMMdd}.csv");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 // A seafarer's record of hours of work or rest for a month (appendix 4) as a PDF. Onboard a seafarer gets their own, the Master and crew admins anyone's; the office any.

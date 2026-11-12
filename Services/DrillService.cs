@@ -378,6 +378,21 @@ public class DrillService(IDbContextFactory<ChandleryDbContext> factory, Worklis
         var crew = await db.CrewMembers.AsNoTracking().Where(c => c.CompanyId == companyId && c.VesselId == vesselId && c.IsActive).ToListAsync();
         return DrillSchedules.Personal(new DrillSnapshot(types, overrides, drills, crew), crewId, (today ?? DateTime.UtcNow).Date);
     }
+
+    /// <summary>Every crew member against every drill type everyone must attend: who last took part, when each is next due. The office's, and the Master's for their own vessel.</summary>
+    public async Task<DrillParticipation> ParticipationAsync(Guid companyId, Guid vesselId, Actor actor, DateTime? today = null)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        if (!who.IsOffice && (who.Crew!.VesselId != vesselId || !who.IsMaster)) throw new InvalidOperationException("Crew participation is for the Master and the office.");
+        var vessel = await db.Vessels.AsNoTracking().FirstOrDefaultAsync(v => v.Id == vesselId && v.CompanyId == companyId) ?? throw new InvalidOperationException("That vessel does not exist.");
+        var types = await db.DrillTypes.AsNoTracking().Where(t => t.CompanyId == companyId && t.IsActive).OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+        var overrides = (await db.DrillOverrides.AsNoTracking().Where(o => o.VesselId == vesselId).ToListAsync()).ToDictionary(o => o.DrillTypeId);
+        var drills = await db.Drills.AsNoTracking().Include(d => d.Participants).Where(d => d.VesselId == vesselId).ToListAsync();
+        var crew = await db.CrewMembers.AsNoTracking().Where(c => c.CompanyId == companyId && c.VesselId == vesselId && c.IsActive).OrderBy(c => c.FullName).ToListAsync();
+        return DrillSchedules.Participation(vessel.Name, new DrillSnapshot(types, overrides, drills, crew), (today ?? DateTime.UtcNow).Date);
+    }
 }
 
 /// <summary>Everything a schedule is worked out from, so the working-out is a pure function.</summary>
@@ -385,6 +400,14 @@ public sealed record DrillSnapshot(IReadOnlyList<DrillType> Types, IReadOnlyDict
 
 public static class DrillSchedules
 {
+    /// <summary>The crew by the types everyone attends. A type that does not apply on the vessel is left out; a person with no standing for a type shows as never having taken part.</summary>
+    public static DrillParticipation Participation(string vesselName, DrillSnapshot s, DateTime today)
+    {
+        var rows = s.Crew.Select(c => new DrillParticipationRow(c.Id, c.FullName, c.Rank, Personal(s, c.Id, today))).ToList();
+        var types = s.Types.Where(t => s.Overrides.GetValueOrDefault(t.Id) is not { Applies: false } && DrillRules.Effective(t, s.Overrides.GetValueOrDefault(t.Id)).EveryCrewMember).ToList();
+        return new DrillParticipation(vesselName, today, types, rows);
+    }
+
     /// <summary>One person's standing for each type everyone must attend (the types that apply on the vessel), with nothing left out: a person who is not due yet is shown with their date.</summary>
     public static List<DrillPersonalRow> Personal(DrillSnapshot s, Guid crewId, DateTime today)
     {

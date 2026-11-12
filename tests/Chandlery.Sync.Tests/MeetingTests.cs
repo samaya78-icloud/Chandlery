@@ -268,4 +268,23 @@ public class MeetingTests : IAsyncLifetime
         Assert.Equal(6, _types.Single(t => t.Name == "Management review onboard").IntervalCount);
         await Task.CompletedTask;
     }
+
+    [Fact]
+    public async Task TheMinutesBecomeAPdf_AndTheMeetingRegisterACsv_ForTheOffice()
+    {
+        var meeting = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input());
+        await _vessel.SignAsync(_s.CompanyId, meeting.Id, As(_master));
+        await _s.SettleUntilQuietAsync();
+        await _shore.CommentAsync(_s.CompanyId, meeting.Id, _s.User, "Thank you, please keep the rail action in view.");
+
+        var detail = (await _shore.GetAsync(_s.CompanyId, meeting.Id, _s.User))!;
+        var pdf = DrillPdf.Build(detail, "Test Co");
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(pdf, 0, 4));
+        Assert.Equal($"meeting-{meeting.Code}.pdf", DrillPdf.FileName(detail));
+
+        var csv = DrillReports.MeetingsCsv(await _shore.ListAsync(_s.CompanyId, _s.User, _s.VesselId)).TrimEnd().Split('\n');
+        Assert.Equal(2, csv.Length);
+        Assert.Contains(meeting.Code, csv[1]);
+        Assert.Contains("Safety committee", csv[1]);
+    }
 }

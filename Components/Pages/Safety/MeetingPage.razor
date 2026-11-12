@@ -21,6 +21,7 @@ else
     <PageHeader Eyebrow="@_d.VesselName" Title="@m.Code" Subtitle="@($"{m.TypeName}, {DrillLook.When(m.HeldAt)}")">
         <Actions>
             @if (_d.Can.Edit) { <a href="/meetings/@m.Id/edit" class="btn btn-primary">Change the minutes</a> }
+            <a href="/meetings/@m.Id/pdf" target="_blank" class="btn btn-secondary">PDF</a>
             <a href="/meetings" class="btn btn-secondary">Meetings</a>
         </Actions>
     </PageHeader>

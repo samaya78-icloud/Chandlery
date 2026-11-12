@@ -279,4 +279,55 @@ public class DrillTests : IAsyncLifetime
         Assert.Equal(2, _types.Count(t => t.EveryCrewMember));                                                       // fire and abandon ship
         await Task.CompletedTask;
     }
+
+    // ---- the office's views (C4) ----
+
+    [Fact]
+    public async Task TheOfficeSeesTheFleetAndWhoHasNotTakenPart_AndOnboardOnlyTheMasterSeesTheCrewGrid()
+    {
+        await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input(people: [Present(_officer), Present(_master), Present(_cook)]));
+        await _s.SettleUntilQuietAsync();
+        var fleet = new DrillFleetService(_shore, new MeetingService(_s.ShoreFactory, _shoreWorklist));
+
+        var view = await fleet.FleetAsync(_s.CompanyId, _s.User);
+        var vessel = Assert.Single(view.Vessels);
+        var cell = vessel.Cells[Fire.Id];
+        Assert.Equal(DateTime.UtcNow.AddHours(-3).Date, cell.LastHeld);
+        Assert.Equal(1, cell.PeopleLate);                                                                            // the old hand was not there
+        Assert.Equal(DrillStatus.Overdue, cell.Status);                                                                  // someone past the joiner grace never took part
+
+        var ashore = await _shore.ParticipationAsync(_s.CompanyId, _s.VesselId, _s.User);
+        var onboard = await _vessel.ParticipationAsync(_s.CompanyId, _s.VesselId, As(_master));
+        string Show(DrillParticipation p) => string.Join("|", p.Crew.Select(c => $"{c.Name}:{string.Join(",", c.Standing.Select(x => $"{x.Type.Name}={x.Status}/{x.LastTookPart:yyyy-MM-dd}"))}"));
+        Assert.Equal(Show(ashore), Show(onboard));
+        Assert.Equal(DrillStatus.Overdue, ashore.Crew.Single(c => c.CrewId == _oldHand.Id).Standing.Single(x => x.Type.Id == Fire.Id).Status);
+        Assert.Contains("Master", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ParticipationAsync(_s.CompanyId, _s.VesselId, As(_officer)))).Message);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ParticipationAsync(_s.CompanyId, _s.VesselId, As(_cook)));
+    }
+
+    [Fact]
+    public async Task TheMenuCountOnlyCountsWhatIsOverdue_AndTheRecordsBecomeAPdfAndACsv()
+    {
+        var fleet = new DrillFleetService(_shore, new MeetingService(_s.ShoreFactory, _shoreWorklist));
+        Assert.Equal(2, await fleet.OverdueAsync(_s.CompanyId, _s.User));                                            // nothing held: the old hand has never taken part in the two drills everyone attends
+
+        var old = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input(started: DateTime.UtcNow.AddHours(-5), people: [Present(_officer), Present(_master), Present(_cook), Present(_oldHand)]));
+        await _vessel.SignAsync(_s.CompanyId, old.Id, As(_master));
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(1, await fleet.OverdueAsync(_s.CompanyId, _s.User));                                            // fire is done by all four; abandon ship still is not
+
+        var detail = (await _shore.GetAsync(_s.CompanyId, old.Id, _s.User))!;
+        var pdf = DrillPdf.Build(detail, "Test Co");
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(pdf, 0, 4));
+        Assert.Equal($"drill-{old.Code}.pdf", DrillPdf.FileName(detail));
+        var rows = await _shore.ListAsync(_s.CompanyId, _s.User, _s.VesselId);
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(DrillPdf.BuildLog(rows, "MV Test", "Test Co", DateTime.UtcNow.AddYears(-1), DateTime.UtcNow), 0, 4));
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(DrillPdf.BuildLog([], "MV Test", "Test Co", DateTime.UtcNow.AddYears(-1), DateTime.UtcNow), 0, 4));      // an empty period still prints
+
+        var csv = DrillReports.RegisterCsv(rows).TrimEnd().Split('\n');
+        Assert.Equal(2, csv.Length);
+        Assert.Contains(old.Code, csv[1]);
+        Assert.Contains("4,0", csv[1].Replace("\"", ""));                                                            // four took part, none absent
+        Assert.Equal(1 + 4 * 2, DrillReports.ParticipationCsv(await _shore.ParticipationAsync(_s.CompanyId, _s.VesselId, _s.User)).TrimEnd().Split('\n').Length);      // four crew by the two drills everyone attends
+    }
 }

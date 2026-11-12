@@ -9,6 +9,12 @@
 
 <PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Drill history" Subtitle="Every drill recorded, newest first, with who took part.">
     <Actions>
+        @if (_loaded && _blocked is null)
+        {
+            var q = _vessel == Guid.Empty ? "" : $"?vessel={_vessel}";
+            <a href="/drills/reports/register.csv@q" class="btn btn-secondary">CSV</a>
+            @if (_vessel != Guid.Empty || NodeContext.Current.IsVessel) { <a href="/drills/reports/log.pdf@q" target="_blank" class="btn btn-secondary">Drill log PDF</a> }
+        }
         <a href="/drills" class="btn btn-secondary">Schedule</a>
     </Actions>
 </PageHeader>

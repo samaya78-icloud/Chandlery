@@ -10,6 +10,8 @@
 <PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Drill schedule"
             Subtitle="What is due, what is overdue and who has not yet taken part. Worked out from the drills held, so it is right as soon as a drill is recorded.">
     <Actions>
+        @if (!NodeContext.Current.IsVessel) { <a href="/drills/fleet" class="btn btn-secondary">Fleet status</a> }
+        @if (_loaded && _blocked is null && (!NodeContext.Current.IsVessel || _me?.IsMaster == true)) { <a href="/drills/crew@(NodeContext.Current.IsVessel ? "" : $"?vessel={_vesselId}")" class="btn btn-secondary">Crew participation</a> }
         <a href="/drills/history" class="btn btn-secondary">History</a>
         @if (_mayConduct) { <a href="/drills/new" class="btn btn-primary">Record a drill</a> }
     </Actions>
@@ -106,6 +108,7 @@ else if (_schedule is { } sc)
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] public Guid? VesselQuery { get; set; }
 
     private Guid _companyId, _vesselId;
     private Actor _actor = default!;
@@ -130,7 +133,7 @@ else if (_schedule is { } sc)
             _vesselId = mine;
             _mayConduct = _me.IsMaster || _me.Has(CrewAuthority.ConductDrills);
         }
-        else _vesselId = _vessels[0].Id;
+        else _vesselId = VesselQuery is { } q && _vessels.Any(v => v.Id == q) ? q : _vessels[0].Id;
         await LoadAsync();
         _loaded = true;
     }
