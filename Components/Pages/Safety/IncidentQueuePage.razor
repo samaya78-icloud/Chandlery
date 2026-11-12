@@ -1,0 +1,94 @@
+@page "/incidents/queue"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject IncidentService Svc
+
+<PageTitle>Investigation queue · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Investigation queue"
+            Subtitle="What waits for the office: reports not yet reviewed by the Master, reviewed ones with no investigation opened or waived, and investigations under way. The overdue come first, then by the date due.">
+    <Actions>
+        <a href="/incidents" class="btn btn-secondary">All reports</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Incident reports are switched off" Message="@_blocked" />
+}
+else if (_rows.Count == 0)
+{
+    <EmptyState Title="Nothing waiting" Message="Every report has been dealt with, or none has been made." />
+}
+else
+{
+    <div class="mb-4 flex flex-wrap gap-3 text-sm">
+        <StatCard Label="Waiting" Value="@_rows.Count.ToString()" />
+        <StatCard Label="Overdue" Value="@_rows.Count(r => r.InvestigationOverdue).ToString()" Tone="@(_rows.Any(r => r.InvestigationOverdue) ? "danger" : "success")" />
+        <StatCard Label="Not yet reviewed by the Master" Value="@_rows.Count(r => r.Status == IncidentStatus.Reported).ToString()" Tone="info" />
+        <StatCard Label="Need an investigation opened" Value="@_rows.Count(r => r.Status == IncidentStatus.Reviewed).ToString()" Tone="warning" />
+    </div>
+    <div class="card overflow-x-auto">
+        <table class="w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wide text-muted">
+                <tr><th class="px-4 py-3">Report</th><th class="px-4 py-3">Vessel</th><th class="px-4 py-3">Kind</th><th class="px-4 py-3">Band</th><th class="px-4 py-3">Status</th><th class="px-4 py-3">Due</th><th class="px-4 py-3">Reported by</th><th class="px-4 py-3">Actions open</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _rows)
+                {
+                    var (label, tone) = IncidentLook.Status(r.Status);
+                    <tr class="border-t border-line/60">
+                        <td class="px-4 py-3"><a class="link font-mono font-semibold" href="/incidents/@r.Incident.Id">@r.Incident.Code</a><div class="text-xs text-muted">@IncidentLook.When(r.Incident.OccurredAt)</div></td>
+                        <td class="px-4 py-3">@r.VesselName</td>
+                        <td class="px-4 py-3">@IncidentLook.Kind(r.Incident.Kind)</td>
+                        <td class="px-4 py-3">@if (r.Incident.Band != "") { <StatusChip Label="@r.Incident.Band" Tone="@_matrix!.ToneOf(r.Incident.Band)" /> }</td>
+                        <td class="px-4 py-3">
+                            <StatusChip Label="@label" Tone="@tone" />
+                            @if (r.Incident.IsUrgent) { <span class="chip" data-tone="danger">urgent</span> }
+                            @if (r.ReportedLate) { <span class="chip" data-tone="warning">late</span> }
+                        </td>
+                        <td class="px-4 py-3 whitespace-nowrap">
+                            @if (r.Due is { } due)
+                            {
+                                <span class="@(r.InvestigationOverdue ? "font-semibold text-rose-600" : "")">@due.ToString("d MMM yyyy")</span>
+                                @if (r.InvestigationOverdue) { <span class="chip" data-tone="danger">overdue</span> }
+                            }
+                            else { <span class="text-muted">none needed</span> }
+                        </td>
+                        <td class="px-4 py-3">@r.ReporterName</td>
+                        <td class="px-4 py-3">@(r.OpenActions == 0 ? "–" : r.OpenActions.ToString())</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _loaded;
+    private string? _blocked;
+    private List<IncidentRow> _rows = [];
+    private RiskMatrix? _matrix;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        var actor = Actor.From(state.User);
+        if (!await Svc.IsEnabledForCompanyAsync(companyId)) { _blocked = "The Incidents module has not been switched on for any vessel."; _loaded = true; return; }
+        try
+        {
+            _rows = await Svc.QueueAsync(companyId, actor);
+            _matrix = await Svc.MatrixAsync(companyId);
+        }
+        catch (InvalidOperationException ex) { _blocked = ex.Message; }
+        _loaded = true;
+    }
+}

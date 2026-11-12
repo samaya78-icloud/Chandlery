@@ -176,7 +176,7 @@
         // Every page in the menu, under the menu's own headings, so typing a module's name ("tank", "risk", "rest") lists all of its pages.
         foreach (var group in _pages ?? [])
             foreach (var item in group.Items)
-                all.Add(new(group.Title, item.Label, "", item.Href));
+                all.Add(new(group.Title, item.Section == "" ? item.Label : $"{item.Section}: {item.Label}", "", item.Href));
         all.Add(new("Appearance", "Dark mode", "", "cmd:mode:dark"));
         all.Add(new("Appearance", "Light mode", "", "cmd:mode:light"));
         all.Add(new("Appearance", "Theme: Aurora", "", "cmd:theme:aurora"));

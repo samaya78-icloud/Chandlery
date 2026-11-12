@@ -23,6 +23,7 @@ else
     <PageHeader Eyebrow="@_d.VesselName" Title="@i.Code" Subtitle="@($"{IncidentLook.Kind(i.Kind)}, {IncidentLook.When(i.OccurredAt)}")">
         <Actions>
             @if (_d.Can.Edit || _d.Can.Submit) { <a href="/incidents/@i.Id/edit" class="btn btn-primary">@(i.SubmittedAt is null ? "Edit and submit" : "Change the report")</a> }
+            <a href="/incidents/@i.Id/pdf" target="_blank" class="btn btn-secondary">PDF</a>
             <a href="/incidents" class="btn btn-secondary">Reports</a>
         </Actions>
     </PageHeader>
@@ -87,7 +88,48 @@ else
                 </div>
             }
 
-            @if (_d.Investigation is { } inv)
+            @if (_d.Can.WriteInvestigation)
+            {
+                <div class="card p-4 text-sm">
+                    <div class="mb-3 flex flex-wrap items-center gap-2">
+                        <h2 class="text-base font-semibold text-ink">Investigation</h2>
+                        @if (_d.Investigation is { } saved) { <span class="text-xs text-muted">version @saved.Version saved @IncidentLook.When(saved.At) by @saved.ByName. Saving makes a new version; the earlier ones stay.</span> }
+                    </div>
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <label class="md:col-span-2">Facts and timeline<textarea class="textarea mt-1 w-full" rows="4" maxlength="4000" @bind="_invFacts"></textarea></label>
+                        <label>Immediate cause<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_invCause"></textarea></label>
+                        <label>Why it happened (the chain of whys)<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_invWhy"></textarea></label>
+                    </div>
+                    <fieldset class="mt-3">
+                        <legend class="text-sm">Root causes</legend>
+                        @foreach (var group in _causes.GroupBy(c => c.Group))
+                        {
+                            <div class="mt-2"><p class="text-xs font-bold uppercase tracking-wider text-muted">@(group.Key == "" ? "Other" : group.Key)</p>
+                                <div class="flex flex-wrap gap-x-5 gap-y-1">
+                                    @foreach (var c in group)
+                                    {
+                                        var name = c.Name;
+                                        <label class="flex items-center gap-2"><input type="checkbox" checked="@_invCauses.Contains(name)" @onchange="e => ToggleCause(name, e.Value is true)" /> @name</label>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </fieldset>
+                    <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <label>Contributing factors<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_invContrib"></textarea></label>
+                        <label>The risk assessment for the job
+                            <select class="select mt-1 w-full" @bind="_invAssessment">
+                                @foreach (var a in Enum.GetValues<IncidentAssessmentFinding>()) { <option value="@a">@IncidentLook.Assessment(a)</option> }
+                            </select>
+                        </label>
+                        <label class="md:col-span-2">Lessons learned<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_invLessons"></textarea></label>
+                        <label>Investigated by<input class="input mt-1 w-full" maxlength="200" placeholder="Name and role" @bind="_invBy" /></label>
+                        <label class="flex items-center gap-2 self-end pb-2"><input type="checkbox" @bind="_invFinished" /> The investigation is finished</label>
+                    </div>
+                    <button class="btn btn-primary mt-3" disabled="@_busy" @onclick="SaveInvestigationAsync">Save the investigation</button>
+                </div>
+            }
+            else if (_d.Investigation is { } inv)
             {
                 <div class="card p-4 text-sm">
                     <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -133,6 +175,48 @@ else
         </div>
 
         <div class="space-y-5">
+            @if (_d.Can.OpenInvestigation || _d.Can.Notify || _d.Can.Close || _d.Can.Reopen)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-3 text-base font-semibold text-ink">For the office</h2>
+                    @if (_d.Can.OpenInvestigation)
+                    {
+                        <div class="mb-4 space-y-2">
+                            <p class="text-xs text-muted">@(_d.InvestigationRequired ? $"A report of band {_d.Incident.Band} needs an investigation." : "This report does not need an investigation, but one can be opened.")</p>
+                            <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="OpenInvestigationAsync">Open an investigation</button>
+                            @if (_d.Can.SkipInvestigation)
+                            {
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <input class="input flex-1" maxlength="500" placeholder="Or say why none is needed" @bind="_reason" />
+                                    <button class="btn btn-ghost btn-sm" disabled="@_busy" @onclick="SkipInvestigationAsync">No investigation needed</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (_d.Can.Notify)
+                    {
+                        <div class="mb-4 space-y-2">
+                            <input class="input w-full" maxlength="500" placeholder="Who was told, when, and the reference (flag state, class, P&I...)" @bind="_notification" />
+                            <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="NotifyAsync">Record the notification</button>
+                        </div>
+                    }
+                    @if (_d.Can.Close)
+                    {
+                        <div class="space-y-2">
+                            <input class="input w-full" maxlength="500" placeholder="Closing note" @bind="_closing" />
+                            <button class="btn btn-primary btn-sm" disabled="@_busy" @onclick="CloseAsync">Close the report</button>
+                        </div>
+                    }
+                    @if (_d.Can.Reopen)
+                    {
+                        <div class="space-y-2">
+                            <input class="input w-full" maxlength="500" placeholder="Why it is reopened" @bind="_reopen" />
+                            <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="ReopenAsync">Reopen the report</button>
+                        </div>
+                    }
+                </div>
+            }
+
             @if (_d.Can.Review)
             {
                 <div class="card p-4 text-sm">
@@ -246,6 +330,11 @@ else
     private int _actual, _potential = 1, _likelihood = 1;
     private string _comment = "", _supplement = "", _findings = "", _withdraw = "", _actionTitle = "", _actionText = "", _actionFor = "";
     private DateTime? _actionDue;
+    private List<IncidentCause> _causes = [];
+    private readonly HashSet<string> _invCauses = new(StringComparer.OrdinalIgnoreCase);
+    private string _invFacts = "", _invCause = "", _invWhy = "", _invContrib = "", _invLessons = "", _invBy = "", _reason = "", _notification = "", _closing = "", _reopen = "";
+    private IncidentAssessmentFinding _invAssessment;
+    private bool _invFinished;
 
     protected override async Task OnInitializedAsync()
     {
@@ -254,6 +343,7 @@ else
         _actor = Actor.From(state.User);
         _words = await Library.GetMatrixAsync(_companyId);
         _limitMonths = (await Svc.SettingsAsync(_companyId)).RepeatWindowMonths;
+        if (!NodeContext.Current.IsVessel) _causes = await Svc.CausesAsync(_companyId);
         await LoadAsync();
         _loaded = true;
     }
@@ -263,7 +353,16 @@ else
         try { _d = await Svc.GetAsync(_companyId, Id, _actor); }
         catch (InvalidOperationException) { _d = null; }
         if (_d is not null) (_actual, _potential, _likelihood) = (_d.Incident.ActualConsequence, Math.Max(1, _d.Incident.PotentialConsequence), Math.Max(1, _d.Incident.Likelihood));
+        if (_d?.Investigation is { } inv)
+        {
+            (_invFacts, _invCause, _invWhy, _invContrib, _invLessons, _invBy) = (inv.Facts, inv.ImmediateCause, inv.WhyChain, inv.ContributingFactors, inv.Lessons, inv.InvestigatedBy);
+            (_invAssessment, _invFinished) = (inv.AssessmentFinding, inv.Finished);
+            _invCauses.Clear();
+            foreach (var c in inv.RootCauses.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _invCauses.Add(c);
+        }
     }
+
+    private void ToggleCause(string name, bool on) { if (on) _invCauses.Add(name); else _invCauses.Remove(name); }
 
     private string Level(int level, bool consequence)
     {
@@ -308,6 +407,20 @@ else
         await Svc.ReviewAsync(_companyId, Id, _actor, _comment, changed ? (_actual, _potential, _likelihood) : null);
         _comment = "";
     }, "Reviewed. The report is on its way to the office.");
+
+    private Task OpenInvestigationAsync() => RunAsync(async () => { await Svc.OpenInvestigationAsync(_companyId, Id, _actor); }, "The investigation is open.");
+
+    private Task SkipInvestigationAsync() => RunAsync(async () => { await Svc.SkipInvestigationAsync(_companyId, Id, _actor, _reason); _reason = ""; }, "Recorded: no investigation is needed.");
+
+    private Task SaveInvestigationAsync() => RunAsync(async () =>
+        await Svc.SaveInvestigationAsync(_companyId, Id, _actor, new InvestigationInput(_invFacts, _invCause, [.. _invCauses], _invWhy, _invContrib, _invAssessment, _invLessons, _invBy, _invFinished)),
+        _invFinished ? "The investigation is saved and finished." : "The investigation is saved.");
+
+    private Task NotifyAsync() => RunAsync(async () => { await Svc.RecordNotificationAsync(_companyId, Id, _actor, _notification); _notification = ""; }, "The notification is recorded.");
+
+    private Task CloseAsync() => RunAsync(async () => { await Svc.CloseAsync(_companyId, Id, _actor, _closing); _closing = ""; }, "The report is closed.");
+
+    private Task ReopenAsync() => RunAsync(async () => { await Svc.ReopenAsync(_companyId, Id, _actor, _reopen); _reopen = ""; }, "The report is open again.");
 
     private Task SupplementAsync() => RunAsync(async () => { await Svc.AddSupplementAsync(_companyId, Id, _actor, _supplement); _supplement = ""; }, "Added.");
 

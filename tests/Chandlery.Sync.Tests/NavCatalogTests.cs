@@ -78,7 +78,8 @@ public class NavCatalogTests : IAsyncLifetime
         Assert.Equal(["Plan", "Fleet overview", "Running hours", "Machinery", "Import a plan", "Approvals", "Template updates", "Sister vessels", "Reports"], Pages(groups, "Maintenance"));
         Assert.Equal(["Tanks", "Inspections", "Exceptions", "Review queue"], Pages(groups, "Tank inspection"));
         Assert.Equal(["Assessments", "New assessment", "Sign-off queue"], Pages(groups, "Risk assessment"));
-        Assert.Equal(["Hours of rest", "Working table", "Rest reports", "Rest rules"], Pages(groups, "Safety"));
+        Assert.Equal(["Fleet compliance", "Working table", "Reports", "Rules"], Pages(groups, "Safety"));
+        Assert.All(groups.Single(g => g.Title == "Safety").Items, i => Assert.Equal("Hours of rest", i.Section));
         Assert.Equal(["Projects", "New project"], Pages(groups, "Projects"));
         Assert.Equal(["Worklist lists", "Maintenance library", "Tank checklists", "Risk library"], Pages(groups, "Admin").Skip(6));          // each module adds its setup page for the admin
         Assert.Equal("pms planned maintenance", groups.Single(g => g.Title == "Maintenance").Aliases);                                            // what the finder also matches
@@ -108,5 +109,28 @@ public class NavCatalogTests : IAsyncLifetime
         Assert.Equal(["Dashboard", "RFQs", "Purchase Orders", "Invoices", "Bank Accounts"], Pages(supplier, "Workspace"));
 
         Assert.Empty(await _catalog.GetAsync(new ClaimsPrincipal(new ClaimsIdentity()), isVessel: false));                                    // not signed in: nothing
+    }
+
+    [Fact]
+    public async Task SafetyHasASubHeadingForEachOfItsModules_AndTheFinderNamesThePageWithIt()
+    {
+        await SwitchOnAsync(PolicyModules.RestHours, PolicyModules.Incidents);
+        List<string> Sections(List<NavGroup> groups) => groups.Single(g => g.Title == "Safety").Items.Select(i => i.Section).Distinct().ToList();
+        List<string> In(List<NavGroup> groups, string section) => groups.Single(g => g.Title == "Safety").Items.Where(i => i.Section == section).Select(i => i.Label).ToList();
+
+        var office = await _catalog.GetAsync(Person("CompanyAdmin"), isVessel: false);
+        Assert.Equal(["Hours of rest", "Incident reports"], Sections(office));
+        Assert.Equal(["Fleet compliance", "Working table", "Reports", "Rules"], In(office, "Hours of rest"));
+        Assert.Equal(["Reports", "Investigation queue", "Report an incident", "Lessons learned"], In(office, "Incident reports"));
+        Assert.Contains("Incident settings", Pages(office, "Admin"));                                                                         // the office sets the rules and the cause list
+
+        var vessel = await _catalog.GetAsync(Person("CompanyUser"), isVessel: true);
+        Assert.Equal(["Hours of rest", "Incident reports"], Sections(vessel));
+        Assert.Equal(["My hours", "Month sheet", "Sign hours", "Breaches", "Working table"], In(vessel, "Hours of rest"));
+        Assert.Equal(["Reports", "Report an incident", "Lessons learned"], In(vessel, "Incident reports"));
+
+        // Every page of a section sits together: a section never reappears after another one.
+        var runs = vessel.Single(g => g.Title == "Safety").Items.Select(i => i.Section).Aggregate(new List<string>(), (list, s) => { if (list.Count == 0 || list[^1] != s) list.Add(s); return list; });
+        Assert.Equal(runs.Distinct().Count(), runs.Count);
     }
 }

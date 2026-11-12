@@ -172,6 +172,11 @@
   .nav-group-chevron { width: .9rem; height: .9rem; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transform: rotate(180deg); transition: transform .15s ease; }
   .nav-group[data-closed] .nav-group-chevron { transform: none; }
   .nav-group[data-closed] .nav-group-items { display: none; }
+  /* A module with several pages of its own gets a sub-heading inside its group (Safety: Hours of rest, Incident reports). */
+  .nav-section-title {
+    display: flex; align-items: center; gap: .6rem; margin: .55rem 1.1rem .1rem; font-size: .64rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--c-muted);
+  }
+  .nav-section-title::after { content: ""; flex: 1; height: 1px; background: var(--c-line); }
   .nav-link {
     position: relative; display: flex; align-items: center; gap: .8rem; margin: .1rem .65rem; padding: .6rem .8rem;
     border-radius: .8rem; font-size: .875rem; font-weight: 600; color: var(--c-ink-2); text-decoration: none;

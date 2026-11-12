@@ -18,10 +18,11 @@ public sealed record NewIncidentAction(string Title, string Description, DateTim
 
 public sealed record IncidentFilter(Guid? VesselId = null, IncidentStatus? Status = null, IncidentKind? Kind = null, bool OnlyOverdue = false, string? Text = null);
 
-public sealed record IncidentRow(Incident Incident, IncidentStatus Status, bool InvestigationOverdue, bool ReportedLate, string ReporterName, int OpenActions, string VesselName);
+public sealed record IncidentRow(Incident Incident, IncidentStatus Status, bool InvestigationOverdue, bool ReportedLate, string ReporterName, int OpenActions, string VesselName, DateTime? Due = null);
 
 /// <summary>What the person looking at a report may do with it. The same rules the service enforces, so a page offers only what will be accepted.</summary>
-public sealed record IncidentCan(bool IsOffice, bool Edit, bool Submit, bool Review, bool Supplement, bool Findings, bool Withdraw, bool AddAction);
+public sealed record IncidentCan(bool IsOffice, bool Edit, bool Submit, bool Review, bool Supplement, bool Findings, bool Withdraw, bool AddAction,
+    bool OpenInvestigation, bool SkipInvestigation, bool WriteInvestigation, bool Notify, bool Close, bool Reopen);
 
 public sealed record IncidentDetail(Incident Incident, string VesselName, IncidentStatus Status, IReadOnlyList<IncidentEvent> Events, IReadOnlyList<IncidentInvestigation> Investigations,
     IncidentInvestigation? Investigation, IReadOnlyList<WorklistTask> Actions, int OpenActions, IReadOnlyList<string> CloseBlockers, DateTime? InvestigationDue, bool InvestigationRequired,
@@ -498,15 +499,18 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         return new IncidentDetail(incident, vessel, status, events, versions, facts.Investigation, tasks, open, status is IncidentStatus.Closed or IncidentStatus.Withdrawn ? [] : IncidentRules.CloseBlockers(facts),
             IncidentRules.InvestigationDue(incident, matrix, limits), facts.InvestigationRequired, IncidentRules.CanSkipInvestigation(incident, matrix, limits),
             IncidentRules.InvestigationOverdue(facts, status, matrix, limits, DateTime.UtcNow), IncidentRules.ReportedLate(incident, limits), IncidentRules.ReporterNameFor(incident, who.IsOffice, limits),
-            repeats, IncidentRules.SuggestsAssessmentReview(repeats.Count), matrix, CanOf(who, incident, status));
+            repeats, IncidentRules.SuggestsAssessmentReview(repeats.Count), matrix, CanOf(who, incident, status, facts, matrix, limits));
     }
 
-    private static IncidentCan CanOf(Who who, Incident incident, IncidentStatus status)
+    private static IncidentCan CanOf(Who who, Incident incident, IncidentStatus status, IncidentFacts facts, RiskMatrix matrix, IncidentLimits limits)
     {
         var submitted = incident.SubmittedAt is not null;
         var finished = status is IncidentStatus.Closed or IncidentStatus.Withdrawn;
         var mine = who.IsOffice || who.Crew!.VesselId == incident.VesselId;
         var owner = CanEditText(who, incident);
+        var opened = facts.Events.Any(e => e.Kind == IncidentEventKind.InvestigationOpened) || facts.Investigation is not null;
+        var waived = facts.Events.Any(e => e.Kind == IncidentEventKind.NoInvestigationNeeded);
+        var open = who.IsOffice && submitted && !finished;
         return new IncidentCan(who.IsOffice,
             Edit: owner && !IncidentStatusRules.TextIsLocked(status),
             Submit: owner && !submitted && status != IncidentStatus.Withdrawn,
@@ -514,7 +518,13 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
             Supplement: owner && submitted && !finished,
             Findings: !who.IsOffice && mine && (who.IsMaster || incident.ReporterCrewId == who.Crew!.Id) && submitted && !finished,
             Withdraw: mine && !finished && (who.IsOffice || who.IsMaster || incident.ReporterCrewId == who.Crew!.Id),
-            AddAction: mine && (who.IsOffice || who.IsMaster) && submitted && !finished);
+            AddAction: mine && (who.IsOffice || who.IsMaster) && submitted && !finished,
+            OpenInvestigation: open && !opened && !waived,
+            SkipInvestigation: open && !opened && !waived && IncidentRules.CanSkipInvestigation(incident, matrix, limits),
+            WriteInvestigation: open && !(waived && facts.Investigation is null),
+            Notify: who.IsOffice && submitted && status != IncidentStatus.Withdrawn,
+            Close: who.IsOffice && submitted && !finished && IncidentRules.CloseBlockers(facts).Count == 0,
+            Reopen: who.IsOffice && status == IncidentStatus.Closed);
     }
 
     private static bool CanSee(Who who, Incident incident)
@@ -560,9 +570,25 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
             var overdue = IncidentRules.InvestigationOverdue(facts, status, matrix, limits, DateTime.UtcNow);
             if (filter.Status is { } s && s != status) continue;
             if (filter.OnlyOverdue && !overdue) continue;
-            rows.Add(new IncidentRow(i, status, overdue, IncidentRules.ReportedLate(i, limits), IncidentRules.ReporterNameFor(i, who.IsOffice, limits), facts.OpenActions, vessels.GetValueOrDefault(i.VesselId) ?? ""));
+            rows.Add(new IncidentRow(i, status, overdue, IncidentRules.ReportedLate(i, limits), IncidentRules.ReporterNameFor(i, who.IsOffice, limits), facts.OpenActions, vessels.GetValueOrDefault(i.VesselId) ?? "", IncidentRules.InvestigationDue(i, matrix, limits)));
         }
         return rows;
+    }
+
+    /// <summary>
+    /// What waits for the office: reports not yet reviewed, reviewed ones with no investigation opened or waived, and investigations under way, the overdue first and then by
+    /// the date they are due (those with none last).
+    /// </summary>
+    public async Task<List<IncidentRow>> QueueAsync(Guid companyId, Actor actor)
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = companyId;
+            RequireOffice(await WhoAsync(db, companyId, actor), "The investigation queue is the office's.");
+        }
+        var rows = await ListAsync(companyId, actor);
+        return rows.Where(r => r.Status is IncidentStatus.Reported or IncidentStatus.Reviewed or IncidentStatus.Investigating)
+            .OrderByDescending(r => r.InvestigationOverdue).ThenBy(r => r.Due ?? DateTime.MaxValue).ThenBy(r => r.Incident.SubmittedAt).ToList();
     }
 
     /// <summary>The lessons shared with everyone: reviewed reports marked to be shared, with no names. Newest first.</summary>

@@ -3,8 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 
 namespace Chandlery.Services;
 
-/// <summary>One page in the menu. Icon is a name the menu maps to a picture; Badge is a count to show beside it (0 for none).</summary>
-public record NavEntry(string Href, string Label, string Icon, int Badge = 0);
+/// <summary>One page in the menu. Icon is a name the menu maps to a picture; Badge is a count to show beside it (0 for none); Section is the sub-heading it sits under inside its group (empty for none).</summary>
+public record NavEntry(string Href, string Label, string Icon, int Badge = 0, string Section = "");
 
 /// <summary>A menu heading with its pages. Aliases are other words people use for it, so the finder can match them ("pms" for Maintenance).</summary>
 public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
@@ -117,14 +117,22 @@ public class NavCatalogService(
         }
 
         var restOn = await rest.IsEnabledForCompanyAsync(companyId);
+        const string hoursOfRest = "Hours of rest", incidentReports = "Incident reports";
         if (restOn && !isVessel)
-            safety.AddRange([new("/rest/fleet", "Hours of rest", "rest"), new("/rest/table", "Working table", "rest"), new("/rest/reports", "Rest reports", "rest"), new("/rest/rules", "Rest rules", "rest")]);
+            safety.AddRange([new("/rest/fleet", "Fleet compliance", "rest", Section: hoursOfRest), new("/rest/table", "Working table", "rest", Section: hoursOfRest),
+                new("/rest/reports", "Reports", "rest", Section: hoursOfRest), new("/rest/rules", "Rules", "rest", Section: hoursOfRest)]);
         else if (restOn)
-            safety.AddRange([new("/rest", "Hours of rest", "rest"), new("/rest/sheet", "Month sheet", "rest"), new("/rest/sign", "Sign hours", "rest"),
-                new("/rest/breaches", "Breaches", "rest"), new("/rest/table", "Working table", "rest")]);
+            safety.AddRange([new("/rest", "My hours", "rest", Section: hoursOfRest), new("/rest/sheet", "Month sheet", "rest", Section: hoursOfRest), new("/rest/sign", "Sign hours", "rest", Section: hoursOfRest),
+                new("/rest/breaches", "Breaches", "rest", Section: hoursOfRest), new("/rest/table", "Working table", "rest", Section: hoursOfRest)]);
 
         if (await incidents.IsEnabledForCompanyAsync(companyId))
-            safety.AddRange([new("/incidents", "Incident reports", "incident"), new("/incidents/new", "Report an incident", "incident"), new("/incidents/lessons", "Lessons learned", "incident")]);
+        {
+            safety.Add(new("/incidents", "Reports", "incident", Section: incidentReports));
+            if (!isVessel) safety.Add(new("/incidents/queue", "Investigation queue", "incident", (await incidents.QueueAsync(companyId, new Actor(userId, ""))).Count, incidentReports));
+            safety.Add(new("/incidents/new", "Report an incident", "incident", Section: incidentReports));
+            safety.Add(new("/incidents/lessons", "Lessons learned", "incident", Section: incidentReports));
+            if (!isVessel) admin.Add(new("/incidents/settings", "Incident settings", "incident"));
+        }
 
         if (await tanks.IsEnabledForCompanyAsync(companyId))
         {

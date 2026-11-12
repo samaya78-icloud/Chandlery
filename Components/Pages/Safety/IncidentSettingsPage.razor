@@ -1,0 +1,130 @@
+@page "/incidents/settings"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject IncidentService Svc
+
+<PageTitle>Incident settings · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Incident settings"
+            Subtitle="The numbers and lists incident reporting uses, for every vessel of the company. Vessels receive changes when they next connect.">
+    <Actions>
+        <a href="/incidents" class="btn btn-secondary">Reports</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else
+{
+    <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">Rules</h2>
+            <div class="grid grid-cols-2 gap-3">
+                <label>A report is late after (hours)<input type="number" min="1" class="input mt-1 w-full" @bind="_s.LateReportHours" /></label>
+                <label>Repeats looked for within (months)<input type="number" min="1" class="input mt-1 w-full" @bind="_s.RepeatWindowMonths" /></label>
+            </div>
+            <label class="mt-3 block">Days allowed to investigate, from the highest band down
+                <input class="input mt-1 w-full" maxlength="60" @bind="_s.InvestigationDays" />
+                <span class="mt-1 block text-xs text-muted">@Hint()</span>
+            </label>
+            <div class="mt-3 space-y-2">
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="_s.UrgentForLostTime" /> An injury with days lost, or an evacuation, goes to the office at once</label>
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="_s.UrgentForPollution" /> Any pollution report goes to the office at once</label>
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="_s.AllowAnonymousToOffice" /> A reporter may ask that the office sees "a crew member" instead of their name</label>
+            </div>
+            <button class="btn btn-primary mt-4" disabled="@_busy" @onclick="SaveSettingsAsync">Save the rules</button>
+            @if (_settingsError is not null) { <p class="mt-2 text-rose-600">@_settingsError</p> }
+            @if (_settingsDone) { <p class="mt-2 text-emerald-700">Saved.</p> }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-1 text-base font-semibold text-ink">Root causes</h2>
+            <p class="mb-3 text-xs text-muted">What the office picks from when it investigates. A cause no longer wanted is switched off, not deleted, so old reports still read.</p>
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Group</th><th>Cause</th><th>In use</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var c in _causes)
+                    {
+                        var row = c;
+                        <tr class="border-t border-line/60">
+                            <td class="py-1 pr-2"><input class="input w-full" maxlength="60" @bind="row.Group" /></td>
+                            <td class="py-1 pr-2"><input class="input w-full" maxlength="100" @bind="row.Name" /></td>
+                            <td class="py-1 pr-2"><input type="checkbox" @bind="row.IsActive" /></td>
+                            <td class="py-1"><button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="() => SaveCauseAsync(row)">Save</button></td>
+                        </tr>
+                    }
+                    <tr class="border-t border-line">
+                        <td class="py-1 pr-2"><input class="input w-full" maxlength="60" placeholder="Group" @bind="_newGroup" /></td>
+                        <td class="py-1 pr-2"><input class="input w-full" maxlength="100" placeholder="New cause" @bind="_newName" /></td>
+                        <td></td>
+                        <td class="py-1"><button class="btn btn-primary btn-sm" disabled="@_busy" @onclick="AddCauseAsync">Add</button></td>
+                    </tr>
+                </tbody>
+            </table>
+            @if (_causeError is not null) { <p class="mt-2 text-rose-600">@_causeError</p> }
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private bool _loaded, _busy, _settingsDone;
+    private IncidentSettings _s = new();
+    private List<IncidentCause> _causes = [];
+    private RiskMatrix _matrix = RiskMatrix.Default;
+    private string? _settingsError, _causeError;
+    private string _newGroup = "", _newName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _matrix = await Svc.MatrixAsync(_companyId);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _s = await Svc.SettingsAsync(_companyId);
+        _causes = await Svc.CausesAsync(_companyId, includeInactive: true);
+    }
+
+    /// <summary>"Extreme 7 days, High 14 days..." so the list can be read against the company's own band names.</summary>
+    private string Hint()
+    {
+        var days = IncidentLimits.ParseDays(_s.InvestigationDays);
+        var bands = _matrix.Bands.Select(b => b.Name).Reverse().ToList();
+        var parts = bands.Select((b, i) => i < days.Count ? $"{b}: {days[i]} days" : $"{b}: none needed");
+        return string.Join("; ", parts);
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        _settingsError = null; _settingsDone = false; _busy = true;
+        try { await Svc.SaveSettingsAsync(_companyId, _s); await LoadAsync(); _settingsDone = true; }
+        catch (InvalidOperationException ex) { _settingsError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task SaveCauseAsync(IncidentCause cause)
+    {
+        _causeError = null; _busy = true;
+        try { await Svc.SaveCauseAsync(_companyId, cause.Id, cause.Name, cause.Group, cause.IsActive); await LoadAsync(); }
+        catch (InvalidOperationException ex) { _causeError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task AddCauseAsync()
+    {
+        _causeError = null; _busy = true;
+        try { await Svc.SaveCauseAsync(_companyId, null, _newName, _newGroup, true); (_newName, _newGroup) = ("", ""); await LoadAsync(); }
+        catch (InvalidOperationException ex) { _causeError = ex.Message; }
+        finally { _busy = false; }
+    }
+}

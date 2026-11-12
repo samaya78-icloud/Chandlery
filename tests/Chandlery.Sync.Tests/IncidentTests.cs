@@ -418,4 +418,108 @@ public class IncidentTests : IAsyncLifetime
         Assert.True(await db.IncidentCauses.CountAsync() >= 15);
         Assert.Equal("7,14,30,60", (await db.IncidentSettingsRows.SingleAsync()).InvestigationDays);
     }
+
+    // ---- what each side is offered ----
+
+    [Fact]
+    public async Task EachStepIsOfferedOnlyWhenItWouldBeAccepted_OnEachSide()
+    {
+        var report = await SubmittedAsync();                                                                       // Medium High: an investigation is required
+        var office = (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.Can;
+        Assert.True(office.IsOffice && office.OpenInvestigation && office.Notify && office.WriteInvestigation);
+        Assert.False(office.SkipInvestigation);                                                                    // a report of this band needs one
+        Assert.False(office.Close || office.Reopen || office.Review || office.Edit || office.Submit);
+        var master = (await _vessel.GetAsync(_s.CompanyId, report.Id, As(_master)))!.Can;
+        Assert.True(master.Review && master.Edit && master.AddAction && master.Withdraw && master.Findings);
+        Assert.False(master.OpenInvestigation || master.Close || master.Notify || master.WriteInvestigation);
+        var reporter = (await _vessel.GetAsync(_s.CompanyId, report.Id, As(_reporter)))!.Can;
+        Assert.True(reporter.Edit && reporter.Supplement && reporter.Withdraw);
+        Assert.False(reporter.Review || reporter.AddAction);
+
+        await _vessel.ReviewAsync(_s.CompanyId, report.Id, As(_master), "ok");
+        await _s.SettleUntilQuietAsync();
+        Assert.False((await _vessel.GetAsync(_s.CompanyId, report.Id, As(_reporter)))!.Can.Edit);                  // locked after the review
+        await _shore.OpenInvestigationAsync(_s.CompanyId, report.Id, _s.User);
+        var opened = (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.Can;
+        Assert.False(opened.OpenInvestigation);
+        Assert.True(opened.WriteInvestigation && !opened.Close);                                                   // not finished: closing is not offered
+
+        var cause = (await _shore.CausesAsync(_s.CompanyId)).First().Name;
+        await _shore.SaveInvestigationAsync(_s.CompanyId, report.Id, _s.User, new InvestigationInput("Facts", "", [cause], "", "", IncidentAssessmentFinding.Adequate, "", "", true));
+        Assert.True((await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.Can.Close);
+        await _shore.CloseAsync(_s.CompanyId, report.Id, _s.User, "Done");
+        var closed = (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.Can;
+        Assert.True(closed.Reopen);
+        Assert.False(closed.Close || closed.WriteInvestigation || closed.OpenInvestigation || closed.AddAction || closed.Withdraw);
+    }
+
+    [Fact]
+    public async Task ALowReportCanHaveItsInvestigationWaived_AndThenNoInvestigationIsWritten()
+    {
+        var low = await SubmittedAsync(Input(potential: 1, likelihood: 1));
+        Assert.True((await _shore.GetAsync(_s.CompanyId, low.Id, _s.User))!.Can.SkipInvestigation);
+        await _shore.SkipInvestigationAsync(_s.CompanyId, low.Id, _s.User, "Nothing to learn beyond the toolbox talk.");
+        var can = (await _shore.GetAsync(_s.CompanyId, low.Id, _s.User))!.Can;
+        Assert.False(can.OpenInvestigation || can.SkipInvestigation || can.WriteInvestigation);
+        Assert.Contains("No investigation was needed", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveInvestigationAsync(_s.CompanyId, low.Id, _s.User,
+            new InvestigationInput("Facts", "", [], "", "", IncidentAssessmentFinding.NotLooked, "", "", false)))).Message);
+    }
+
+    // ---- the queue ----
+
+    [Fact]
+    public async Task TheQueueHoldsWhatWaitsForTheOffice_OverdueFirst_AndLeavesOutWhatIsDealtWith()
+    {
+        var unreviewed = await SubmittedAsync(Input(potential: 3, likelihood: 3));                                 // Medium, 60 days
+        var reviewed = await SubmittedAsync(Input(potential: 4, likelihood: 3));                                   // Medium High, 30 days
+        var investigating = await SubmittedAsync(Input(potential: 4, likelihood: 4));                              // High, 14 days
+        var late = await SubmittedAsync(Input(potential: 5, likelihood: 4));                                       // Extreme, 7 days
+        var done = await SubmittedAsync(Input(potential: 1, likelihood: 1));
+        foreach (var r in new[] { reviewed, investigating, late, done }) await _vessel.ReviewAsync(_s.CompanyId, r.Id, As(_master), "ok");
+        await _s.SettleUntilQuietAsync();
+        await _shore.OpenInvestigationAsync(_s.CompanyId, investigating.Id, _s.User);
+        await _shore.OpenInvestigationAsync(_s.CompanyId, late.Id, _s.User);
+        await _shore.SkipInvestigationAsync(_s.CompanyId, done.Id, _s.User, "Nothing to investigate");
+        await _shore.CloseAsync(_s.CompanyId, done.Id, _s.User, "Closed");
+
+        // The extreme report was submitted a month ago, so its investigation is overdue (the vessel owns the report, so the date is moved there and travels up).
+        await using (var db = await _s.VesselFactory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = _s.CompanyId;
+            var row = await db.Incidents.SingleAsync(i => i.Id == late.Id);
+            row.SubmittedAt = DateTime.UtcNow.AddDays(-30);
+            await db.SaveChangesAsync();
+        }
+        await _s.SettleUntilQuietAsync();
+
+        var queue = await _shore.QueueAsync(_s.CompanyId, _s.User);
+        Assert.Equal([late.Id, investigating.Id, reviewed.Id, unreviewed.Id], queue.Select(r => r.Incident.Id));       // the overdue first, then by the date due
+        Assert.True(queue[0].InvestigationOverdue);
+        Assert.All(queue.Skip(1), r => Assert.False(r.InvestigationOverdue));
+        Assert.Equal([IncidentStatus.Investigating, IncidentStatus.Investigating, IncidentStatus.Reviewed, IncidentStatus.Reported], queue.Select(r => r.Status));
+        Assert.Equal(DateTime.UtcNow.AddDays(-30).Date.AddDays(7), queue[0].Due!.Value.Date);                                  // submitted a month ago, 7 days for an Extreme report
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.QueueAsync(_s.CompanyId, As(_master)));      // the queue is the office's
+    }
+
+    // ---- the printed report ----
+
+    [Fact]
+    public async Task TheReportMakesAPdf_WithAFileNameFromItsNumber()
+    {
+        var injured = new IncidentPersonInput(_cook.Id, _cook.FullName, "Cook", "", IncidentPersonRole.Injured, "Burn", "Left hand", IncidentTreatment.FirstAid, 2);
+        var report = await SubmittedAsync(Input(IncidentKind.InjuryIllness, actual: 2, potential: 3, likelihood: 3, persons: [injured]));
+        await _vessel.AddSupplementAsync(_s.CompanyId, report.Id, As(_reporter), "Treated by the Chief Officer.");
+        await _vessel.ReviewAsync(_s.CompanyId, report.Id, As(_master), "ok");
+        await _s.SettleUntilQuietAsync();
+        var detail = (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!;
+
+        var pdf = IncidentPdf.Build(detail, "Test Shipping");
+        Assert.True(pdf.Length > 1500);
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(pdf, 0, 4));
+        var name = IncidentPdf.FileName(detail);
+        Assert.StartsWith("incident-", name);
+        Assert.EndsWith(".pdf", name);
+        Assert.DoesNotContain(" ", name);
+    }
 }

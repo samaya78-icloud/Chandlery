@@ -28,10 +28,16 @@
                 <svg class="nav-group-chevron" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <div class="nav-group-items">
+                @{ var section = ""; }
                 @foreach (var item in items)
                 {
                     var badge = item.Badge;
-                    <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" or "/tanks" or "/rest" or "/projects" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
+                    @if (item.Section != section)
+                    {
+                        section = item.Section;
+                        @if (section != "") { <div class="nav-section-title">@section</div> }
+                    }
+                    <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" or "/tanks" or "/rest" or "/incidents" or "/projects" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
                         <span class="nav-icon">@IconFor(item.Icon)</span>
                         <span class="nav-label">@item.Label</span>
                         @if (badge > 0)

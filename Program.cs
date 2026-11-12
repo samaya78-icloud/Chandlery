@@ -399,6 +399,19 @@ app.MapGet("/rest/table/{vesselId:guid}/pdf", async (Guid vesselId, int? version
     return Results.File(ArrangementPdf.Build(doc), "application/pdf", name + ".pdf");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
+// An incident report as a PDF, as the person asking may see it (the reporter their own, the Master the vessel's, the office any). Works onboard and ashore.
+app.MapGet("/incidents/{incidentId:guid}/pdf", async (Guid incidentId, HttpContext http, IncidentService incidents, RiskLibraryService library, IDbContextFactory<ChandleryDbContext> factory) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    IncidentDetail? detail;
+    try { detail = await incidents.GetAsync(companyId, incidentId, Actor.From(http.User)); }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    if (detail is null) return Results.NotFound();
+    await using var db = await factory.CreateDbContextAsync();
+    var company = await db.Companies.IgnoreQueryFilters().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+    return Results.File(IncidentPdf.Build(detail, company, await library.GetMatrixAsync(companyId)), "application/pdf", IncidentPdf.FileName(detail));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
 // A seafarer's record of hours of work or rest for a month (appendix 4) as a PDF. Onboard a seafarer gets their own, the Master and crew admins anyone's; the office any.
 app.MapGet("/rest/sheet/{vesselId:guid}/{crewId:guid}/{month}/pdf", async (Guid vesselId, Guid crewId, string month, HttpContext http, RestHoursService rest, RestReviewService review) =>
 {
