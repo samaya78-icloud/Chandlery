@@ -1,0 +1,42 @@
+# 12a. Incidents: plan (implements spec 12 in stages)
+
+Status: **started 2026-11-12 ("commit push and proceed further": the order in 11b was approved and the spec's open questions were left to the recommended answers below). B1 built 2026-11-12, uncommitted:** `Models/Incidents.cs`, `Services/IncidentRules.cs` (pure: severity and band, urgency, late flag, days to investigate, repeats, shared lesson without names, close blockers, status), `Services/IncidentService.cs` (draft, submit, supplement, Master review with severity change, vessel findings, withdraw, investigation versions, skip with a reason, actions as Worklist tasks, notification record, close and reopen, lists, lessons, settings and causes with defaults), sync wiring (`Incident` with persons and supplements, `IncidentEvent`, `IncidentInvestigation`; causes and settings as master data; urgent lane), module "Incidents", reference `INC`, migration `Incidents` (seven tables). 46 pure and 16 two-database tests pass.** Builds on the patterns proven in Risk Assessment, Tank Inspection and rest hours: a document owned by one side, review and decisions as separate append-only records, state worked out by pure functions, master data for lists, a module switch, two-database tests.
+
+## 1. Answers used for the open questions (recommended in spec 12; change any of them and the plan follows)
+1. **Types and severity:** the default report types as a fixed list in code (the spec's configurable list is deferred: a company that needs its own classes changes the code list once, not per company); severity is the company's risk matrix: **actual consequence** 0 to 5 (0 for no harm), **potential consequence** 1 to 5, and **likelihood of it happening again** 1 to 5. The band is the matrix band of (the higher consequence x likelihood), stored on the report when it is submitted so a later change to the matrix never rewrites history.
+2. **Who investigates:** the band proposes (the due days by band in the settings) and the office confirms by opening the investigation.
+3. **Anonymity:** a per-company setting, off by default; when on, the reporter may choose that the office sees "crew member" (the Master and the vessel still see the name).
+4. **Statutory notifications:** recorded only (who, when, reference); no defaults for authorities until the flag states are named.
+5. **Rates:** lost-time injury frequency and total recordable case frequency per 1,000,000 hours, with the definitions written on the page and configurable text; hours from Rest Hours where on, else typed per month (stage B4).
+6. **Existing data:** no import in the first version.
+7. **Chat:** after spec 10 is built; a report has a notes line meanwhile.
+
+## 2. The core idea
+- **The report** (`Incident`, with its persons and supplements) is a document the vessel writes (or the office, for a vessel, flagged). It is a draft until submitted; after the Master's review the reporter's text is locked and additions are dated supplements.
+- **Everything that happens to it afterwards is an appended event** (`IncidentEvent`): reviewed, investigation opened, no investigation needed, closed, reopened, withdrawn, notification recorded, a vessel's own findings. Vessel events are written onboard, office events ashore; neither side edits the other's.
+- **The investigation** (`IncidentInvestigation`) is the office's: appended versions, the newest counts, so a changed finding never hides the earlier one.
+- **Actions are Worklist tasks** linked to the report (link type `incident`); the report is not closed while one is open.
+- **Status is worked out** from the report, its events, the newest investigation and the open actions by `IncidentStatusRules`, the same on both sides.
+- **Lists are master data** (`IncidentCause`, `IncidentSettings`), the office's, copied to every vessel.
+
+## 3. What syncs
+| Record | Writer | Direction | Kind |
+|---|---|---|---|
+| Root causes, settings | office | to every vessel | master data |
+| Incident with persons and supplements | the side that made it (the vessel normally) | both ways for the vessel | document |
+| Master review, withdrawal, vessel findings | vessel | up | append-only event |
+| Investigation opened or skipped, closing, reopening, notification record | office | down | append-only event |
+| Investigation | office | down | append-only versions |
+Lanes: Transaction normally; **Urgent** for a report whose stored `IsUrgent` is set when it is submitted (injury with days lost or an evacuation, any pollution report, or a band in the top two); Master for the lists. A vessel holds only its own reports.
+
+## 4. Stages (each ends with two-database tests and your go-ahead to commit)
+**B1. Foundation.** Tables and migration; the pure rules (`IncidentRules`: band, urgency, late flag, due date and overdue, repeats, lesson view without persons, close blockers; `IncidentStatusRules`); the service (draft, edit while draft, submit, supplement, Master review, withdraw, investigation versions, open, skip with a reason, actions as Worklist tasks, close, reopen, notification record, reading for each role); lists and settings as master data with defaults; sync wiring and baseline; module switch "Incidents"; reference number `INC`; two-database tests.
+**B2. Vessel screens.** Report an incident (a short form first, severity after), my reports, the vessel's reports for the Master, the report page with its timeline, Master review, supplements, nav through the nav catalog.
+**B3. Office screens.** Fleet reports with filters, the report page with the investigation panel and repeats, the investigation queue, actions, closing, settings (causes, thresholds, roles), lessons learned (shared reports without persons), the office's PDF of a report.
+**B4. Statistics and reports.** Per vessel and fleet counts by type, severity and month; rates with the exposure hours; near-miss ratio; open and overdue by vessel; vessels with no reports in N months; CSV and PDF; the dashboard module card, attention items and nav counts.
+**B5. Walkthrough and mutation check.** One end-to-end test across a real office and vessel (report, review, investigate, actions, close, reopen; a shared lesson without names; the urgent lane); then deliberate changes to `IncidentRules` against the pure tests, as for the rest-hours engine.
+
+## 5. Risks
+- **Personal and medical data.** Injury detail is limited to the Master and the safety roles and left out of shared lessons; a test proves the lesson projection never contains a name or an injury.
+- **Two sides writing one report.** Settled by the split above: the document is the reporter's, everything else is appended by its own side.
+- **A culture risk, not a technical one.** Reporting must stay quick; the first form is short and severity is added afterwards.

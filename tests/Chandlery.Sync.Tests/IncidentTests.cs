@@ -1,0 +1,421 @@
+using Chandlery.Models;
+using Chandlery.Services;
+using Chandlery.Services.Sync;
+using Marine.Sync;
+using Microsoft.EntityFrameworkCore;
+
+namespace Chandlery.Sync.Tests;
+
+/// <summary>Incident reports between a vessel and the office: who writes each step, what travels, and that both sides read the same status.</summary>
+public class IncidentTests : IAsyncLifetime
+{
+    private readonly TwoSites _s = new();
+    private IncidentService _shore = null!, _vessel = null!;
+    private WorklistService _shoreWorklist = null!, _vesselWorklist = null!;
+    private CrewMember _reporter = null!, _master = null!, _cook = null!;
+
+    public async Task InitializeAsync()
+    {
+        await _s.InitializeAsync();
+        _shoreWorklist = new WorklistService(_s.ShoreFactory);
+        _vesselWorklist = new WorklistService(_s.VesselFactory);
+        _shore = new IncidentService(_s.ShoreFactory, _shoreWorklist);
+        _vessel = new IncidentService(_s.VesselFactory, _vesselWorklist);
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            foreach (var module in new[] { PolicyModules.Incidents, PolicyModules.Worklist })
+                db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = module, Enabled = true });
+            await db.SaveChangesAsync();
+        }
+        _reporter = await SignOnAsync("I1001", "Third Officer");
+        _master = await SignOnAsync("I1002", "Master", master: true);
+        _cook = await SignOnAsync("I1003", "Cook");
+    }
+
+    public Task DisposeAsync() => _s.DisposeAsync();
+
+    private async Task<CrewMember> SignOnAsync(string code, string rank, bool master = false)
+    {
+        var crew = await _s.ShoreCrew.SaveAsync(_s.CompanyId, new CrewInput(null, code, $"Name of {code}", rank, "Singaporean", null, "Passport", "E1234567X", null, "", "", _s.VesselId, null, true, false, master), _s.User);
+        await _s.SettleUntilQuietAsync();
+        return crew;
+    }
+
+    private static Actor As(CrewMember crew) => new(crew.UserId, crew.FullName);
+
+    private static IncidentInput Input(IncidentKind kind = IncidentKind.NearMiss, int actual = 0, int potential = 4, int likelihood = 3, bool share = false, bool anonymous = false,
+        IReadOnlyList<IncidentPersonInput>? persons = null, DateTime? occurred = null)
+        => new(kind, occurred ?? DateTime.UtcNow.AddHours(-3), "Engine room, second platform", IncidentShipStatus.AtSea, "Calm", "A wrench fell from the grating above the purifier.", "Area cleared and the wrench secured.",
+            null, "Purifier", "", anonymous, share, actual, potential, likelihood, persons ?? []);
+
+    private async Task<Incident> SubmittedAsync(IncidentInput? input = null)
+    {
+        var draft = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, input ?? Input());
+        var submitted = await _vessel.SubmitAsync(_s.CompanyId, draft.Id, As(_reporter));
+        await _s.SettleUntilQuietAsync();
+        return submitted;
+    }
+
+    private async Task<IncidentStatus> StatusAsync(IncidentService side, Guid id, Actor who) => (await side.GetAsync(_s.CompanyId, id, who))!.Status;
+
+    // ---- the whole way ----
+
+    [Fact]
+    public async Task AReportGoesFromDraftToClosed_AndBothSidesAgreeAtEveryStep()
+    {
+        var draft = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, Input());
+        Assert.Contains("-INC-", draft.Code);
+        Assert.Equal(IncidentStatus.Draft, await StatusAsync(_vessel, draft.Id, As(_reporter)));
+
+        await _vessel.SubmitAsync(_s.CompanyId, draft.Id, As(_reporter));
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.Reported, await StatusAsync(_shore, draft.Id, _s.User));
+
+        await _vessel.ReviewAsync(_s.CompanyId, draft.Id, As(_master), "Facts confirmed with the Chief Engineer.");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.Reviewed, await StatusAsync(_shore, draft.Id, _s.User));                // Medium High: an investigation is required, none opened yet
+
+        await _shore.OpenInvestigationAsync(_s.CompanyId, draft.Id, _s.User, "Superintendent to visit");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.Investigating, await StatusAsync(_vessel, draft.Id, As(_master)));
+
+        var cause = (await _shore.CausesAsync(_s.CompanyId)).First();
+        await _shore.SaveInvestigationAsync(_s.CompanyId, draft.Id, _s.User, new InvestigationInput("Grating clip missing.", "Tool left unsecured.", [], "", "", IncidentAssessmentFinding.NotLooked, "", "Superintendent", false));
+        var finished = await _shore.SaveInvestigationAsync(_s.CompanyId, draft.Id, _s.User, new InvestigationInput("Grating clip missing.", "Tool left unsecured.", [cause.Name], "Why 1: no tool lanyard.", "", IncidentAssessmentFinding.Inadequate, "Lanyards for tools at height.", "Superintendent", true));
+        Assert.Equal(2, finished.Version);
+
+        var action = await _shore.AddActionAsync(_s.CompanyId, draft.Id, _s.User, new NewIncidentAction("Fit lanyards to the engine room tool kits", "All kits.", DateTime.UtcNow.AddDays(14)));
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.ActionsOpen, await StatusAsync(_shore, draft.Id, _s.User));
+        Assert.Equal(IncidentStatus.ActionsOpen, await StatusAsync(_vessel, draft.Id, As(_master)));
+        Assert.Single((await _vessel.GetAsync(_s.CompanyId, draft.Id, As(_master)))!.Actions);              // the task reached the vessel, linked to the report
+
+        var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.CloseAsync(_s.CompanyId, draft.Id, _s.User, "Done"));
+        Assert.Contains("1 action is still open", blocked.Message);
+
+        await _shoreWorklist.AddEntryAsync(_s.CompanyId, action.Id, new WorklistEntryInput(WorklistEntryType.Status, Status: WorklistStatus.Cancelled, Text: "Done another way"), _s.User);
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.ReadyToClose, await StatusAsync(_shore, draft.Id, _s.User));
+        await _shore.RecordNotificationAsync(_s.CompanyId, draft.Id, _s.User, "Class told 12 Nov, ref C-4411");
+        await _shore.CloseAsync(_s.CompanyId, draft.Id, _s.User, "Lanyards fitted and checked.");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.Closed, await StatusAsync(_shore, draft.Id, _s.User));
+        Assert.Equal(IncidentStatus.Closed, await StatusAsync(_vessel, draft.Id, As(_master)));
+
+        await _shore.ReopenAsync(_s.CompanyId, draft.Id, _s.User, "Another tool fell: check the lanyard fitting.");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.ReadyToClose, await StatusAsync(_vessel, draft.Id, As(_master)));
+
+        // Both sides hold the same history, in the same order.
+        var onboard = (await _vessel.GetAsync(_s.CompanyId, draft.Id, As(_master)))!;
+        var ashore = (await _shore.GetAsync(_s.CompanyId, draft.Id, _s.User))!;
+        Assert.Equal(ashore.Events.Select(e => e.Kind), onboard.Events.Select(e => e.Kind));
+        Assert.Equal([IncidentEventKind.Reviewed, IncidentEventKind.InvestigationOpened, IncidentEventKind.NotificationRecorded, IncidentEventKind.Closed, IncidentEventKind.Reopened], ashore.Events.Select(e => e.Kind));
+        Assert.Equal(2, onboard.Investigations.Count);
+        Assert.Equal(finished.Id, onboard.Investigation!.Id);                                              // the newest version counts
+    }
+
+    // ---- who may do what ----
+
+    [Fact]
+    public async Task OnlyTheRightPeopleDoEachStep()
+    {
+        var draft = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, Input());
+
+        Assert.Contains("reporter or the Master", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_cook), draft.Id, Input()))).Message);
+        Assert.Contains("reporter or the Master", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SubmitAsync(_s.CompanyId, draft.Id, As(_cook)))).Message);
+        Assert.Null(await _vessel.GetAsync(_s.CompanyId, draft.Id, As(_cook)));                              // someone else's report is not theirs to read
+        Assert.NotNull(await _vessel.GetAsync(_s.CompanyId, draft.Id, As(_master)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SubmitAsync(_s.CompanyId, draft.Id, _s.User));                          // the office does not write a vessel's report
+
+        await _vessel.SubmitAsync(_s.CompanyId, draft.Id, As(_reporter));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ReviewAsync(_s.CompanyId, draft.Id, As(_reporter), "ok"));          // the reporter is not the Master
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ReviewAsync(_s.CompanyId, draft.Id, As(_cook), "ok"));
+        await _s.SettleUntilQuietAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.ReviewAsync(_s.CompanyId, draft.Id, _s.User, "ok"));                   // the office does not review for the Master
+
+        // Until the Master reviews, the reporter can still correct the text; after, only a supplement is added.
+        var corrected = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), draft.Id, Input(potential: 3));
+        Assert.Equal(3, corrected.PotentialConsequence);
+        await _vessel.ReviewAsync(_s.CompanyId, draft.Id, As(_master), "Reviewed");
+        Assert.Contains("Add a supplement", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), draft.Id, Input()))).Message);
+        Assert.Contains("already", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ReviewAsync(_s.CompanyId, draft.Id, As(_master), "again"))).Message);
+        var supplement = await _vessel.AddSupplementAsync(_s.CompanyId, draft.Id, As(_reporter), "The clip was found in the bilge.");
+        Assert.Equal(_reporter.FullName, supplement.ByName);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.AddSupplementAsync(_s.CompanyId, draft.Id, As(_cook), "Not mine to add"));
+        await _s.SettleUntilQuietAsync();
+        Assert.Single((await _shore.GetAsync(_s.CompanyId, draft.Id, _s.User))!.Incident.Supplements);
+
+        // The office's steps are the office's.
+        Assert.Contains("office", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.OpenInvestigationAsync(_s.CompanyId, draft.Id, As(_master)))).Message);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.CloseAsync(_s.CompanyId, draft.Id, As(_master), "x"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveSettingsAsync(_s.CompanyId, new IncidentSettings()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveCauseAsync(_s.CompanyId, null, "Own cause", "", true));
+    }
+
+    [Fact]
+    public async Task WithdrawingNeedsAReason_StaysInTheHistory_AndIsFinal()
+    {
+        var report = await SubmittedAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.WithdrawAsync(_s.CompanyId, report.Id, As(_cook), "Not mine"));
+        Assert.Contains("why", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.WithdrawAsync(_s.CompanyId, report.Id, As(_reporter), " "))).Message);
+
+        await _vessel.WithdrawAsync(_s.CompanyId, report.Id, As(_reporter), "Entered twice");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.Withdrawn, await StatusAsync(_shore, report.Id, _s.User));
+        Assert.Equal(IncidentStatus.Withdrawn, await StatusAsync(_vessel, report.Id, As(_master)));
+        Assert.Contains("withdrawn", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ReviewAsync(_s.CompanyId, report.Id, As(_master), "x"))).Message);
+        Assert.Contains("withdrawn", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.WithdrawAsync(_s.CompanyId, report.Id, As(_master), "again"))).Message);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.OpenInvestigationAsync(_s.CompanyId, report.Id, _s.User));
+    }
+
+    [Fact]
+    public async Task SubmittingNeedsTheFactsTheSeverityAndForAnInjuryTheInjuredPerson()
+    {
+        var empty = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, Input() with { Description = "  " });
+        Assert.Contains("Say what happened", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SubmitAsync(_s.CompanyId, empty.Id, As(_reporter)))).Message);
+
+        var noScore = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, Input(potential: 0));
+        Assert.Contains("could have been", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SubmitAsync(_s.CompanyId, noScore.Id, As(_reporter)))).Message);
+
+        var future = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, Input(occurred: DateTime.UtcNow.AddDays(3)));
+        Assert.Contains("future", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SubmitAsync(_s.CompanyId, future.Id, As(_reporter)))).Message);
+
+        var injury = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, Input(IncidentKind.InjuryIllness, actual: 2));
+        Assert.Contains("injured", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SubmitAsync(_s.CompanyId, injury.Id, As(_reporter)))).Message);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), injury.Id, Input(IncidentKind.InjuryIllness, persons: [new IncidentPersonInput(null, " ", "", "", IncidentPersonRole.Injured)])));
+        await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), injury.Id, Input(IncidentKind.InjuryIllness, actual: 2, persons: [new IncidentPersonInput(_cook.Id, _cook.FullName, "Cook", "", IncidentPersonRole.Injured, "Burn", "Left hand", IncidentTreatment.FirstAid)]));
+        var submitted = await _vessel.SubmitAsync(_s.CompanyId, injury.Id, As(_reporter));
+        Assert.NotNull(submitted.SubmittedAt);
+        Assert.Contains("already", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SubmitAsync(_s.CompanyId, injury.Id, As(_reporter)))).Message);
+    }
+
+    // ---- urgent, late, band ----
+
+    [Fact]
+    public async Task ASeriousReportIsMarkedUrgent_AndGoesUpOnTheUrgentLane_AnOrdinaryOneDoesNot()
+    {
+        var ordinary = await SubmittedAsync(Input(potential: 3, likelihood: 2));
+        Assert.False(ordinary.IsUrgent);
+        Assert.Equal("Medium", ordinary.Band);
+        Assert.Equal(Lane.Transaction, SyncPublisher.LaneFor(ordinary));
+
+        var serious = await SubmittedAsync(Input(IncidentKind.InjuryIllness, actual: 3, potential: 4, likelihood: 5, persons: [new IncidentPersonInput(_cook.Id, _cook.FullName, "Cook", "", IncidentPersonRole.Injured, "Fracture", "Wrist", IncidentTreatment.Hospital, 20)]));
+        Assert.True(serious.IsUrgent);
+        Assert.Equal("Extreme", serious.Band);
+        Assert.Equal(Lane.Urgent, SyncPublisher.LaneFor(serious));
+        Assert.True((await _shore.GetAsync(_s.CompanyId, serious.Id, _s.User))!.Incident.IsUrgent);
+
+        var draft = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), null, Input(IncidentKind.Pollution, potential: 2, likelihood: 2));
+        Assert.Equal(Lane.Transaction, SyncPublisher.LaneFor(draft));                                         // not submitted: nothing is urgent yet
+    }
+
+    [Fact]
+    public async Task TheMasterMayChangeTheSeverityAtReview_WhichRescoresTheBandAndTheLane()
+    {
+        var report = await SubmittedAsync(Input(potential: 2, likelihood: 2));
+        Assert.Equal(("Low", false), (report.Band, report.IsUrgent));
+        await _vessel.ReviewAsync(_s.CompanyId, report.Id, As(_master), "Worse than first thought.", (Actual: 2, Potential: 5, Likelihood: 4));
+        await _s.SettleUntilQuietAsync();
+        var seen = (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!;
+        Assert.Equal(("Extreme", true), (seen.Incident.Band, seen.Incident.IsUrgent));
+        Assert.Equal(IncidentStatus.Reviewed, seen.Status);
+        Assert.True(seen.InvestigationRequired);
+        Assert.Equal(report.SubmittedAt!.Value.Date.AddDays(7), seen.InvestigationDue);
+    }
+
+    [Fact]
+    public async Task ALateReportIsFlagged_OnBothSides()
+    {
+        var late = await SubmittedAsync(Input(occurred: DateTime.UtcNow.AddHours(-30)));
+        var fresh = await SubmittedAsync(Input(occurred: DateTime.UtcNow.AddHours(-2)));
+        Assert.True((await _shore.GetAsync(_s.CompanyId, late.Id, _s.User))!.ReportedLate);
+        Assert.True((await _vessel.GetAsync(_s.CompanyId, late.Id, As(_master)))!.ReportedLate);
+        Assert.False((await _shore.GetAsync(_s.CompanyId, fresh.Id, _s.User))!.ReportedLate);
+    }
+
+    // ---- the investigation ----
+
+    [Fact]
+    public async Task TheInvestigationNeedsFactsAndARootCause_FromTheCompanysList_AndIsAppendedNotEdited()
+    {
+        var report = await SubmittedAsync();
+        await _vessel.ReviewAsync(_s.CompanyId, report.Id, As(_master), "ok");
+        await _s.SettleUntilQuietAsync();
+        var cause = (await _shore.CausesAsync(_s.CompanyId)).First().Name;
+
+        InvestigationInput Make(string facts, string[] causes, bool finished) => new(facts, "", causes, "", "", IncidentAssessmentFinding.NotLooked, "", "", finished);
+        Assert.Contains("facts", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveInvestigationAsync(_s.CompanyId, report.Id, _s.User, Make("", [cause], true)))).Message);
+        Assert.Contains("root cause", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveInvestigationAsync(_s.CompanyId, report.Id, _s.User, Make("Facts", [], true)))).Message);
+        Assert.Contains("not in the list", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveInvestigationAsync(_s.CompanyId, report.Id, _s.User, Make("Facts", ["Gremlins"], true)))).Message);
+
+        var first = await _shore.SaveInvestigationAsync(_s.CompanyId, report.Id, _s.User, Make("First look", [], false));
+        var second = await _shore.SaveInvestigationAsync(_s.CompanyId, report.Id, _s.User, Make("Second look", [cause.ToUpperInvariant()], false));
+        Assert.Equal((1, 2), (first.Version, second.Version));
+        Assert.Equal(cause, second.RootCauses);                                                               // the company's own spelling, whatever case was asked for
+        await _s.SettleUntilQuietAsync();
+        var onboard = (await _vessel.GetAsync(_s.CompanyId, report.Id, As(_master)))!;
+        Assert.Equal(["First look", "Second look"], onboard.Investigations.Select(v => v.Facts));
+        Assert.Equal(IncidentStatus.Investigating, onboard.Status);
+        Assert.Single(onboard.Events, e => e.Kind == IncidentEventKind.InvestigationOpened);                  // the first save opened it, once
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.OpenInvestigationAsync(_s.CompanyId, report.Id, _s.User));
+    }
+
+    [Fact]
+    public async Task NoInvestigationIsNeededForALowReport_ButNotForASeriousOne()
+    {
+        var low = await SubmittedAsync(Input(potential: 1, likelihood: 1));
+        var serious = await SubmittedAsync(Input(potential: 5, likelihood: 4));
+        foreach (var r in new[] { low, serious }) await _vessel.ReviewAsync(_s.CompanyId, r.Id, As(_master), "ok");
+        await _s.SettleUntilQuietAsync();
+
+        Assert.Contains("needs an investigation", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SkipInvestigationAsync(_s.CompanyId, serious.Id, _s.User, "Not worth it"))).Message);
+        Assert.Contains("why", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SkipInvestigationAsync(_s.CompanyId, low.Id, _s.User, ""))).Message);
+        Assert.Equal(IncidentStatus.ReadyToClose, await StatusAsync(_shore, low.Id, _s.User));               // nothing to investigate, nothing open
+        await _shore.SkipInvestigationAsync(_s.CompanyId, low.Id, _s.User, "A tool dropped on an empty deck; the lanyard rule was repeated at the toolbox talk.");
+        await _shore.CloseAsync(_s.CompanyId, low.Id, _s.User, "Closed");
+        Assert.Contains("investigation is required", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.CloseAsync(_s.CompanyId, serious.Id, _s.User, "Closed"))).Message);
+    }
+
+    [Fact]
+    public async Task ARepeatAtTheSamePlaceIsShownWithTheReport_AndTheThirdSuggestsAReviewOfTheAssessment()
+    {
+        var first = await SubmittedAsync(Input(occurred: DateTime.UtcNow.AddMonths(-3)));
+        var second = await SubmittedAsync(Input(occurred: DateTime.UtcNow.AddMonths(-1)));
+        var third = await SubmittedAsync();
+        var shown = (await _shore.GetAsync(_s.CompanyId, third.Id, _s.User))!;
+        Assert.Equal([second.Id, first.Id], shown.Repeats.Select(r => r.Id));
+        Assert.True(shown.SuggestAssessmentReview);
+        Assert.False((await _shore.GetAsync(_s.CompanyId, second.Id, _s.User))!.SuggestAssessmentReview);       // only one before it
+
+        await _vessel.WithdrawAsync(_s.CompanyId, second.Id, As(_reporter), "Entered twice");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal([first.Id], (await _shore.GetAsync(_s.CompanyId, third.Id, _s.User))!.Repeats.Select(r => r.Id));      // a withdrawn report is not a repeat
+    }
+
+    // ---- who sees what ----
+
+    [Fact]
+    public async Task ACrewMemberListsTheirOwnReports_TheMasterTheVessels_TheOfficeAll()
+    {
+        var mine = await SubmittedAsync();
+        var cooks = await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_cook), null, Input());
+        await _vessel.SubmitAsync(_s.CompanyId, cooks.Id, As(_cook));
+        await _s.SettleUntilQuietAsync();
+
+        Assert.Equal([mine.Id], (await _vessel.ListAsync(_s.CompanyId, As(_reporter))).Select(r => r.Incident.Id));
+        Assert.Equal([cooks.Id], (await _vessel.ListAsync(_s.CompanyId, As(_cook))).Select(r => r.Incident.Id));
+        Assert.Equal(2, (await _vessel.ListAsync(_s.CompanyId, As(_master))).Count);
+        Assert.Equal(2, (await _shore.ListAsync(_s.CompanyId, _s.User)).Count);
+        Assert.Equal(2, (await _shore.ListAsync(_s.CompanyId, _s.User, new IncidentFilter(Status: IncidentStatus.Reported, Text: "INC"))).Count);
+        Assert.Empty(await _shore.ListAsync(_s.CompanyId, _s.User, new IncidentFilter(Status: IncidentStatus.Closed)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ListAsync(_s.CompanyId, _s.User));                  // the office user is no crew member onboard
+    }
+
+    [Fact]
+    public async Task TheOfficeSeesACrewMemberWhereTheReporterAskedAndTheCompanyAllows_TheVesselAlwaysSeesTheName()
+    {
+        var report = await SubmittedAsync(Input(anonymous: true));
+        Assert.Equal(_reporter.FullName, (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.ReporterName);                // the company has not allowed it
+
+        var settings = await _shore.SettingsAsync(_s.CompanyId);
+        settings.AllowAnonymousToOffice = true;
+        await _shore.SaveSettingsAsync(_s.CompanyId, settings);
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal("A crew member", (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.ReporterName);
+        Assert.Equal("A crew member", (await _shore.ListAsync(_s.CompanyId, _s.User)).Single().ReporterName);
+        Assert.Equal(_reporter.FullName, (await _vessel.GetAsync(_s.CompanyId, report.Id, As(_master)))!.ReporterName);
+    }
+
+    [Fact]
+    public async Task ASharedLessonReachesEveryoneWithoutNames_OnlyOnceReviewed_AndNotWhenWithdrawn()
+    {
+        var injured = new IncidentPersonInput(_cook.Id, _cook.FullName, "Cook", "", IncidentPersonRole.Injured, "Burn", "Left hand", IncidentTreatment.FirstAid);
+        var shared = await SubmittedAsync(Input(IncidentKind.InjuryIllness, actual: 1, potential: 3, likelihood: 2, share: true, persons: [injured]));
+        var notShared = await SubmittedAsync(Input());
+
+        Assert.Empty(await _vessel.LessonsAsync(_s.CompanyId, As(_cook)));                                       // not reviewed yet
+        await _vessel.ReviewAsync(_s.CompanyId, shared.Id, As(_master), "ok");
+        await _vessel.ReviewAsync(_s.CompanyId, notShared.Id, As(_master), "ok");
+        await _s.SettleUntilQuietAsync();
+
+        foreach (var (side, who) in new[] { (_vessel, As(_cook)), (_shore, _s.User) })
+        {
+            var lesson = Assert.Single(await side.LessonsAsync(_s.CompanyId, who));
+            Assert.Equal(shared.Id, lesson.IncidentId);
+            var text = System.Text.Json.JsonSerializer.Serialize(lesson);
+            Assert.DoesNotContain(_cook.FullName, text);
+            Assert.DoesNotContain(_reporter.FullName, text);
+            Assert.DoesNotContain("Burn", text);
+        }
+
+        await _vessel.WithdrawAsync(_s.CompanyId, shared.Id, As(_master), "Wrong vessel");
+        Assert.Empty(await _vessel.LessonsAsync(_s.CompanyId, As(_cook)));
+    }
+
+    // ---- reports for another vessel ----
+
+    [Fact]
+    public async Task AVesselNeverHoldsAnotherVesselsReports_AndAReportTheOfficeEntersIsTheOfficesToChange()
+    {
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.OtherVesselId, Module = PolicyModules.Incidents, Enabled = true });
+            await db.SaveChangesAsync();
+        }
+        await _s.SettleUntilQuietAsync();
+        var other = await _shore.SaveDraftAsync(_s.CompanyId, _s.OtherVesselId, _s.User, null, Input());
+        await _shore.SubmitAsync(_s.CompanyId, other.Id, _s.User);
+        var ours = await _shore.SaveDraftAsync(_s.CompanyId, _s.VesselId, _s.User, null, Input());
+        await _shore.SubmitAsync(_s.CompanyId, ours.Id, _s.User);
+        await _s.SettleUntilQuietAsync();
+
+        await using (var db = await _s.VesselFactory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = _s.CompanyId;
+            var held = await db.Incidents.IgnoreQueryFilters().Select(i => i.Id).ToListAsync();
+            Assert.Contains(ours.Id, held);
+            Assert.DoesNotContain(other.Id, held);
+        }
+
+        // The vessel can review what the office entered, but cannot rewrite it.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_master), ours.Id, Input()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.AddSupplementAsync(_s.CompanyId, ours.Id, As(_master), "Changed my mind"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ReviewAsync(_s.CompanyId, ours.Id, As(_master), "Reviewed", (Actual: 1, Potential: 1, Likelihood: 1)));
+        await _vessel.ReviewAsync(_s.CompanyId, ours.Id, As(_master), "Reviewed");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(IncidentStatus.Reviewed, await StatusAsync(_shore, ours.Id, _s.User));
+    }
+
+    // ---- settings and lists ----
+
+    [Fact]
+    public async Task TheSettingsAndTheCausesAreTheOfficesAndReachTheVessel()
+    {
+        var bad = await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveSettingsAsync(_s.CompanyId, new IncidentSettings { LateReportHours = 0 }));
+        Assert.Contains("late", bad.Message);
+        await _shore.SaveSettingsAsync(_s.CompanyId, new IncidentSettings { LateReportHours = 12, RepeatWindowMonths = 6, InvestigationDays = "5, 10", UrgentForLostTime = false, UrgentForPollution = true, AllowAnonymousToOffice = true });
+        var added = await _shore.SaveCauseAsync(_s.CompanyId, null, "Crane signalling", "Operations", true);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveCauseAsync(_s.CompanyId, null, "Crane signalling", "Operations", true));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveCauseAsync(_s.CompanyId, null, "A;B", "", true));
+        await _s.SettleUntilQuietAsync();
+
+        var onboard = await _vessel.SettingsAsync(_s.CompanyId);
+        Assert.Equal((12, 6, "5,10", false, true), (onboard.LateReportHours, onboard.RepeatWindowMonths, onboard.InvestigationDays, onboard.UrgentForLostTime, onboard.AllowAnonymousToOffice));
+        Assert.Contains(await _vessel.CausesAsync(_s.CompanyId), c => c.Id == added.Id);
+
+        await _shore.SaveCauseAsync(_s.CompanyId, added.Id, "Crane signalling", "Operations", false);
+        await _s.SettleUntilQuietAsync();
+        Assert.DoesNotContain(await _vessel.CausesAsync(_s.CompanyId), c => c.Id == added.Id);
+        Assert.Contains(await _vessel.CausesAsync(_s.CompanyId, includeInactive: true), c => c.Id == added.Id);
+    }
+
+    [Fact]
+    public async Task ANewCompanyStartsWithTheDefaultCausesAndSettings()
+    {
+        await using var db = await _s.ShoreFactory.CreateDbContextAsync();
+        db.CurrentCompanyId = _s.CompanyId;
+        Assert.True(await db.IncidentCauses.CountAsync() >= 15);
+        Assert.Equal("7,14,30,60", (await db.IncidentSettingsRows.SingleAsync()).InvestigationDays);
+    }
+}

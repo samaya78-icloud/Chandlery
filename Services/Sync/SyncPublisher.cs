@@ -153,6 +153,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         JobDeferralRequest { IsCritical: true } => Lane.Urgent,
         JobDeferralDecision { IsCritical: true } => Lane.Urgent,
         TankInspection { HasBadRating: true, SubmissionCount: > 0 } => Lane.Urgent,                  // a Bad rating reaches the office at once
+        Incident { IsUrgent: true, SubmittedAt: not null } => Lane.Urgent,                           // a serious report reaches the office at once
         WorklistEntry { Type: WorklistEntryType.Created or WorklistEntryType.Priority } entry when SaysUrgent(entry.Payload) => Lane.Urgent,
         _ => Lane.Transaction,
     };
@@ -176,6 +177,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             || aggregate.Clr == typeof(JobDeferralRequest) || aggregate.Clr == typeof(JobDeferralDecision) || aggregate.Clr == typeof(PlanChangeRequest) || aggregate.Clr == typeof(PlanChangeDecision) || aggregate.Clr == typeof(MachinerySpare)
             || aggregate.Clr == typeof(Tank) || aggregate.Clr == typeof(TankInspection) || aggregate.Clr == typeof(TankInspectionReview)
             || aggregate.Clr == typeof(RiskAssessment) || aggregate.Clr == typeof(RaSignOff)
+            || aggregate.Clr == typeof(Incident) || aggregate.Clr == typeof(IncidentEvent) || aggregate.Clr == typeof(IncidentInvestigation)
             || aggregate.Clr == typeof(Project) || aggregate.Clr == typeof(ProjectStatusEvent) || aggregate.Clr == typeof(ProjectNote) || aggregate.Clr == typeof(ProjectLink) || aggregate.Clr == typeof(ProjectItemRequest) || aggregate.Clr == typeof(ProjectItemDecision))
             return MasterData.ReadGuid(payload, nameof(PlannedJob.VesselId));
         if (aggregate.Clr == typeof(RestEntry) || aggregate.Clr == typeof(RestSignOff) || aggregate.Clr == typeof(RestBreachNote) || aggregate.Clr == typeof(VesselDayStatus) || aggregate.Clr == typeof(WorkArrangementTable) || aggregate.Clr == typeof(WorkArrangementSignOff))
@@ -411,6 +413,9 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.Tanks.IgnoreQueryFilters().Where(t => t.VesselId == scope.VesselId && t.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.RiskAssessments.IgnoreQueryFilters().Where(a => a.VesselId == scope.VesselId && a.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.RaSignOffs.IgnoreQueryFilters().Where(s => s.VesselId == scope.VesselId && s.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.Incidents.IgnoreQueryFilters().Where(i => i.VesselId == scope.VesselId && i.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.IncidentEvents.IgnoreQueryFilters().Where(e => e.VesselId == scope.VesselId && e.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.IncidentInvestigations.IgnoreQueryFilters().Where(v => v.VesselId == scope.VesselId && v.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.Projects.IgnoreQueryFilters().Where(p => p.VesselId == scope.VesselId && p.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.ProjectStatusEvents.IgnoreQueryFilters().Where(e => e.VesselId == scope.VesselId && e.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.ProjectNotes.IgnoreQueryFilters().Where(n => n.VesselId == scope.VesselId && n.OwnerStage == SyncStages.Office), ct);

@@ -52,6 +52,7 @@ builder.Services.AddScoped<RestReviewService>();
 builder.Services.AddScoped<WorkArrangementService>();
 builder.Services.AddScoped<RestFleetService>();
 builder.Services.AddScoped<RestCapacityService>();
+builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<RiskAssessmentService>();
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<RiskLibraryService>();

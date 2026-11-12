@@ -69,6 +69,13 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<TankInspection> TankInspections => Set<TankInspection>();
     public DbSet<TankInspectionResult> TankInspectionResults => Set<TankInspectionResult>();
     public DbSet<TankInspectionReview> TankInspectionReviews => Set<TankInspectionReview>();
+    public DbSet<Incident> Incidents => Set<Incident>();
+    public DbSet<IncidentPerson> IncidentPersons => Set<IncidentPerson>();
+    public DbSet<IncidentSupplement> IncidentSupplements => Set<IncidentSupplement>();
+    public DbSet<IncidentEvent> IncidentEvents => Set<IncidentEvent>();
+    public DbSet<IncidentInvestigation> IncidentInvestigations => Set<IncidentInvestigation>();
+    public DbSet<IncidentCause> IncidentCauses => Set<IncidentCause>();
+    public DbSet<IncidentSettings> IncidentSettingsRows => Set<IncidentSettings>();
     public DbSet<RestRuleSet> RestRuleSets => Set<RestRuleSet>();
     public DbSet<RestEntry> RestEntries => Set<RestEntry>();
     public DbSet<RestSignOff> RestSignOffs => Set<RestSignOff>();
@@ -635,6 +642,85 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<TankInspection>().WithMany().HasForeignKey(r => r.InspectionId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(r => r.InspectionId);
             b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        // ---- incidents (spec 12): the report is one document with its persons and supplements; what happens to it afterwards is appended ----
+        modelBuilder.Entity<Incident>(b =>
+        {
+            b.Property(i => i.Code).HasMaxLength(40);
+            b.Property(i => i.Place).HasMaxLength(200);
+            b.Property(i => i.Weather).HasMaxLength(200);
+            b.Property(i => i.Description).HasMaxLength(4000);
+            b.Property(i => i.ImmediateAction).HasMaxLength(2000);
+            b.Property(i => i.EquipmentName).HasMaxLength(200);
+            b.Property(i => i.RiskAssessmentRef).HasMaxLength(120);
+            b.Property(i => i.ReporterName).HasMaxLength(120);
+            b.Property(i => i.Band).HasMaxLength(40);
+            b.Property(i => i.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(i => i.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(i => i.Persons).WithOne().HasForeignKey(p => p.IncidentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(i => i.Supplements).WithOne().HasForeignKey(s => s.IncidentId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(i => new { i.VesselId, i.OccurredAt });
+            b.HasIndex(i => new { i.CompanyId, i.Code });
+            b.HasQueryFilter(i => CurrentCompanyId == null || i.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<IncidentPerson>(b =>
+        {
+            b.Property(p => p.Name).HasMaxLength(120);
+            b.Property(p => p.Rank).HasMaxLength(80);
+            b.Property(p => p.Company).HasMaxLength(120);
+            b.Property(p => p.InjuryType).HasMaxLength(120);
+            b.Property(p => p.BodyPart).HasMaxLength(120);
+            b.HasIndex(p => p.IncidentId);
+        });
+        modelBuilder.Entity<IncidentSupplement>(b =>
+        {
+            b.Property(s => s.Text).HasMaxLength(2000);
+            b.Property(s => s.ByName).HasMaxLength(120);
+            b.HasIndex(s => s.IncidentId);
+        });
+        modelBuilder.Entity<IncidentEvent>(b =>
+        {
+            b.Property(e => e.Text).HasMaxLength(2000);
+            b.Property(e => e.ByName).HasMaxLength(120);
+            b.Property(e => e.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(e => e.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Incident>().WithMany().HasForeignKey(e => e.IncidentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(e => new { e.IncidentId, e.At });
+            b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<IncidentInvestigation>(b =>
+        {
+            b.Property(v => v.Facts).HasMaxLength(4000);
+            b.Property(v => v.ImmediateCause).HasMaxLength(2000);
+            b.Property(v => v.RootCauses).HasMaxLength(1000);
+            b.Property(v => v.WhyChain).HasMaxLength(2000);
+            b.Property(v => v.ContributingFactors).HasMaxLength(2000);
+            b.Property(v => v.Lessons).HasMaxLength(2000);
+            b.Property(v => v.InvestigatedBy).HasMaxLength(200);
+            b.Property(v => v.ByName).HasMaxLength(120);
+            b.Property(v => v.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(v => v.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(v => v.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Incident>().WithMany().HasForeignKey(v => v.IncidentId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(v => new { v.IncidentId, v.Version }).IsUnique();
+            b.HasQueryFilter(v => CurrentCompanyId == null || v.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<IncidentCause>(b =>
+        {
+            b.Property(c => c.Name).HasMaxLength(100);
+            b.Property(c => c.Group).HasMaxLength(60);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<IncidentSettings>(b =>
+        {
+            b.Property(s => s.InvestigationDays).HasMaxLength(60);
+            b.HasOne<Company>().WithMany().HasForeignKey(s => s.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(s => s.CompanyId).IsUnique();
+            b.HasQueryFilter(s => CurrentCompanyId == null || s.CompanyId == CurrentCompanyId);
         });
 
         // ---- rest hours (spec 11). Crew references are plain ids with the person's name kept beside them: a seafarer who signs off is removed from
