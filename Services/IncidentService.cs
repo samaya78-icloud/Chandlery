@@ -20,9 +20,12 @@ public sealed record IncidentFilter(Guid? VesselId = null, IncidentStatus? Statu
 
 public sealed record IncidentRow(Incident Incident, IncidentStatus Status, bool InvestigationOverdue, bool ReportedLate, string ReporterName, int OpenActions, string VesselName);
 
+/// <summary>What the person looking at a report may do with it. The same rules the service enforces, so a page offers only what will be accepted.</summary>
+public sealed record IncidentCan(bool IsOffice, bool Edit, bool Submit, bool Review, bool Supplement, bool Findings, bool Withdraw, bool AddAction);
+
 public sealed record IncidentDetail(Incident Incident, string VesselName, IncidentStatus Status, IReadOnlyList<IncidentEvent> Events, IReadOnlyList<IncidentInvestigation> Investigations,
     IncidentInvestigation? Investigation, IReadOnlyList<WorklistTask> Actions, int OpenActions, IReadOnlyList<string> CloseBlockers, DateTime? InvestigationDue, bool InvestigationRequired,
-    bool CanSkipInvestigation, bool InvestigationOverdue, bool ReportedLate, string ReporterName, IReadOnlyList<Incident> Repeats, bool SuggestAssessmentReview, RiskMatrix Matrix);
+    bool CanSkipInvestigation, bool InvestigationOverdue, bool ReportedLate, string ReporterName, IReadOnlyList<Incident> Repeats, bool SuggestAssessmentReview, RiskMatrix Matrix, IncidentCan Can);
 
 /// <summary>
 /// Incident reports (spec 12). The report is the reporter's document; the Master's review and the vessel's findings are appended onboard, and the office's
@@ -67,6 +70,31 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
     {
         if (who.IsOffice) throw new InvalidOperationException(what);
         if (who.Crew!.VesselId != vesselId) throw new InvalidOperationException("You are not signed on to this vessel.");
+    }
+
+    /// <summary>The crew member this user is, signed on to a vessel; null for an office user.</summary>
+    public async Task<CrewMember?> CrewOfUserAsync(Guid companyId, Guid? userId)
+    {
+        if (userId is null) return null;
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == userId && c.VesselId != null && c.IsActive);
+    }
+
+    /// <summary>The crew signed on to a vessel, for picking the people in a report.</summary>
+    public async Task<List<CrewMember>> CrewAboardAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.CrewMembers.AsNoTracking().Where(c => c.CompanyId == companyId && c.VesselId == vesselId && c.IsActive).OrderBy(c => c.FullName).ToListAsync();
+    }
+
+    /// <summary>The company's risk matrix, for the colour of a band.</summary>
+    public async Task<RiskMatrix> MatrixAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await RiskAssessmentService.MatrixAsync(db, companyId);
     }
 
     // ---- settings and lists (the office's, copied to every vessel) ----
@@ -183,7 +211,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
     private static void Apply(Incident i, IncidentInput input)
     {
         i.Kind = input.Kind;
-        i.OccurredAt = input.OccurredAt;
+        i.OccurredAt = DateTime.SpecifyKind(input.OccurredAt, DateTimeKind.Utc);
         (i.Place, i.ShipStatus, i.Weather) = ((input.Place ?? "").Trim(), input.ShipStatus, (input.Weather ?? "").Trim());
         (i.Description, i.ImmediateAction) = ((input.Description ?? "").Trim(), (input.ImmediateAction ?? "").Trim());
         (i.EquipmentId, i.EquipmentName, i.RiskAssessmentRef) = (input.EquipmentId, (input.EquipmentName ?? "").Trim(), (input.RiskAssessmentRef ?? "").Trim());
@@ -470,7 +498,23 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         return new IncidentDetail(incident, vessel, status, events, versions, facts.Investigation, tasks, open, status is IncidentStatus.Closed or IncidentStatus.Withdrawn ? [] : IncidentRules.CloseBlockers(facts),
             IncidentRules.InvestigationDue(incident, matrix, limits), facts.InvestigationRequired, IncidentRules.CanSkipInvestigation(incident, matrix, limits),
             IncidentRules.InvestigationOverdue(facts, status, matrix, limits, DateTime.UtcNow), IncidentRules.ReportedLate(incident, limits), IncidentRules.ReporterNameFor(incident, who.IsOffice, limits),
-            repeats, IncidentRules.SuggestsAssessmentReview(repeats.Count), matrix);
+            repeats, IncidentRules.SuggestsAssessmentReview(repeats.Count), matrix, CanOf(who, incident, status));
+    }
+
+    private static IncidentCan CanOf(Who who, Incident incident, IncidentStatus status)
+    {
+        var submitted = incident.SubmittedAt is not null;
+        var finished = status is IncidentStatus.Closed or IncidentStatus.Withdrawn;
+        var mine = who.IsOffice || who.Crew!.VesselId == incident.VesselId;
+        var owner = CanEditText(who, incident);
+        return new IncidentCan(who.IsOffice,
+            Edit: owner && !IncidentStatusRules.TextIsLocked(status),
+            Submit: owner && !submitted && status != IncidentStatus.Withdrawn,
+            Review: !who.IsOffice && who.IsMaster && mine && status == IncidentStatus.Reported,
+            Supplement: owner && submitted && !finished,
+            Findings: !who.IsOffice && mine && (who.IsMaster || incident.ReporterCrewId == who.Crew!.Id) && submitted && !finished,
+            Withdraw: mine && !finished && (who.IsOffice || who.IsMaster || incident.ReporterCrewId == who.Crew!.Id),
+            AddAction: mine && (who.IsOffice || who.IsMaster) && submitted && !finished);
     }
 
     private static bool CanSee(Who who, Incident incident)

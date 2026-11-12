@@ -1,0 +1,133 @@
+@page "/incidents"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject IncidentService Svc
+
+<PageTitle>Incident reports · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Incident reports"
+            Subtitle="@(_seesAll ? "Every report of the vessel, newest first." : "Your own reports. The Master sees all of the vessel's.")">
+    <Actions>
+        <a href="/incidents/lessons" class="btn btn-secondary">Lessons learned</a>
+        <a href="/incidents/new" class="btn btn-primary">Report an incident</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Incident reports are switched off" Message="@_blocked" />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vessel" @bind:after="LoadAsync">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Status
+            <select class="select mt-1" @bind="_status" @bind:after="LoadAsync">
+                <option value="">Any</option>
+                @foreach (var s in Enum.GetValues<IncidentStatus>()) { <option value="@s">@IncidentStatusRules.Label(s)</option> }
+            </select>
+        </label>
+        <label>Kind
+            <select class="select mt-1" @bind="_kind" @bind:after="LoadAsync">
+                <option value="">Any</option>
+                @foreach (var k in Enum.GetValues<IncidentKind>()) { <option value="@k">@IncidentLook.Kind(k)</option> }
+            </select>
+        </label>
+        <label class="flex items-center gap-2 pb-2"><input type="checkbox" @bind="_overdue" @bind:after="LoadAsync" /> Investigation overdue</label>
+        <input class="input max-w-xs" placeholder="Search number, place or words…" @bind="_text" @bind:event="oninput" @bind:after="LoadAsync" />
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <EmptyState Title="No reports" Message="@(HasFilter ? "Nothing matches the filters." : "Nothing has been reported. A near-miss is worth a report: it is how the next accident is avoided.")" />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="px-4 py-3">Report</th><th class="px-4 py-3">Happened</th><th class="px-4 py-3">Kind</th><th class="px-4 py-3">Where</th><th class="px-4 py-3">Band</th><th class="px-4 py-3">Status</th><th class="px-4 py-3">Reported by</th><th class="px-4 py-3">Actions open</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        var (label, tone) = IncidentLook.Status(r.Status);
+                        <tr class="border-t border-line/60">
+                            <td class="px-4 py-3">
+                                <a class="link font-mono font-semibold" href="/incidents/@r.Incident.Id">@r.Incident.Code</a>
+                                @if (_vessels.Count > 1) { <div class="text-xs text-muted">@r.VesselName</div> }
+                            </td>
+                            <td class="px-4 py-3 whitespace-nowrap">@IncidentLook.When(r.Incident.OccurredAt)</td>
+                            <td class="px-4 py-3">@IncidentLook.Kind(r.Incident.Kind)</td>
+                            <td class="px-4 py-3">@r.Incident.Place</td>
+                            <td class="px-4 py-3">@if (r.Incident.Band != "") { <StatusChip Label="@r.Incident.Band" Tone="@_matrix!.ToneOf(r.Incident.Band)" /> } else { <span class="text-muted">–</span> }</td>
+                            <td class="px-4 py-3">
+                                <StatusChip Label="@label" Tone="@tone" />
+                                @if (r.Incident.IsUrgent && r.Incident.SubmittedAt is not null) { <span class="chip" data-tone="danger">urgent</span> }
+                                @if (r.ReportedLate) { <span class="chip" data-tone="warning">late</span> }
+                                @if (r.InvestigationOverdue) { <span class="chip" data-tone="danger">overdue</span> }
+                            </td>
+                            <td class="px-4 py-3">@r.ReporterName</td>
+                            <td class="px-4 py-3">@(r.OpenActions == 0 ? "–" : r.OpenActions.ToString())</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vessel;
+    private Actor _actor = default!;
+    private bool _loaded, _seesAll, _overdue;
+    private string? _blocked;
+    private string _status = "", _kind = "", _text = "";
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<IncidentRow> _rows = [];
+    private RiskMatrix? _matrix;
+
+    private bool HasFilter => _status != "" || _kind != "" || _text != "" || _overdue || _vessel != Guid.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Incidents module has not been switched on for any vessel."; _loaded = true; return; }
+        if (NodeContext.Current.IsVessel)
+        {
+            var me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+            if (me is null) { _blocked = "Incident reports onboard are for the crew of the vessel."; _loaded = true; return; }
+            _seesAll = me.IsMaster;
+        }
+        else _seesAll = true;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        IncidentStatus? status = Enum.TryParse<IncidentStatus>(_status, out var s) ? s : null;
+        IncidentKind? kind = Enum.TryParse<IncidentKind>(_kind, out var k) ? k : null;
+        _rows = await Svc.ListAsync(_companyId, _actor, new IncidentFilter(_vessel == Guid.Empty ? null : _vessel, status, kind, _overdue, _text));
+        _matrix ??= (await Svc.MatrixAsync(_companyId));
+    }
+}

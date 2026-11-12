@@ -1,0 +1,323 @@
+@page "/incidents/{Id:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject IncidentService Svc
+@inject RiskLibraryService Library
+
+<PageTitle>@(_d?.Incident.Code ?? "Incident report") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else if (_d is null)
+{
+    <EmptyState Title="Report not found" Message="It does not exist, or it is not yours to see. A crew member sees their own reports; the Master sees the vessel's." />
+}
+else
+{
+    var i = _d.Incident;
+    var (label, tone) = IncidentLook.Status(_d.Status);
+    <PageHeader Eyebrow="@_d.VesselName" Title="@i.Code" Subtitle="@($"{IncidentLook.Kind(i.Kind)}, {IncidentLook.When(i.OccurredAt)}")">
+        <Actions>
+            @if (_d.Can.Edit || _d.Can.Submit) { <a href="/incidents/@i.Id/edit" class="btn btn-primary">@(i.SubmittedAt is null ? "Edit and submit" : "Change the report")</a> }
+            <a href="/incidents" class="btn btn-secondary">Reports</a>
+        </Actions>
+    </PageHeader>
+
+    <div class="mb-5 flex flex-wrap items-center gap-2">
+        <StatusChip Label="@label" Tone="@tone" />
+        @if (i.Band != "") { <StatusChip Label="@($"Band: {i.Band}")" Tone="@_d.Matrix.ToneOf(i.Band)" /> }
+        @if (i.IsUrgent && i.SubmittedAt is not null) { <span class="chip" data-tone="danger">urgent</span> }
+        @if (_d.ReportedLate) { <span class="chip" data-tone="warning">reported late</span> }
+        @if (_d.InvestigationOverdue) { <span class="chip" data-tone="danger">investigation overdue</span> }
+        @if (i.ShareLesson) { <span class="chip" data-tone="info">shared as a lesson</span> }
+        @if (_d.InvestigationDue is { } due && _d.Status is not (IncidentStatus.Closed or IncidentStatus.Withdrawn))
+        {
+            <span class="text-xs text-muted">Investigation due @due.ToString("d MMM yyyy")</span>
+        }
+    </div>
+
+    @if (_d.SuggestAssessmentReview && (_d.Can.IsOffice || _d.Can.Review))
+    {
+        <div class="mb-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">Reports like this one have now been made @(_d.Repeats.Count + 1) times at this place or on this equipment within @_limitMonths months. The risk assessment for the job is worth looking at again.</div>
+    }
+
+    <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <div class="space-y-5 lg:col-span-2">
+            <div class="card p-4 text-sm">
+                <h2 class="mb-3 text-base font-semibold text-ink">What happened</h2>
+                <dl class="grid grid-cols-1 gap-x-6 gap-y-2 md:grid-cols-2">
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">When</dt><dd>@IncidentLook.When(i.OccurredAt) (ship's time)</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Where</dt><dd>@(i.Place == "" ? "–" : i.Place)</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Ship's status</dt><dd>@IncidentLook.ShipStatus(i.ShipStatus)@(i.Weather == "" ? "" : $", {i.Weather}")</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Equipment</dt><dd>@(i.EquipmentName == "" ? "–" : i.EquipmentName)</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Risk assessment</dt><dd>@(i.RiskAssessmentRef == "" ? "None named" : i.RiskAssessmentRef)</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Reported by</dt><dd>@_d.ReporterName@(i.SubmittedAt is { } at ? $", {IncidentLook.When(at)}" : ", not yet submitted")</dd></div>
+                </dl>
+                <p class="mt-4 whitespace-pre-line">@i.Description</p>
+                @if (i.ImmediateAction != "")
+                {
+                    <h3 class="mt-4 text-xs font-bold uppercase tracking-wider text-muted">Done straight away</h3>
+                    <p class="mt-1 whitespace-pre-line">@i.ImmediateAction</p>
+                }
+                <p class="mt-4 text-xs text-muted">What actually happened: @Level(i.ActualConsequence, true). What it could have been: @Level(i.PotentialConsequence, true). How likely again: @Level(i.Likelihood, false).</p>
+            </div>
+
+            @if (i.Persons.Count > 0)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-3 text-base font-semibold text-ink">People</h2>
+                    <ul class="space-y-2">
+                        @foreach (var p in i.Persons)
+                        {
+                            <li>
+                                <span class="font-medium">@p.Name</span>
+                                <span class="text-muted">@(string.Join(", ", new[] { p.Rank, p.Company }.Where(x => x != "")))</span>
+                                <span class="chip">@IncidentLook.Role(p.Role)</span>
+                                @if (p.Role == IncidentPersonRole.Injured)
+                                {
+                                    <div class="text-xs text-muted">@(string.Join(" · ", new[] { p.InjuryType, p.BodyPart, IncidentLook.Treatment(p.Treatment) }.Where(x => x != "")))@(p.DaysLost > 0 ? $" · {p.DaysLost} days lost" : "")@(p.RestrictedDays > 0 ? $" · {p.RestrictedDays} days light duty" : "")</div>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            @if (_d.Investigation is { } inv)
+            {
+                <div class="card p-4 text-sm">
+                    <div class="mb-3 flex flex-wrap items-center gap-2">
+                        <h2 class="text-base font-semibold text-ink">Investigation</h2>
+                        <StatusChip Label="@(inv.Finished ? "Finished" : "In progress")" Tone="@(inv.Finished ? "success" : "info")" />
+                        <span class="text-xs text-muted">version @inv.Version, @inv.ByName, @IncidentLook.When(inv.At)@(inv.InvestigatedBy == "" ? "" : $", by {inv.InvestigatedBy}")</span>
+                    </div>
+                    @Block("Facts", inv.Facts)
+                    @Block("Immediate cause", inv.ImmediateCause)
+                    @Block("Root causes", inv.RootCauses)
+                    @Block("Why it happened", inv.WhyChain)
+                    @Block("Contributing factors", inv.ContributingFactors)
+                    @Block("Risk assessment", IncidentLook.Assessment(inv.AssessmentFinding))
+                    @Block("Lessons", inv.Lessons)
+                </div>
+            }
+
+            @if (i.Supplements.Count > 0)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-3 text-base font-semibold text-ink">Additions</h2>
+                    <ul class="space-y-3">
+                        @foreach (var s in i.Supplements.OrderBy(x => x.At))
+                        {
+                            <li><p class="whitespace-pre-line">@s.Text</p><p class="text-xs text-muted">@s.ByName, @IncidentLook.When(s.At)</p></li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            <div class="card p-4 text-sm">
+                <h2 class="mb-3 text-base font-semibold text-ink">History</h2>
+                <ol class="space-y-3 border-l border-line pl-4">
+                    @foreach (var line in Timeline())
+                    {
+                        <li>
+                            <p class="font-medium">@line.Title <span class="font-normal text-xs text-muted">@IncidentLook.When(line.At)@(line.By == "" ? "" : $", {line.By}")</span></p>
+                            @if (line.Text != "") { <p class="whitespace-pre-line text-muted">@line.Text</p> }
+                        </li>
+                    }
+                </ol>
+            </div>
+        </div>
+
+        <div class="space-y-5">
+            @if (_d.Can.Review)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-1 text-base font-semibold text-ink">Review as Master</h2>
+                    <p class="mb-3 text-xs text-muted">Check the facts are complete and the severity is right. The report then goes to the office and its text is locked.</p>
+                    <div class="grid grid-cols-3 gap-2">
+                        <label>Happened<select class="select mt-1 w-full" @bind="_actual"><option value="0">0</option>@for (var n = 1; n <= RiskMatrix.Levels; n++) { <option value="@n">@n</option> }</select></label>
+                        <label>Could have<select class="select mt-1 w-full" @bind="_potential">@for (var n = 1; n <= RiskMatrix.Levels; n++) { <option value="@n">@n</option> }</select></label>
+                        <label>Again<select class="select mt-1 w-full" @bind="_likelihood">@for (var n = 1; n <= RiskMatrix.Levels; n++) { <option value="@n">@n</option> }</select></label>
+                    </div>
+                    <label class="mt-3 block">Your comment<textarea class="textarea mt-1 w-full" rows="3" maxlength="2000" @bind="_comment"></textarea></label>
+                    <button class="btn btn-primary mt-3" disabled="@_busy" @onclick="ReviewAsync">Review and send to the office</button>
+                </div>
+            }
+
+            @if (_d.Actions.Count > 0 || _d.Can.AddAction)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-3 text-base font-semibold text-ink">Actions</h2>
+                    @if (_d.Actions.Count == 0) { <p class="text-muted">No actions yet.</p> }
+                    <ul class="space-y-1">
+                        @foreach (var t in _d.Actions)
+                        {
+                            <li class="flex flex-wrap items-center gap-2"><a href="/worklist/@t.Id" class="link font-mono font-semibold">@t.Code</a><span>@t.Title</span><StatusChip Value="@t.Status" /></li>
+                        }
+                    </ul>
+                    @if (_d.Can.AddAction)
+                    {
+                        <div class="mt-4 space-y-2 border-t border-line pt-3">
+                            <input class="input w-full" maxlength="200" placeholder="New action: what must be done" @bind="_actionTitle" />
+                            <textarea class="textarea w-full" rows="2" maxlength="2000" placeholder="Details (optional)" @bind="_actionText"></textarea>
+                            <div class="flex flex-wrap items-end gap-2">
+                                <label>Due<input type="date" class="input mt-1" @bind="_actionDue" /></label>
+                                <label>For<input class="input mt-1" maxlength="120" placeholder="Name or rank" @bind="_actionFor" /></label>
+                                <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="AddActionAsync">Add action</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (_d.Repeats.Count > 0)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-2 text-base font-semibold text-ink">Has happened before</h2>
+                    <ul class="space-y-1">
+                        @foreach (var r in _d.Repeats)
+                        {
+                            <li><a class="link font-mono" href="/incidents/@r.Id">@r.Code</a> <span class="text-muted">@r.OccurredAt.ToString("d MMM yyyy")@(r.Place == "" ? "" : $", {r.Place}")</span></li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            @if (_d.Can.IsOffice && _d.CloseBlockers.Count > 0)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-2 text-base font-semibold text-ink">What stops it being closed</h2>
+                    <ul class="list-disc space-y-1 pl-5 text-muted">@foreach (var b in _d.CloseBlockers) { <li>@b</li> }</ul>
+                </div>
+            }
+
+            @if (_d.Can.Supplement)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-2 text-base font-semibold text-ink">Add to the report</h2>
+                    <textarea class="textarea w-full" rows="3" maxlength="2000" placeholder="Something found out since, dated and signed with your name" @bind="_supplement"></textarea>
+                    <button class="btn btn-secondary btn-sm mt-2" disabled="@_busy" @onclick="SupplementAsync">Add</button>
+                </div>
+            }
+
+            @if (_d.Can.Findings)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-2 text-base font-semibold text-ink">The vessel's findings</h2>
+                    <p class="mb-2 text-xs text-muted">What the vessel found out about the cause, next to the office's investigation.</p>
+                    <textarea class="textarea w-full" rows="3" maxlength="2000" @bind="_findings"></textarea>
+                    <button class="btn btn-secondary btn-sm mt-2" disabled="@_busy" @onclick="FindingsAsync">Add the findings</button>
+                </div>
+            }
+
+            @if (_d.Can.Withdraw)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-2 text-base font-semibold text-ink">Entered by mistake?</h2>
+                    <input class="input w-full" maxlength="500" placeholder="Why it is withdrawn" @bind="_withdraw" />
+                    <button class="btn btn-ghost btn-sm mt-2" disabled="@_busy" @onclick="WithdrawAsync">Withdraw the report</button>
+                    <p class="mt-1 text-xs text-muted">It stays in the history and leaves the statistics.</p>
+                </div>
+            }
+
+            @if (_error is not null) { <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+            @if (_notice is not null) { <div class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_notice</div> }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Line(DateTime At, string Title, string Text, string By);
+
+    private Guid _companyId;
+    private Actor _actor = default!;
+    private IncidentDetail? _d;
+    private RaMatrixView? _words;
+    private bool _loaded, _busy;
+    private int _limitMonths = 12;
+    private string? _error, _notice;
+    private int _actual, _potential = 1, _likelihood = 1;
+    private string _comment = "", _supplement = "", _findings = "", _withdraw = "", _actionTitle = "", _actionText = "", _actionFor = "";
+    private DateTime? _actionDue;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _words = await Library.GetMatrixAsync(_companyId);
+        _limitMonths = (await Svc.SettingsAsync(_companyId)).RepeatWindowMonths;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        try { _d = await Svc.GetAsync(_companyId, Id, _actor); }
+        catch (InvalidOperationException) { _d = null; }
+        if (_d is not null) (_actual, _potential, _likelihood) = (_d.Incident.ActualConsequence, Math.Max(1, _d.Incident.PotentialConsequence), Math.Max(1, _d.Incident.Likelihood));
+    }
+
+    private string Level(int level, bool consequence)
+    {
+        if (level == 0) return "nothing";
+        if (_words is null) return level.ToString();
+        return $"{level} – {(consequence ? _words.Consequence : _words.Probability)[Math.Clamp(level, 1, RiskMatrix.Levels) - 1]}";
+    }
+
+    private static RenderFragment Block(string title, string text) => text.Trim() == "" ? (builder => { }) : (builder =>
+    {
+        builder.OpenElement(0, "div"); builder.AddAttribute(1, "class", "mt-2");
+        builder.OpenElement(2, "h3"); builder.AddAttribute(3, "class", "text-xs font-bold uppercase tracking-wider text-muted"); builder.AddContent(4, title); builder.CloseElement();
+        builder.OpenElement(5, "p"); builder.AddAttribute(6, "class", "whitespace-pre-line"); builder.AddContent(7, text); builder.CloseElement();
+        builder.CloseElement();
+    });
+
+    private List<Line> Timeline()
+    {
+        var d = _d!;
+        var lines = new List<Line>();
+        if (d.Incident.SubmittedAt is { } submitted) lines.Add(new Line(submitted, "Reported", "", d.ReporterName));
+        foreach (var s in d.Incident.Supplements) lines.Add(new Line(s.At, "Addition", s.Text, s.ByName));
+        foreach (var e in d.Events) lines.Add(new Line(e.At, IncidentLook.Event(e.Kind), e.Text, e.ByName));
+        foreach (var v in d.Investigations) lines.Add(new Line(v.At, v.Finished ? $"Investigation finished (version {v.Version})" : $"Investigation saved (version {v.Version})", "", v.ByName));
+        foreach (var t in d.Actions) lines.Add(new Line(t.CreatedAt, $"Action {t.Code}", t.Title, t.CreatedByName));
+        return lines.OrderBy(l => l.At).ToList();
+    }
+
+    private async Task RunAsync(Func<Task> work, string done)
+    {
+        _error = _notice = null;
+        _busy = true;
+        try { await work(); await LoadAsync(); _notice = done; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task ReviewAsync() => RunAsync(async () =>
+    {
+        var now = _d!.Incident;
+        var changed = (now.ActualConsequence, now.PotentialConsequence, now.Likelihood) != (_actual, _potential, _likelihood);
+        await Svc.ReviewAsync(_companyId, Id, _actor, _comment, changed ? (_actual, _potential, _likelihood) : null);
+        _comment = "";
+    }, "Reviewed. The report is on its way to the office.");
+
+    private Task SupplementAsync() => RunAsync(async () => { await Svc.AddSupplementAsync(_companyId, Id, _actor, _supplement); _supplement = ""; }, "Added.");
+
+    private Task FindingsAsync() => RunAsync(async () => { await Svc.AddVesselFindingsAsync(_companyId, Id, _actor, _findings); _findings = ""; }, "The findings are added.");
+
+    private Task WithdrawAsync() => RunAsync(async () => { await Svc.WithdrawAsync(_companyId, Id, _actor, _withdraw); _withdraw = ""; }, "The report is withdrawn.");
+
+    private Task AddActionAsync() => RunAsync(async () =>
+    {
+        await Svc.AddActionAsync(_companyId, Id, _actor, new NewIncidentAction(_actionTitle, _actionText, _actionDue is { } due ? DateTime.SpecifyKind(due, DateTimeKind.Utc) : null, _actionFor));
+        (_actionTitle, _actionText, _actionFor, _actionDue) = ("", "", "", null);
+    }, "The action is a task in the Worklist.");
+}

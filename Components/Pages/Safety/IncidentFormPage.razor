@@ -1,0 +1,329 @@
+@page "/incidents/new"
+@page "/incidents/{Id:guid}/edit"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject IncidentService Svc
+@inject RiskLibraryService Library
+@inject PmsService Pms
+@inject NavigationManager Nav
+
+<PageTitle>@(Id is null ? "Report an incident" : "Change report") · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="@(Id is null ? "Report an incident" : "Change the report")"
+            Subtitle="Say what happened first. It takes a few minutes, and a near-miss is as welcome as an accident. Do not put people's names in the description: add them under People.">
+    <Actions>
+        <a href="/incidents" class="btn btn-secondary">Reports</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="@_blocked.Value.Title" Message="@_blocked.Value.Message" />
+}
+else
+{
+    <div class="space-y-5">
+        @if (!NodeContext.Current.IsVessel && Id is null)
+        {
+            <div class="card p-4 text-sm">
+                <label>Vessel
+                    <select class="select mt-1" @bind="_vesselId" @bind:after="LoadVesselAsync">
+                        @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+                <p class="mt-2 text-xs text-muted">A report you enter here is the office's to change. The vessel's Master reviews it.</p>
+            </div>
+        }
+
+        <div class="card p-4">
+            <h2 class="mb-3 text-base font-semibold text-ink">1. What happened</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label class="text-sm">What kind is it?
+                    <select class="select mt-1 w-full" @bind="_f.Kind">
+                        @foreach (var k in Enum.GetValues<IncidentKind>()) { <option value="@k">@IncidentLook.Kind(k)</option> }
+                    </select>
+                    <span class="mt-1 block text-xs text-muted">@IncidentLook.KindHelp(_f.Kind)</span>
+                </label>
+                <label class="text-sm">When did it happen? (ship's time)
+                    <input type="datetime-local" class="input mt-1 w-full" @bind="_f.OccurredAt" />
+                </label>
+                <label class="text-sm">Ship's status
+                    <select class="select mt-1 w-full" @bind="_f.ShipStatus">
+                        @foreach (var s in Enum.GetValues<IncidentShipStatus>()) { <option value="@s">@IncidentLook.ShipStatus(s)</option> }
+                    </select>
+                </label>
+                <label class="text-sm md:col-span-2">Where onboard?
+                    <input class="input mt-1 w-full" maxlength="200" placeholder="For example: engine room, second platform" @bind="_f.Place" />
+                </label>
+                <label class="text-sm">Weather and sea (if it matters)
+                    <input class="input mt-1 w-full" maxlength="200" @bind="_f.Weather" />
+                </label>
+            </div>
+            <label class="mt-4 block text-sm">What happened?
+                <textarea class="textarea mt-1 w-full" rows="4" maxlength="4000" @bind="_f.Description"></textarea>
+            </label>
+            <label class="mt-4 block text-sm">What was done straight away?
+                <textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_f.ImmediateAction"></textarea>
+            </label>
+            <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <label class="text-sm">Equipment involved
+                    <select class="select mt-1 w-full" value="@_f.EquipmentId" @onchange="OnEquipmentChanged">
+                        <option value="@Guid.Empty">Not on the machinery list</option>
+                        @foreach (var m in _machinery) { <option value="@m.Id">@m.Name (@m.Code)</option> }
+                    </select>
+                    <input class="input mt-2 w-full" maxlength="200" placeholder="Or write what it was" @bind="_f.EquipmentName" />
+                </label>
+                <label class="text-sm">Risk assessment that covered the job (leave empty if there was none)
+                    <input class="input mt-1 w-full" maxlength="120" placeholder="For example: RA-SFAL-..." @bind="_f.RiskAssessmentRef" />
+                </label>
+            </div>
+        </div>
+
+        <div class="card p-4">
+            <div class="flex flex-wrap items-center gap-3">
+                <h2 class="text-base font-semibold text-ink">2. People</h2>
+                <select class="select" @onchange="AddCrewAsync">
+                    <option value="">Add a crew member…</option>
+                    @foreach (var c in _crew) { <option value="@c.Id">@c.FullName (@c.Rank)</option> }
+                </select>
+                <button type="button" class="btn btn-secondary btn-sm" @onclick="AddOther">Add someone else</button>
+            </div>
+            @if (_people.Count == 0)
+            {
+                <p class="mt-3 text-sm text-muted">Nobody added. A near-miss may have no one to name. An injury needs the person who was hurt.</p>
+            }
+            @foreach (var p in _people)
+            {
+                <div class="mt-3 rounded-lg border border-line p-3 text-sm">
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
+                        <label>Their part
+                            <select class="select mt-1 w-full" @bind="p.Role">
+                                @foreach (var r in Enum.GetValues<IncidentPersonRole>()) { <option value="@r">@IncidentLook.Role(r)</option> }
+                            </select>
+                        </label>
+                        <label>Name<input class="input mt-1 w-full" maxlength="120" @bind="p.Name" /></label>
+                        <label>Rank or job<input class="input mt-1 w-full" maxlength="80" @bind="p.Rank" /></label>
+                        <label>Company (if not ours)<input class="input mt-1 w-full" maxlength="120" @bind="p.Company" /></label>
+                    </div>
+                    @if (p.Role == IncidentPersonRole.Injured)
+                    {
+                        <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
+                            <label>Injury or illness<input class="input mt-1 w-full" maxlength="120" @bind="p.InjuryType" /></label>
+                            <label>Part of the body<input class="input mt-1 w-full" maxlength="120" @bind="p.BodyPart" /></label>
+                            <label>Treatment
+                                <select class="select mt-1 w-full" @bind="p.Treatment">
+                                    @foreach (var t in Enum.GetValues<IncidentTreatment>()) { <option value="@t">@IncidentLook.Treatment(t)</option> }
+                                </select>
+                            </label>
+                            <label>Days lost<input type="number" min="0" class="input mt-1 w-full" @bind="p.DaysLost" /></label>
+                            <label>Days of light duty<input type="number" min="0" class="input mt-1 w-full" @bind="p.RestrictedDays" /></label>
+                        </div>
+                    }
+                    <button type="button" class="btn btn-ghost btn-sm mt-2" @onclick="() => _people.Remove(p)">Remove</button>
+                </div>
+            }
+        </div>
+
+        <div class="card p-4">
+            <h2 class="mb-1 text-base font-semibold text-ink">3. How serious</h2>
+            <p class="mb-3 text-xs text-muted">The same scale as the risk assessments. The Master confirms it, and can change it, when they review the report.</p>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label class="text-sm">What actually happened
+                    <select class="select mt-1 w-full" @bind="_f.Actual" @bind:after="Rescore">
+                        <option value="0">0 – Nothing: nobody hurt, nothing damaged</option>
+                        @for (var level = 1; level <= RiskMatrix.Levels; level++) { <option value="@level">@level – @Consequence(level)</option> }
+                    </select>
+                </label>
+                <label class="text-sm">What it could have been
+                    <select class="select mt-1 w-full" @bind="_f.Potential" @bind:after="Rescore">
+                        <option value="0">Choose…</option>
+                        @for (var level = 1; level <= RiskMatrix.Levels; level++) { <option value="@level">@level – @Consequence(level)</option> }
+                    </select>
+                </label>
+                <label class="text-sm">How likely it is to happen again
+                    <select class="select mt-1 w-full" @bind="_f.Likelihood" @bind:after="Rescore">
+                        <option value="0">Choose…</option>
+                        @for (var level = 1; level <= RiskMatrix.Levels; level++) { <option value="@level">@level – @Probability(level)</option> }
+                    </select>
+                </label>
+            </div>
+            @if (_band != "")
+            {
+                <p class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+                    <span>Band:</span> <StatusChip Label="@_band" Tone="@_matrix!.Matrix.ToneOf(_band)" />
+                    @if (_urgent) { <span class="text-amber-700">This goes to the office at once.</span> }
+                </p>
+            }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">4. Sharing</h2>
+            <label class="flex items-start gap-2"><input type="checkbox" class="mt-1" @bind="_f.ShareLesson" /> <span>Share this as a lesson for the whole fleet, once the Master has reviewed it. Names and injuries are never shared, but the description is, so keep it free of names.</span></label>
+            @if (_limits.AllowAnonymousToOffice)
+            {
+                <label class="mt-3 flex items-start gap-2"><input type="checkbox" class="mt-1" @bind="_f.AnonymousToOffice" /> <span>Show the office "a crew member" instead of my name. The Master and the vessel still see it.</span></label>
+            }
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+        }
+        <div class="flex flex-wrap items-center gap-3">
+            @if (_submitted)
+            {
+                <button type="button" class="btn btn-primary" disabled="@_busy" @onclick="() => SaveAsync(false)">Save the changes</button>
+            }
+            else
+            {
+                <button type="button" class="btn btn-primary" disabled="@_busy" @onclick="() => SaveAsync(true)">Submit the report</button>
+                <button type="button" class="btn btn-secondary" disabled="@_busy" @onclick="() => SaveAsync(false)">Save as a draft</button>
+            }
+            <a href="@(Id is null ? "/incidents" : $"/incidents/{Id}")" class="btn btn-ghost">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
+
+    private sealed class Form
+    {
+        public IncidentKind Kind = IncidentKind.NearMiss;
+        public DateTime OccurredAt = DateTime.UtcNow.AddMinutes(-30);
+        public IncidentShipStatus ShipStatus = IncidentShipStatus.AtSea;
+        public string Place = "", Weather = "", Description = "", ImmediateAction = "", EquipmentName = "", RiskAssessmentRef = "";
+        public Guid EquipmentId = Guid.Empty;
+        public bool ShareLesson, AnonymousToOffice;
+        public int Actual, Potential, Likelihood;
+    }
+
+    private sealed class PersonRow
+    {
+        public Guid? CrewMemberId;
+        public string Name = "", Rank = "", Company = "", InjuryType = "", BodyPart = "";
+        public IncidentPersonRole Role = IncidentPersonRole.Involved;
+        public IncidentTreatment Treatment = IncidentTreatment.None;
+        public int DaysLost, RestrictedDays;
+    }
+
+    private readonly Form _f = new();
+    private readonly List<PersonRow> _people = [];
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<CrewMember> _crew = [];
+    private List<MachineryItem> _machinery = [];
+    private RaMatrixView? _matrix;
+    private IncidentLimits _limits = IncidentLimits.Default;
+    private Guid _companyId, _vesselId;
+    private Actor _actor = default!;
+    private bool _loaded, _busy, _submitted, _urgent;
+    private string _band = "";
+    private string? _error;
+    private (string Title, string Message)? _blocked;
+
+    private string Consequence(int level) => _matrix?.Consequence[level - 1] ?? level.ToString();
+    private string Probability(int level) => _matrix?.Probability[level - 1] ?? level.ToString();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _matrix = await Library.GetMatrixAsync(_companyId);
+        _limits = IncidentLimits.Of(await Svc.SettingsAsync(_companyId));
+
+        if (Id is { } id)
+        {
+            var detail = await Svc.GetAsync(_companyId, id, _actor);
+            if (detail is null) { _blocked = ("Report not found", "It does not exist, or it is not yours to see."); _loaded = true; return; }
+            if (!detail.Can.Edit && !detail.Can.Submit) { _blocked = ("This report cannot be changed", "The Master has reviewed it, or it belongs to someone else. Add a supplement on the report page instead."); _loaded = true; return; }
+            _vesselId = detail.Incident.VesselId;
+            _submitted = detail.Incident.SubmittedAt is not null;
+            Fill(detail.Incident);
+        }
+        else if (NodeContext.Current.IsVessel)
+        {
+            var me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+            if (me?.VesselId is not { } mine || !(await Svc.EnabledVesselsAsync(_companyId)).Any(v => v.Id == mine))
+            {
+                _blocked = ("Incident reports are switched off", "The Incidents module has not been switched on for this vessel, or you are not one of its crew."); _loaded = true; return;
+            }
+            _vesselId = mine;
+        }
+        else
+        {
+            _vessels = await Svc.EnabledVesselsAsync(_companyId);
+            if (_vessels.Count == 0) { _blocked = ("Incident reports are switched off", "The Incidents module has not been switched on for any vessel."); _loaded = true; return; }
+            _vesselId = VesselQuery is { } wanted && _vessels.Any(v => v.Id == wanted) ? wanted : _vessels[0].Id;
+        }
+        await LoadVesselAsync();
+        Rescore();
+        _loaded = true;
+    }
+
+    private async Task LoadVesselAsync()
+    {
+        _crew = await Svc.CrewAboardAsync(_companyId, _vesselId);
+        try { _machinery = (await Pms.ListMachineryAsync(_companyId, _vesselId)).OrderBy(m => m.Name).ToList(); }
+        catch (InvalidOperationException) { _machinery = []; }
+    }
+
+    private void Fill(Incident i)
+    {
+        (_f.Kind, _f.OccurredAt, _f.ShipStatus, _f.Place, _f.Weather) = (i.Kind, i.OccurredAt, i.ShipStatus, i.Place, i.Weather);
+        (_f.Description, _f.ImmediateAction, _f.EquipmentId, _f.EquipmentName, _f.RiskAssessmentRef) = (i.Description, i.ImmediateAction, i.EquipmentId ?? Guid.Empty, i.EquipmentName, i.RiskAssessmentRef);
+        (_f.ShareLesson, _f.AnonymousToOffice, _f.Actual, _f.Potential, _f.Likelihood) = (i.ShareLesson, i.AnonymousToOffice, i.ActualConsequence, i.PotentialConsequence, i.Likelihood);
+        foreach (var p in i.Persons)
+            _people.Add(new PersonRow { CrewMemberId = p.CrewMemberId, Name = p.Name, Rank = p.Rank, Company = p.Company, Role = p.Role, InjuryType = p.InjuryType, BodyPart = p.BodyPart, Treatment = p.Treatment, DaysLost = p.DaysLost, RestrictedDays = p.RestrictedDays });
+    }
+
+    private void OnEquipmentChanged(ChangeEventArgs e)
+    {
+        _f.EquipmentId = Guid.TryParse(e.Value?.ToString(), out var picked) ? picked : Guid.Empty;
+        if (_machinery.FirstOrDefault(m => m.Id == _f.EquipmentId) is { } machine) _f.EquipmentName = machine.Name;
+    }
+
+    private void AddCrewAsync(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id) && _crew.FirstOrDefault(c => c.Id == id) is { } c && !_people.Any(p => p.CrewMemberId == id))
+            _people.Add(new PersonRow { CrewMemberId = c.Id, Name = c.FullName, Rank = c.Rank, Role = _f.Kind == IncidentKind.InjuryIllness && _people.Count == 0 ? IncidentPersonRole.Injured : IncidentPersonRole.Involved });
+        Rescore();
+    }
+
+    private void AddOther() => _people.Add(new PersonRow());
+
+    private IReadOnlyList<IncidentPerson> AsPersons() => _people.Select(p => new IncidentPerson { Role = p.Role, DaysLost = p.DaysLost, Treatment = p.Treatment, Name = p.Name }).ToList();
+
+    private void Rescore()
+    {
+        _band = _matrix is null ? "" : IncidentRules.BandOf(_matrix.Matrix, _f.Actual, _f.Potential, _f.Likelihood);
+        if (_band == "" || _matrix is null) { _urgent = false; return; }
+        var preview = new Incident { Kind = _f.Kind, Band = _band, Persons = [.. AsPersons()] };
+        _urgent = IncidentRules.IsUrgent(preview, _matrix.Matrix, _limits);
+    }
+
+    private async Task SaveAsync(bool submit)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var input = new IncidentInput(_f.Kind, _f.OccurredAt, _f.Place, _f.ShipStatus, _f.Weather, _f.Description, _f.ImmediateAction, _f.EquipmentId == Guid.Empty ? null : _f.EquipmentId, _f.EquipmentName,
+                _f.RiskAssessmentRef, _f.AnonymousToOffice, _f.ShareLesson, _f.Actual, _f.Potential, _f.Likelihood,
+                _people.Select(p => new IncidentPersonInput(p.CrewMemberId, p.Name, p.Rank, p.Company, p.Role, p.InjuryType, p.BodyPart, p.Treatment, p.DaysLost, p.RestrictedDays)).ToList());
+            var saved = await Svc.SaveDraftAsync(_companyId, _vesselId, _actor, Id, input);
+            if (submit) await Svc.SubmitAsync(_companyId, saved.Id, _actor);
+            Nav.NavigateTo($"/incidents/{saved.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

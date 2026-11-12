@@ -1,0 +1,72 @@
+@page "/incidents/lessons"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject IncidentService Svc
+
+<PageTitle>Lessons learned · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Lessons learned"
+            Subtitle="Reports the Master reviewed and the reporter chose to share. No names and no injuries: what happened, what was found, and what to do about it.">
+    <Actions>
+        <a href="/incidents" class="btn btn-secondary">Reports</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Incident reports are switched off" Message="@_blocked" />
+}
+else if (_lessons.Count == 0)
+{
+    <EmptyState Title="No lessons shared yet" Message="When a report is marked as a lesson and the Master has reviewed it, it appears here for everyone." />
+}
+else
+{
+    <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        @foreach (var l in _lessons)
+        {
+            <div class="card p-4 text-sm">
+                <div class="mb-2 flex flex-wrap items-center gap-2">
+                    <span class="chip" data-tone="info">@IncidentLook.Kind(l.Kind)</span>
+                    @if (l.Band != "") { <StatusChip Label="@l.Band" Tone="@_matrix!.ToneOf(l.Band)" /> }
+                    <span class="text-xs text-muted">@l.Date.ToString("d MMM yyyy"), @IncidentLook.ShipStatus(l.ShipStatus).ToLowerInvariant()@(l.Place == "" ? "" : $", {l.Place}")</span>
+                </div>
+                <p class="whitespace-pre-line">@l.Description</p>
+                @if (l.ImmediateAction != "") { <p class="mt-2 text-muted"><span class="font-medium text-ink">Done at the time:</span> @l.ImmediateAction</p> }
+                @if (l.RootCauses != "") { <p class="mt-2 text-muted"><span class="font-medium text-ink">Root causes:</span> @l.RootCauses</p> }
+                @if (l.Lessons != "") { <p class="mt-2"><span class="font-medium">What we learned:</span> @l.Lessons</p> }
+                @if (l.EquipmentName != "") { <p class="mt-2 text-xs text-muted">Equipment: @l.EquipmentName</p> }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _loaded;
+    private string? _blocked;
+    private List<IncidentLesson> _lessons = [];
+    private RiskMatrix? _matrix;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        var actor = Actor.From(state.User);
+        if (!await Svc.IsEnabledForCompanyAsync(companyId)) { _blocked = "The Incidents module has not been switched on for any vessel."; _loaded = true; return; }
+        try
+        {
+            _lessons = await Svc.LessonsAsync(companyId, actor);
+            _matrix = await Svc.MatrixAsync(companyId);
+        }
+        catch (InvalidOperationException ex) { _blocked = ex.Message; }
+        _loaded = true;
+    }
+}

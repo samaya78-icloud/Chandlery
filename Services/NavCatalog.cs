@@ -16,7 +16,7 @@ public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
 public class NavCatalogService(
     ApprovalService approvals, InvoiceService invoices, WorklistService worklist, PmsService pms, RestHoursService rest,
     TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
-    IAuthorizationService authorization)
+    IncidentService incidents, IAuthorizationService authorization)
 {
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
     {
@@ -123,6 +123,9 @@ public class NavCatalogService(
             safety.AddRange([new("/rest", "Hours of rest", "rest"), new("/rest/sheet", "Month sheet", "rest"), new("/rest/sign", "Sign hours", "rest"),
                 new("/rest/breaches", "Breaches", "rest"), new("/rest/table", "Working table", "rest")]);
 
+        if (await incidents.IsEnabledForCompanyAsync(companyId))
+            safety.AddRange([new("/incidents", "Incident reports", "incident"), new("/incidents/new", "Report an incident", "incident"), new("/incidents/lessons", "Lessons learned", "incident")]);
+
         if (await tanks.IsEnabledForCompanyAsync(companyId))
         {
             tankItems.Add(new("/tanks", "Tanks", "tank"));
@@ -154,7 +157,7 @@ public class NavCatalogService(
         if (maintenance.Count > 0) groups.Add(new("Maintenance", maintenance, "pms planned maintenance"));
         if (tankItems.Count > 0) groups.Add(new("Tank inspection", tankItems));
         if (riskItems.Count > 0) groups.Add(new("Risk assessment", riskItems, "risk ra hazard"));
-        if (safety.Count > 0) groups.Add(new("Safety", safety, "hours of rest rest hours"));
+        if (safety.Count > 0) groups.Add(new("Safety", safety, "hours of rest rest hours incident accident near miss report lessons"));
         if (projectItems.Count > 0) groups.Add(new("Projects", projectItems, "drydock yard technical project"));
         if (!isVessel)
         {

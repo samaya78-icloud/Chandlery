@@ -22,7 +22,7 @@ public class NavCatalogTests : IAsyncLifetime
         var authorization = new ServiceCollection().AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")))
             .AddLogging().BuildServiceProvider().GetRequiredService<IAuthorizationService>();
         _catalog = new NavCatalogService(new ApprovalService(factory), new InvoiceService(factory, new NoFiles()), worklist, pms, new RestHoursService(factory),
-            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), authorization);
+            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), authorization);
     }
 
     public Task DisposeAsync() => _s.DisposeAsync();
