@@ -28,6 +28,7 @@ public class ProjectWalkthroughTests : IAsyncLifetime
         _vessel = new ProjectService(_s.VesselFactory, _vesselWorklist);
         _pms = new PmsService(_s.ShoreFactory);
         await using var db = await _s.ShoreFactory.CreateDbContextAsync();
+        db.ApprovalRules.RemoveRange(db.ApprovalRules);      // the fixture seeds approval rules; the plain approval step needs none to apply
         foreach (var module in new[] { PolicyModules.Projects, PolicyModules.Worklist, PolicyModules.Pms })
             db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = module, Enabled = true });
         await db.SaveChangesAsync();

@@ -20,6 +20,7 @@ public class ProjectApprovalTests : IAsyncLifetime
         _vessel = new ProjectService(_s.VesselFactory);
         _matrix = new ApprovalService(_s.ShoreFactory);
         await using var db = await _s.ShoreFactory.CreateDbContextAsync();
+        db.ApprovalRules.RemoveRange(db.ApprovalRules);                                                                               // the fixture seeds its own rules; these tests set theirs
         db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = PolicyModules.Projects, Enabled = true });
         await db.SaveChangesAsync();
         await _s.SettleUntilQuietAsync();
