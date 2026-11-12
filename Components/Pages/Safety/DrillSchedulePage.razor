@@ -1,0 +1,143 @@
+@page "/drills"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject DrillService Svc
+
+<PageTitle>Drill schedule · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Drill schedule"
+            Subtitle="What is due, what is overdue and who has not yet taken part. Worked out from the drills held, so it is right as soon as a drill is recorded.">
+    <Actions>
+        <a href="/drills/history" class="btn btn-secondary">History</a>
+        @if (_mayConduct) { <a href="/drills/new" class="btn btn-primary">Record a drill</a> }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Drills are not available" Message="@_blocked" />
+}
+else if (_schedule is { } sc)
+{
+    @if (_vessels.Count > 1)
+    {
+        <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId" @bind:after="LoadAsync">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        </div>
+    }
+
+    @if (sc.Quarter.Triggered)
+    {
+        <div class="mb-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <p class="font-medium">More than a quarter of the crew took part in no drill last month</p>
+            <p>@sc.Quarter.NotTakenPart of @sc.Quarter.CrewCount (@sc.Quarter.Percent%) did not. When that happens drills are held within 24 hours of leaving port. Check the rule against the flag state and the company's procedures.</p>
+        </div>
+    }
+
+    var (worstLabel, worstTone) = DrillLook.Status(sc.Worst);
+    <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+        <span class="text-muted">@sc.VesselName</span>
+        <StatusChip Label="@(sc.Worst == DrillStatus.NotDue ? "All drills in date" : worstLabel)" Tone="@worstTone" />
+    </div>
+
+    <div class="space-y-3">
+        @foreach (var row in sc.Rows)
+        {
+            var (label, tone) = DrillLook.Status(row.Status);
+            <div class="card p-4 text-sm">
+                <div class="flex flex-wrap items-center gap-3">
+                    <h2 class="text-base font-semibold text-ink">@row.Type.Name</h2>
+                    <span class="chip">@DrillLook.Category(row.Type.Category)</span>
+                    <span class="text-xs text-muted">@DrillLook.Interval(row.Rule)@(row.Rule.EveryCrewMember ? ", every crew member" : "")</span>
+                    <span class="ml-auto"><StatusChip Label="@label" Tone="@tone" /></span>
+                    @if (_mayConduct) { <a class="btn btn-secondary btn-sm" href="/drills/new?type=@row.Type.Id">Record</a> }
+                </div>
+                <dl class="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 md:grid-cols-4">
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Last held</dt><dd>@DrillLook.Day(row.LastHeld)</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Next due</dt><dd>@(row.Due is null ? "Not worked out until one is held" : DrillLook.Day(row.Due))</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">The ship</dt><dd>@DrillLook.Status(row.ShipStatus).Label</dd></div>
+                    @if (row.Type.Reference != "") { <div class="col-span-2 md:col-span-1"><dt class="text-xs uppercase tracking-wide text-muted">Reference</dt><dd class="text-xs text-muted">@row.Type.Reference</dd></div> }
+                </dl>
+                @if (row.People.Count > 0)
+                {
+                    <div class="mt-3 border-t border-line pt-3">
+                        <p class="text-xs font-medium uppercase tracking-wide text-muted">People who are due or late</p>
+                        <ul class="mt-1 grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-2">
+                            @foreach (var p in row.People)
+                            {
+                                var (pl, pt) = DrillLook.Status(p.Status);
+                                <li class="flex items-center gap-2"><span class="font-medium">@p.Name</span><span class="text-xs text-muted">@p.Rank</span><StatusChip Label="@pl" Tone="@pt" /><span class="text-xs text-muted">@(p.LastTookPart is { } l ? $"last took part {l:d MMM yyyy}" : "has not taken part")</span></li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (_mine.Count > 0)
+    {
+        <div class="card mt-6 p-4 text-sm">
+            <h2 class="mb-1 text-base font-semibold text-ink">My drills</h2>
+            <p class="mb-3 text-xs text-muted">The drills every crew member takes part in, and when you are next due.</p>
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Drill</th><th>I last took part</th><th>I am next due</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var m in _mine)
+                    {
+                        var (ml, mt) = DrillLook.Status(m.Status);
+                        <tr class="border-t border-line/60"><td class="py-1">@m.Type.Name</td><td>@DrillLook.Day(m.LastTookPart)</td><td>@DrillLook.Day(m.Due)</td><td><StatusChip Label="@ml" Tone="@mt" /></td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private Actor _actor = default!;
+    private bool _loaded, _mayConduct;
+    private string? _blocked;
+    private DrillSchedule? _schedule;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<DrillPersonalRow> _mine = [];
+    private CrewMember? _me;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Drills and Meetings module has not been switched on for any vessel."; _loaded = true; return; }
+        if (NodeContext.Current.IsVessel)
+        {
+            _me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+            if (_me?.VesselId is not { } mine || _vessels.All(v => v.Id != mine)) { _blocked = "Drills onboard are for the crew of the vessel, and the module must be switched on for it."; _loaded = true; return; }
+            _vesselId = mine;
+            _mayConduct = _me.IsMaster || _me.Has(CrewAuthority.ConductDrills);
+        }
+        else _vesselId = _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _schedule = await Svc.ScheduleAsync(_companyId, _vesselId, _actor);
+        _mine = _me is null ? [] : await Svc.PersonalAsync(_companyId, _vesselId, _me.Id, _actor);
+    }
+}

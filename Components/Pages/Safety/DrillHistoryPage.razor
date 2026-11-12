@@ -1,0 +1,100 @@
+@page "/drills/history"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject DrillService Svc
+
+<PageTitle>Drill history · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Drill history" Subtitle="Every drill recorded, newest first, with who took part.">
+    <Actions>
+        <a href="/drills" class="btn btn-secondary">Schedule</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Drills are not available" Message="@_blocked" />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vessel" @bind:after="LoadAsync">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Kind of drill
+            <select class="select mt-1" @bind="_type" @bind:after="LoadAsync">
+                <option value="@Guid.Empty">All</option>
+                @foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }
+            </select>
+        </label>
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <EmptyState Title="No drills" Message="@(_type == Guid.Empty ? "No drill has been recorded yet." : "No drill of that kind has been recorded.")" />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="px-4 py-3">Drill</th><th class="px-4 py-3">Held</th><th class="px-4 py-3">Kind</th><th class="px-4 py-3">Where</th><th class="px-4 py-3">Conducted by</th><th class="px-4 py-3">Took part</th><th class="px-4 py-3">Absent</th><th class="px-4 py-3">Signed</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr class="border-t border-line/60">
+                            <td class="px-4 py-3"><a class="link font-mono font-semibold" href="/drills/@r.Drill.Id">@r.Drill.Code</a>@if (_vessels.Count > 1) { <div class="text-xs text-muted">@r.VesselName</div> }</td>
+                            <td class="px-4 py-3 whitespace-nowrap">@DrillLook.When(r.Drill.StartedAt)</td>
+                            <td class="px-4 py-3">@r.Drill.TypeName</td>
+                            <td class="px-4 py-3">@r.Drill.Place</td>
+                            <td class="px-4 py-3">@r.Drill.ConductedByName</td>
+                            <td class="px-4 py-3">@r.Present</td>
+                            <td class="px-4 py-3">@(r.Absent == 0 ? "–" : r.Absent.ToString())</td>
+                            <td class="px-4 py-3">@if (r.Drill.IsSigned) { <StatusChip Label="Signed" Tone="success" /> } else { <StatusChip Label="Not signed" Tone="warning" /> }</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vessel, _type;
+    private Actor _actor = default!;
+    private bool _loaded;
+    private string? _blocked;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<DrillType> _types = [];
+    private List<DrillRow> _rows = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Drills and Meetings module has not been switched on for any vessel."; _loaded = true; return; }
+        _types = await Svc.TypesAsync(_companyId, includeInactive: true);
+        try { await LoadAsync(); }
+        catch (InvalidOperationException ex) { _blocked = ex.Message; }
+        _loaded = true;
+    }
+
+    private async Task LoadAsync() => _rows = await Svc.ListAsync(_companyId, _actor, _vessel == Guid.Empty ? null : _vessel, _type == Guid.Empty ? null : _type);
+}

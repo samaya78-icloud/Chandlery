@@ -226,6 +226,38 @@ public class DrillRulesTests
     }
 
     [Fact]
+    public void APersonsOwnRecordShowsEveryTypeEveryoneAttends_WithTheirDate_WhetherOrNotItIsDueYet()
+    {
+        var fire = new DrillType { Id = Guid.NewGuid(), Name = "Fire", IntervalKind = DrillIntervalKind.CalendarMonths, IntervalCount = 1, WarningDays = 7, EveryCrewMember = true, IsActive = true };
+        var abandon = new DrillType { Id = Guid.NewGuid(), Name = "Abandon ship", IntervalKind = DrillIntervalKind.CalendarMonths, IntervalCount = 1, WarningDays = 7, EveryCrewMember = true, IsActive = true };
+        var mob = new DrillType { Id = Guid.NewGuid(), Name = "MOB", IntervalKind = DrillIntervalKind.CalendarMonths, IntervalCount = 3, IsActive = true };
+        var person = Crew("P", D(2026, 1, 1));
+        var overrides = new Dictionary<Guid, DrillOverride> { [abandon.Id] = new() { DrillTypeId = abandon.Id, Applies = false, Reason = "No lifeboat" } };
+        var s = new DrillSnapshot([fire, abandon, mob], overrides, [Held(fire, D(2026, 11, 3), person), Held(mob, D(2026, 11, 4), person)], [person]);
+
+        var rows = DrillSchedules.Personal(s, person.Id, D(2026, 11, 12));
+        var row = Assert.Single(rows);                                                                        // not the ship drill, not the type that does not apply
+        Assert.Equal((fire, D(2026, 11, 3), D(2026, 12, 31), DrillStatus.NotDue), (row.Type, row.LastTookPart, row.Due, row.Status));
+    }
+
+    [Fact]
+    public void APersonWhoIsNotOnTheCrewListHasNothingToCountFrom()
+    {
+        var fire = new DrillType { Id = Guid.NewGuid(), Name = "Fire", IntervalKind = DrillIntervalKind.CalendarMonths, IntervalCount = 1, EveryCrewMember = true, IsActive = true };
+        var row = Assert.Single(DrillSchedules.Personal(new DrillSnapshot([fire], new Dictionary<Guid, DrillOverride>(), [], []), Guid.NewGuid(), D(2026, 11, 12)));
+        Assert.Equal((null, DrillStatus.NeverHeld), (row.Due, row.Status));
+    }
+
+    [Fact]
+    public void WithNoTypeThatEveryoneAttends_TheQuarterRuleCannotBeTriggered()
+    {
+        var mob = new DrillType { Id = Guid.NewGuid(), Name = "MOB", IntervalKind = DrillIntervalKind.CalendarMonths, IntervalCount = 3, IsActive = true };
+        var q = DrillSchedules.Build(Guid.NewGuid(), "MV One", D(2026, 11, 12), new DrillSnapshot([mob], new Dictionary<Guid, DrillOverride>(), [], [Crew("A", D(2026, 1, 1)), Crew("B", D(2026, 1, 1))])).Quarter;
+        Assert.Equal((2, 0, false), (q.CrewCount, q.NotTakenPart, q.Triggered));
+        Assert.False(DrillSchedules.Build(Guid.NewGuid(), "MV One", D(2026, 11, 12), new DrillSnapshot([], new Dictionary<Guid, DrillOverride>(), [], [Crew("A", D(2026, 1, 1))])).Quarter.Triggered);
+    }
+
+    [Fact]
     public void AnAbsentOrObservingPersonHasNotTakenPart()
     {
         var fire = new DrillType { Id = Guid.NewGuid(), Name = "Fire", IntervalKind = DrillIntervalKind.CalendarMonths, IntervalCount = 1, WarningDays = 0, EveryCrewMember = true, IsActive = true };

@@ -178,6 +178,24 @@ public class DrillTests : IAsyncLifetime
         Assert.Equal((4, 2, true), (q.CrewCount, q.NotTakenPart, q.Triggered));                                    // two of four is half: more than a quarter
     }
 
+    [Fact]
+    public async Task ACrewMemberSeesTheirOwnDrills_TheMasterAndTheOfficeAnyones()
+    {
+        await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(Fire, people: [Present(_master), Present(_cook)]));
+        await _s.SettleUntilQuietAsync();
+
+        var mine = await _vessel.PersonalAsync(_s.CompanyId, _s.VesselId, _cook.Id, As(_cook));
+        Assert.Equal(["Fire drill", "Abandon ship drill"], mine.Select(r => r.Type.Name));
+        Assert.NotNull(mine[0].LastTookPart);
+        Assert.Null(mine[1].LastTookPart);
+        Assert.Equal(DrillStatus.NotDue, mine[0].Status);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.PersonalAsync(_s.CompanyId, _s.VesselId, _master.Id, As(_cook)));       // not someone else's
+        Assert.Equal(DrillStatus.Overdue, (await _vessel.PersonalAsync(_s.CompanyId, _s.VesselId, _oldHand.Id, As(_master))).First().Status);        // joined long ago, never took part
+        Assert.Equal(2, (await _shore.PersonalAsync(_s.CompanyId, _s.VesselId, _oldHand.Id, _s.User)).Count);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.PersonalAsync(_s.CompanyId, _s.OtherVesselId, _cook.Id, As(_cook)));        // not their vessel
+    }
+
     // ---- types and the vessel's own rules ----
 
     [Fact]

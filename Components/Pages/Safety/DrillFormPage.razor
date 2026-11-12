@@ -1,0 +1,205 @@
+@page "/drills/new"
+@page "/drills/{Id:guid}/edit"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject DrillService Svc
+@inject NavigationManager Nav
+
+<PageTitle>@(Id is null ? "Record a drill" : "Change the drill") · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Vessel" Title="@(Id is null ? "Record a drill" : "Change the drill")" Subtitle="Pick the kind of drill, tick who took part, and say what was found. The Master signs it afterwards.">
+    <Actions>
+        <a href="/drills" class="btn btn-secondary">Schedule</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="@_blocked.Value.Title" Message="@_blocked.Value.Message" />
+}
+else
+{
+    <div class="space-y-5">
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">1. The drill</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label>Kind of drill
+                    <select class="select mt-1 w-full" value="@_typeId" @onchange="OnTypeChanged">
+                        <option value="@Guid.Empty">Choose…</option>
+                        @foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }
+                    </select>
+                </label>
+                <label>Began (ship's time)<input type="datetime-local" class="input mt-1 w-full" @bind="_started" /></label>
+                <label>Ended<input type="datetime-local" class="input mt-1 w-full" @bind="_ended" /></label>
+                <label>Ship's status
+                    <select class="select mt-1 w-full" @bind="_shipStatus">
+                        @foreach (var s in Enum.GetValues<IncidentShipStatus>()) { <option value="@s">@IncidentLook.ShipStatus(s)</option> }
+                    </select>
+                </label>
+                <label class="md:col-span-2">Where<input class="input mt-1 w-full" maxlength="200" placeholder="For example: muster stations, lifeboat deck" @bind="_place" /></label>
+            </div>
+            @if (_type is { } chosen)
+            {
+                <div class="mt-3 rounded-lg bg-surface-2 p-3 text-xs text-muted">
+                    <p><span class="font-medium text-ink">@chosen.Name</span> · @DrillLook.Interval(chosen.IntervalKind, chosen.IntervalCount)@(chosen.EveryCrewMember ? ", every crew member" : "") · @chosen.Reference</p>
+                    @if (chosen.Checklist != "") { <p class="mt-1 whitespace-pre-line">To test: @chosen.Checklist.Replace("\n", " · ")</p> }
+                </div>
+            }
+            <label class="mt-4 block">Scenario<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_scenario"></textarea></label>
+            @if (_mayName)
+            {
+                <label class="mt-4 block">Conducted by
+                    <select class="select mt-1" @bind="_conductor">
+                        <option value="@Guid.Empty">Me</option>
+                        @foreach (var c in _crew.Where(c => c.IsMaster || c.Has(CrewAuthority.ConductDrills))) { <option value="@c.Id">@c.FullName (@c.Rank)</option> }
+                    </select>
+                </label>
+            }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+                <h2 class="text-base font-semibold text-ink">2. Who took part</h2>
+                <button type="button" class="btn btn-secondary btn-sm" @onclick="() => SetAll(DrillAttendance.Present)">Everyone took part</button>
+                <button type="button" class="btn btn-ghost btn-sm" @onclick="() => SetAll(DrillAttendance.Absent)">Nobody yet</button>
+            </div>
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Name</th><th>Rank</th><th>Attendance</th><th>If absent, why</th></tr></thead>
+                <tbody>
+                    @foreach (var p in _people)
+                    {
+                        <tr class="border-t border-line/60">
+                            <td class="py-1 font-medium">@p.Name</td><td>@p.Rank</td>
+                            <td><select class="select" @bind="p.Attendance">@foreach (var a in Enum.GetValues<DrillAttendance>()) { <option value="@a">@DrillLook.Attendance(a)</option> }</select></td>
+                            <td>@if (p.Attendance == DrillAttendance.Absent) { <select class="select" @bind="p.Absence">@foreach (var a in Enum.GetValues<DrillAbsence>().Where(a => a != DrillAbsence.None)) { <option value="@a">@DrillLook.Absence(a)</option> }</select> }</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <div class="mt-3 flex flex-wrap items-end gap-2 border-t border-line pt-3">
+                <label>An observer who is not crew<input class="input mt-1" maxlength="120" placeholder="Name (an inspector, a visitor)" @bind="_observer" /></label>
+                <button type="button" class="btn btn-secondary btn-sm" @onclick="AddObserver">Add</button>
+            </div>
+            @foreach (var o in _observers)
+            {
+                <p class="mt-1 text-xs text-muted">Observer: @o <button type="button" class="ml-2 underline" @onclick="() => _observers.Remove(o)">remove</button></p>
+            }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">3. What was found</h2>
+            <label class="block">Equipment used or tested<textarea class="textarea mt-1 w-full" rows="2" maxlength="1000" @bind="_equipment"></textarea></label>
+            <label class="mt-3 block">Findings: what went well, what could be better<textarea class="textarea mt-1 w-full" rows="3" maxlength="2000" @bind="_findings"></textarea></label>
+            <label class="mt-3 block">Deficiencies: equipment or procedure that failed<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_deficiencies"></textarea></label>
+            <label class="mt-3 block">Remarks<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_remarks"></textarea></label>
+        </div>
+
+        @if (_error is not null) { <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+        <div class="flex flex-wrap items-center gap-3">
+            <button type="button" class="btn btn-primary" disabled="@_busy" @onclick="() => SaveAsync(false)">@(Id is null ? "Record the drill" : "Save the changes")</button>
+            @if (_isMaster) { <button type="button" class="btn btn-secondary" disabled="@_busy" @onclick="() => SaveAsync(true)">@(Id is null ? "Record and sign" : "Save and sign")</button> }
+            <a href="@(Id is null ? "/drills" : $"/drills/{Id}")" class="btn btn-ghost">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "type")] private Guid? TypeQuery { get; set; }
+
+    private sealed class Row
+    {
+        public Guid CrewId;
+        public string Name = "", Rank = "";
+        public DrillAttendance Attendance = DrillAttendance.Present;
+        public DrillAbsence Absence = DrillAbsence.OnWatch;
+    }
+
+    private Guid _companyId, _vesselId, _typeId, _conductor;
+    private Actor _actor = default!;
+    private bool _loaded, _busy, _isMaster, _mayName;
+    private (string Title, string Message)? _blocked;
+    private string? _error;
+    private List<DrillType> _types = [];
+    private List<CrewMember> _crew = [];
+    private readonly List<Row> _people = [];
+    private readonly List<string> _observers = [];
+    private DrillType? _type => _types.FirstOrDefault(t => t.Id == _typeId);
+    private DateTime _started = DateTime.UtcNow.AddHours(-1), _ended = DateTime.UtcNow;
+    private IncidentShipStatus _shipStatus;
+    private string _place = "", _scenario = "", _equipment = "", _findings = "", _deficiencies = "", _remarks = "", _observer = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        if (!NodeContext.Current.IsVessel) { _blocked = ("Drills are recorded onboard", "The office reads and comments on the vessels' drills; the Master or an officer onboard records them."); _loaded = true; return; }
+        var me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+        if (me?.VesselId is not { } vesselId || !(await Svc.EnabledVesselsAsync(_companyId)).Any(v => v.Id == vesselId)) { _blocked = ("Drills are switched off", "The Drills and Meetings module has not been switched on for this vessel, or you are not one of its crew."); _loaded = true; return; }
+        if (!me.IsMaster && !me.Has(CrewAuthority.ConductDrills)) { _blocked = ("Not yours to record", "Only the Master, or crew the office has given the authority to conduct drills, record a drill."); _loaded = true; return; }
+        _vesselId = vesselId;
+        (_isMaster, _mayName) = (me.IsMaster, me.IsMaster);
+        _types = await Svc.TypesAsync(_companyId);
+        _crew = await Svc.CrewAboardAsync(_companyId, vesselId);
+        foreach (var c in _crew) _people.Add(new Row { CrewId = c.Id, Name = c.FullName, Rank = c.Rank });
+
+        if (Id is { } id)
+        {
+            var detail = await Svc.GetAsync(_companyId, id, _actor);
+            if (detail is null || !detail.Can.Edit) { _blocked = ("This drill cannot be changed", "It is signed, or it is not yours to change. Add a note on the drill page."); _loaded = true; return; }
+            Fill(detail.Drill);
+        }
+        else if (TypeQuery is { } wanted && _types.Any(t => t.Id == wanted)) { _typeId = wanted; _scenario = _type!.Scenario; }
+        _loaded = true;
+    }
+
+    private void Fill(Drill d)
+    {
+        (_typeId, _started, _ended, _shipStatus, _place, _scenario) = (d.DrillTypeId, d.StartedAt, d.EndedAt ?? d.StartedAt, d.ShipStatus, d.Place, d.Scenario);
+        (_equipment, _findings, _deficiencies, _remarks) = (d.EquipmentTested, d.Findings, d.Deficiencies, d.Remarks);
+        _conductor = d.ConductedByCrewId ?? Guid.Empty;
+        foreach (var row in _people)
+            if (d.Participants.FirstOrDefault(p => p.CrewMemberId == row.CrewId) is { } p) (row.Attendance, row.Absence) = (p.Attendance, p.Absence == DrillAbsence.None ? DrillAbsence.OnWatch : p.Absence);
+            else row.Attendance = DrillAttendance.Absent;
+        _observers.AddRange(d.Participants.Where(p => p.CrewMemberId is null).Select(p => p.Name));
+    }
+
+    private void OnTypeChanged(ChangeEventArgs e)
+    {
+        _typeId = Guid.TryParse(e.Value?.ToString(), out var id) ? id : Guid.Empty;
+        if (_type is { } t && _scenario.Trim() == "") _scenario = t.Scenario;
+    }
+
+    private void SetAll(DrillAttendance attendance) { foreach (var p in _people) p.Attendance = attendance; }
+
+    private void AddObserver()
+    {
+        if (_observer.Trim() == "") return;
+        _observers.Add(_observer.Trim());
+        _observer = "";
+    }
+
+    private async Task SaveAsync(bool sign)
+    {
+        _error = null; _busy = true;
+        try
+        {
+            var people = _people.Select(p => new DrillParticipantInput(p.CrewId, "", "", p.Attendance, p.Attendance == DrillAttendance.Absent ? p.Absence : DrillAbsence.None)).ToList();
+            people.AddRange(_observers.Select(n => new DrillParticipantInput(null, n, "", DrillAttendance.Observer)));
+            var input = new DrillInput(_typeId, _started, _ended, _shipStatus, _place, _scenario, _conductor == Guid.Empty ? null : _conductor, _equipment, _findings, _deficiencies, _remarks, people);
+            var saved = Id is { } id ? await Svc.UpdateAsync(_companyId, id, _actor, input) : await Svc.RecordAsync(_companyId, _vesselId, _actor, input);
+            if (sign) await Svc.SignAsync(_companyId, saved.Id, _actor);
+            Nav.NavigateTo($"/drills/{saved.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

@@ -22,7 +22,7 @@ public class NavCatalogTests : IAsyncLifetime
         var authorization = new ServiceCollection().AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")))
             .AddLogging().BuildServiceProvider().GetRequiredService<IAuthorizationService>();
         _catalog = new NavCatalogService(new ApprovalService(factory), new InvoiceService(factory, new NoFiles()), worklist, pms, new RestHoursService(factory),
-            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), authorization);
+            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), new DrillService(factory, worklist), authorization);
     }
 
     public Task DisposeAsync() => _s.DisposeAsync();
@@ -109,6 +109,16 @@ public class NavCatalogTests : IAsyncLifetime
         Assert.Equal(["Dashboard", "RFQs", "Purchase Orders", "Invoices", "Bank Accounts"], Pages(supplier, "Workspace"));
 
         Assert.Empty(await _catalog.GetAsync(new ClaimsPrincipal(new ClaimsIdentity()), isVessel: false));                                    // not signed in: nothing
+    }
+
+    [Fact]
+    public async Task DrillsAndMeetingsHaveTheirOwnSubHeading_TheVesselCanRecordAndTheOfficeCannot()
+    {
+        await SwitchOnAsync(PolicyModules.Drills);
+        var vessel = (await _catalog.GetAsync(Person("CompanyUser"), isVessel: true)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
+        var office = (await _catalog.GetAsync(Person("CompanyAdmin"), isVessel: false)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
+        Assert.Equal(["Drill schedule", "Record a drill", "Drill history"], vessel);
+        Assert.Equal(["Drill schedule", "Drill history"], office);                                    // drills are recorded onboard
     }
 
     [Fact]
