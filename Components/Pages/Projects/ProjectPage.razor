@@ -38,9 +38,20 @@ else
             @if (canEdit)
             {
                 <button @onclick="OpenDetails" class="btn btn-secondary btn-sm">Edit details</button>
-                @foreach (var kind in NextSteps(_detail.Status))
+                @if (BudgetPending is { } waitingRequest)
                 {
-                    <button @onclick="() => OpenStep(kind)" class="@("btn btn-sm " + (kind == ProjectEventKind.Withdrawn ? "btn-secondary" : "btn-primary"))">@StepLabel(kind)</button>
+                    <button @onclick="() => WithdrawSubmission(waitingRequest.Request.Id)" disabled="@_busy" class="btn btn-secondary btn-sm">Withdraw submission</button>
+                }
+                else
+                {
+                    @foreach (var kind in NextSteps(_detail.Status))
+                    {
+                        <button @onclick="() => OpenStep(kind)" class="@("btn btn-sm " + (kind == ProjectEventKind.Withdrawn ? "btn-secondary" : "btn-primary"))">@(kind == ProjectEventKind.Approved && _needsMatrix ? "Submit for approval" : StepLabel(kind))</button>
+                    }
+                }
+                @if (_detail.Status is ProjectStatus.Approved or ProjectStatus.Ongoing)
+                {
+                    <button @onclick="() => _variationOpen = !_variationOpen" class="btn btn-secondary btn-sm">Request variation</button>
                 }
             }
         </Actions>
@@ -64,8 +75,8 @@ else
     @if (_step is { } step)
     {
         <div class="card mb-6 border-accent-300 p-5">
-            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">@StepLabel(step)</h2>
-            <p class="mb-3 text-sm text-muted">@StepHelp(step)</p>
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">@(step == ProjectEventKind.Approved && _needsMatrix ? "Submit for approval" : StepLabel(step))</h2>
+            <p class="mb-3 text-sm text-muted">@(step == ProjectEventKind.Approved && _needsMatrix ? "The approval matrix names who approves a budget of " + Money.Format(_budgetTotal + _contingency, "USD") + " (with contingency). The budget is held still until they answer." : StepHelp(step))</p>
             <div class="flex flex-wrap items-end gap-4">
                 @if (step is ProjectEventKind.Started or ProjectEventKind.Completed)
                 {
@@ -75,6 +86,22 @@ else
                     <input @bind="_stepNote" class="input mt-1" placeholder="@(step == ProjectEventKind.Closed ? "How the cost came out against the budget" : "Optional")" /></label>
                 <button @onclick="ConfirmStep" disabled="@_busy" class="btn btn-primary">Confirm</button>
                 <button @onclick="() => _step = null" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_variationOpen && canEdit)
+    {
+        <div class="card mb-6 border-accent-300 p-5">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Request a variation</h2>
+            <p class="mb-3 text-sm text-muted">Extra work found after approval, with the extra money it needs. @(_needsMatrix ? "The approval matrix decides who approves it, by this amount." : "No approval rules apply, so it is added straight away."). Once approved it joins the specification and the budget.</p>
+            <div class="flex flex-wrap items-end gap-4">
+                <label class="text-sm">Group <input @bind="_variationGroup" class="input mt-1" placeholder="Variations" /></label>
+                <label class="min-w-[16rem] flex-1 text-sm">The extra work <input @bind="_variationText" class="input mt-1" /></label>
+                <label class="text-sm">Extra amount (USD) <input type="number" step="0.01" min="0" @bind="_variationAmount" class="input mt-1 w-40 text-right" /></label>
+                <label class="min-w-[16rem] flex-1 text-sm">Why <input @bind="_variationReason" class="input mt-1" /></label>
+                <button @onclick="RequestVariation" disabled="@_busy" class="btn btn-primary">Submit</button>
+                <button @onclick="() => _variationOpen = false" class="btn btn-secondary">Cancel</button>
             </div>
         </div>
     }
@@ -328,6 +355,23 @@ else
             }
         </section>
 
+        @if (_approvalRequests.Count > 0)
+        {
+            <section class="mb-6">
+                <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Approvals</h2>
+                @foreach (var view in _approvalRequests)
+                {
+                    var r = view.Request;
+                    <p class="mt-4 text-sm"><span class="font-medium">@(r.Kind == ProjectRequestKind.Budget ? "Budget" : "Variation: " + r.Description)</span>
+                        <span class="text-muted">· @Money.Format(r.AmountUsd, "USD") · asked by @r.SubmittedByName on @r.SubmittedAt.ToString("d MMM yyyy") ·</span>
+                        <StatusChip Label="@r.Status.ToString()" Tone="@(r.Status switch { ProjectRequestStatus.Approved => "success", ProjectRequestStatus.Pending => "warning", ProjectRequestStatus.Rejected => "danger", _ => "neutral" })" /></p>
+                    @if (r.Reason != "") { <p class="text-xs text-muted">@r.Reason</p> }
+                    <ApprovalPanel Slots="view.Slots" CanDecide="view.YourTurn" Noun="@(r.Kind == ProjectRequestKind.Budget ? "project budget" : "variation")" TotalText="@Money.Format(r.AmountUsd, "USD")" Busy="_busy" Error="_error"
+                                   OnDecide="args => DecideApproval(r.Id, args)" />
+                }
+            </section>
+        }
+
         <section class="card mb-6 p-5">
             <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Cost so far</h2>
             <div class="mb-4 grid grid-cols-2 gap-4 text-sm md:grid-cols-5">
@@ -463,6 +507,13 @@ else
     private List<ProjectBudgetApproval> _approvals = [];
     private decimal _budgetTotal, _contingency;
 
+    // approval through the matrix, and variations
+    private List<ProjectService.ApprovalRequestView> _approvalRequests = [];
+    private bool _needsMatrix, _variationOpen;
+    private string _variationGroup = "", _variationText = "", _variationReason = "";
+    private decimal _variationAmount;
+    private ProjectService.ApprovalRequestView? BudgetPending => _approvalRequests.FirstOrDefault(v => v.Request.Kind == ProjectRequestKind.Budget && v.Request.Status == ProjectRequestStatus.Pending);
+
     // adding from the Worklist and maintenance
     private List<string> _info = [];
     private bool _importOpen;
@@ -541,6 +592,8 @@ else
         List<ProjectBudgetLine> lines = _onVessel ? [] : await Svc.BudgetAsync(_companyId, ProjectId);
         _approvals = _onVessel ? [] : await Svc.ApprovalsAsync(_companyId, ProjectId);
         _pmsWaiting = _onVessel ? [] : await Svc.PmsWaitingAsync(_companyId, ProjectId);
+        _approvalRequests = _onVessel ? [] : await Svc.RequestsOfAsync(_companyId, ProjectId, _actor.UserId);
+        _needsMatrix = !_onVessel && await Svc.NeedsMatrixAsync(_companyId, ProjectId);
         var costs = _onVessel ? new Dictionary<Guid, ProjectItemCost>() : (await Svc.ItemCostsAsync(_companyId, ProjectId)).ToDictionary(c => c.ItemId);
         _requests = await Svc.RequestsAsync(_companyId, ProjectId);
         foreach (var waiting in _requests.Where(r => r.Decision is null)) _answers.TryAdd(waiting.Request.Id, new AnswerRow());
@@ -595,6 +648,16 @@ else
         _editDetails = false;
     }, "Details saved");
 
+    private Task WithdrawSubmission(Guid requestId) => RunAsync(() => Svc.WithdrawRequestAsync(_companyId, requestId, _actor), "Submission withdrawn");
+
+    private Task DecideApproval(Guid requestId, (bool Approve, string Comment) args) => RunAsync(() => Svc.DecideApprovalAsync(_companyId, requestId, _actor, args.Approve, args.Comment), args.Approve ? "Approved" : "Rejected");
+
+    private Task RequestVariation() => RunAsync(async () =>
+    {
+        await Svc.RequestVariationAsync(_companyId, ProjectId, _variationGroup, _variationText, _variationAmount, _variationReason, _actor);
+        (_variationOpen, _variationGroup, _variationText, _variationReason, _variationAmount) = (false, "", "", "", 0m);
+    }, "Variation requested");
+
     private static ProjectEventKind[] NextSteps(ProjectStatus status) => status switch
     {
         ProjectStatus.Planning => [ProjectEventKind.Approved],
@@ -628,7 +691,8 @@ else
 
     private Task ConfirmStep() => RunAsync(async () =>
     {
-        await Svc.RecordAsync(_companyId, ProjectId, _step!.Value, _stepDate, _stepNote, _actor);
+        if (_step == ProjectEventKind.Approved && _needsMatrix) await Svc.SubmitAsync(_companyId, ProjectId, _actor);
+        else await Svc.RecordAsync(_companyId, ProjectId, _step!.Value, _stepDate, _stepNote, _actor);
         _step = null;
     }, "Recorded");
 

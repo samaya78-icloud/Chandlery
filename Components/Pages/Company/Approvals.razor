@@ -3,11 +3,12 @@
 @rendermode InteractiveServer
 @inject ApprovalService ApprovalSvc
 @inject InvoiceService InvoiceSvc
+@inject ProjectService ProjectSvc
 @inject NavigationManager Navigation
 
 <PageTitle>My Approvals · Chandlery</PageTitle>
 
-<PageHeader Eyebrow="Work" Title="My Approvals" Subtitle="Purchase orders and invoices waiting for your approval. Open one to approve or reject it." />
+<PageHeader Eyebrow="Work" Title="My Approvals" Subtitle="Purchase orders, invoices and project budgets waiting for your approval. Open one to approve or reject it." />
 
 @if (!_loaded)
 {
@@ -21,13 +22,13 @@ else
 {
     <DataGrid TItem="InboxRow" Items="_rows" ItemName="items" EmptyText="Nothing matches these filters." OnRowClick="Open">
         <GridColumn Title="Type" Text="r => TypeText(r)" Filter="GridFilter.Select" Context="row">
-            <span class="chip chip-plain" data-tone="@(row.Kind == DocKind.PurchaseOrder ? "info" : "accent")">@(row.Kind == DocKind.PurchaseOrder ? "PO" : "Invoice")</span>
+            <span class="chip chip-plain" data-tone="@(row.Kind == DocKind.PurchaseOrder ? "info" : row.Kind == DocKind.Project ? "success" : "accent")">@TypeText(row)</span>
         </GridColumn>
         <GridColumn Title="Number" Text="r => r.Number" Context="row">
             <DocLink Kind="row.Kind" Id="row.Id" Text="@row.Number" />
         </GridColumn>
-        <GridColumn Title="Supplier" Text="r => r.Supplier" Context="row">
-            <DocLink Kind="DocKind.Supplier" Id="row.SupplierId" Text="@row.Supplier" Plain="true" />
+        <GridColumn Title="Supplier / project" Text="r => r.Supplier" Context="row">
+            @if (row.Kind == DocKind.Project) { @row.Supplier } else { <DocLink Kind="DocKind.Supplier" Id="row.SupplierId" Text="@row.Supplier" Plain="true" /> }
         </GridColumn>
         <GridColumn Title="Department" Text="r => r.Department" />
         <GridColumn Title="Raised" Date="r => r.Raised" />
@@ -58,12 +59,13 @@ else
             var invoices = await InvoiceSvc.GetPendingForUserAsync(companyId, userId);
             _rows = pos.Select(p => new InboxRow(DocKind.PurchaseOrder, p.Po.Id, p.Po.PoNumber, p.Po.SupplierId, p.Supplier, p.Department, p.Po.CreatedDate, names.Name(p.Level), p.Total, p.Po.Currency))
                 .Concat(invoices.Select(i => new InboxRow(DocKind.Invoice, i.Inv.Id, i.Inv.InvoiceNumber, i.Inv.SupplierId, i.Supplier, "", i.Inv.SubmittedAt, names.Name(i.Level), i.Inv.TotalExclTax, i.Inv.Currency)))
+                .Concat((await ProjectSvc.PendingForUserAsync(companyId, userId)).Select(p => new InboxRow(DocKind.Project, p.Request.ProjectId, p.ProjectCode, Guid.Empty, p.ProjectTitle + (p.Request.Kind == ProjectRequestKind.Variation ? " (variation)" : ""), "", p.Request.SubmittedAt, p.LevelName, p.Request.AmountUsd, "USD")))
                 .OrderByDescending(r => r.Raised).ToList();
         }
         _loaded = true;
     }
 
-    private static string TypeText(InboxRow row) => row.Kind == DocKind.PurchaseOrder ? "PO" : "Invoice";
+    private static string TypeText(InboxRow row) => row.Kind switch { DocKind.PurchaseOrder => "PO", DocKind.Project => "Project", _ => "Invoice" };
 
     private void Open(InboxRow row) => Navigation.NavigateTo(DocLinks.For(row.Kind, row.Id));
 }

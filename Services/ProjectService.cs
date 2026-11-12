@@ -261,6 +261,8 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         RequireOffice(db);
         await RequireManagerAsync(db, companyId, actor);
         await LoadEditableAsync(db, companyId, id);
+        if (await db.ProjectApprovalRequests.AnyAsync(r => r.ProjectId == id && r.Kind == ProjectRequestKind.Budget && r.Status == ProjectRequestStatus.Pending))
+            throw new InvalidOperationException("The budget is with the approvers. Withdraw the submission to change it.");
         db.ProjectBudgetLines.RemoveRange(await db.ProjectBudgetLines.Where(l => l.ProjectId == id).ToListAsync());
         var order = 0;
         foreach (var line in lines)
@@ -352,6 +354,14 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
         await RequireManagerAsync(db, companyId, actor);
+        var record = await RecordCoreAsync(db, companyId, id, kind, date, note, actor, throughMatrix: false);
+        await db.SaveChangesAsync();
+        return record;
+    }
+
+    /// <summary>The checks and the event for one step, added to the context but not saved. Approving is refused here when the approval matrix applies, unless it comes through the matrix.</summary>
+    private static async Task<ProjectStatusEvent> RecordCoreAsync(ChandleryDbContext db, Guid companyId, Guid id, ProjectEventKind kind, DateTime date, string note, Actor actor, bool throughMatrix)
+    {
         var project = await db.Projects.AsNoTracking().Include(p => p.Items).FirstOrDefaultAsync(p => p.Id == id && p.CompanyId == companyId) ?? throw new InvalidOperationException("Project not found.");
         var events = await db.ProjectStatusEvents.AsNoTracking().Where(e => e.ProjectId == id).ToListAsync();
         var status = ProjectStatusRules.Of(events);
@@ -368,6 +378,10 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
             if (problems.Count > 0) throw new InvalidOperationException(string.Join(" ", problems));
         }
 
+        var lines = kind == ProjectEventKind.Approved ? await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == id).ToListAsync() : [];
+        if (kind == ProjectEventKind.Approved && !throughMatrix && (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines))).Count > 0)
+            throw new InvalidOperationException("This budget needs approval through the approval matrix: submit it for approval.");
+
         var record = new ProjectStatusEvent
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = project.VesselId, ProjectId = id, Kind = kind, Date = Day(day), Note = (note ?? "").Trim(),
@@ -376,15 +390,209 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         db.ProjectStatusEvents.Add(record);
         if (kind == ProjectEventKind.Approved)
         {
-            var lines = await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == id).ToListAsync();
             db.ProjectBudgetApprovals.Add(new ProjectBudgetApproval
             {
                 Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = id, EventId = record.Id, TotalUsd = ProjectCostRules.Budget(lines), ContingencyUsd = ProjectCostRules.Contingency(lines),
                 ApprovedByName = actor.Name, At = record.At,
             });
         }
-        await db.SaveChangesAsync();
         return record;
+    }
+
+    // ---- approval through the matrix (office) ----
+
+    /// <summary>Who must approve an amount: the company's matrix rows without a department (a project belongs to none), at the tier that covers it. Empty when the company has none.</summary>
+    private static async Task<List<ApprovalRule>> ChainAsync(ChandleryDbContext db, Guid companyId, decimal amountUsd)
+        => ApprovalEngine.ResolveChain(await db.ApprovalRules.AsNoTracking().Where(r => r.CompanyId == companyId).ToListAsync(), null, amountUsd);
+
+    private static void OpenRequest(ChandleryDbContext db, ProjectApprovalRequest request, List<ApprovalRule> chain)
+    {
+        db.ProjectApprovalRequests.Add(request);
+        foreach (var rule in chain)
+            db.ProjectApprovalSlots.Add(new ProjectApprovalSlot { Id = Guid.CreateVersion7(), CompanyId = request.CompanyId, RequestId = request.Id, Level = rule.Level, ApproverUserId = rule.ApproverUserId });
+    }
+
+    /// <summary>
+    /// Asks for the budget to be approved. With no matrix rules the project is approved on the spot (as before); otherwise the people the matrix names for this total
+    /// are asked, level by level, and the budget is held still until they answer or the submission is withdrawn.
+    /// </summary>
+    public async Task<ProjectApprovalRequest> SubmitAsync(Guid companyId, Guid projectId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
+        var (_, status) = await LoadEditableAsync(db, companyId, projectId);
+        if (status != ProjectStatus.Planning) throw new InvalidOperationException("Only a project being planned can be submitted for approval.");
+        if (await db.ProjectApprovalRequests.AnyAsync(r => r.ProjectId == projectId && r.Kind == ProjectRequestKind.Budget && r.Status == ProjectRequestStatus.Pending))
+            throw new InvalidOperationException("This budget is already with the approvers.");
+
+        var lines = await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == projectId).ToListAsync();
+        var (total, contingency) = (ProjectCostRules.Budget(lines), ProjectCostRules.Contingency(lines));
+        var chain = await ChainAsync(db, companyId, total + contingency);
+        var request = new ProjectApprovalRequest
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Budget, AmountUsd = total + contingency, ContingencyUsd = contingency,
+            Status = chain.Count == 0 ? ProjectRequestStatus.Approved : ProjectRequestStatus.Pending, SubmittedByUserId = actor.UserId, SubmittedByName = actor.Name, SubmittedAt = DateTime.UtcNow,
+        };
+        OpenRequest(db, request, chain);
+        if (chain.Count == 0)
+        {
+            request.ClosedAt = request.SubmittedAt;
+            await RecordCoreAsync(db, companyId, projectId, ProjectEventKind.Approved, DateTime.UtcNow, "No approval rules apply to this budget.", actor, throughMatrix: true);
+        }
+        await db.SaveChangesAsync();
+        return request;
+    }
+
+    /// <summary>
+    /// Asks for extra work and money on an approved project: a variation. The same matrix decides who approves, by the variation's amount. When approved it adds a specification
+    /// item (so the yard and the vessel see the job) and a budget line (so the budget and what is left of it include it).
+    /// </summary>
+    public async Task<ProjectApprovalRequest> RequestVariationAsync(Guid companyId, Guid projectId, string group, string description, decimal amountUsd, string reason, Actor actor)
+    {
+        if (string.IsNullOrWhiteSpace(description)) throw new InvalidOperationException("Describe the extra work.");
+        if (amountUsd <= 0) throw new InvalidOperationException("Enter the extra amount, above zero.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
+        var (project, status) = await LoadEditableAsync(db, companyId, projectId);
+        if (status is not (ProjectStatus.Approved or ProjectStatus.Ongoing)) throw new InvalidOperationException("A variation changes an approved project that has not yet finished; before that, change the budget.");
+
+        var chain = await ChainAsync(db, companyId, amountUsd);
+        var request = new ProjectApprovalRequest
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Variation, AmountUsd = amountUsd, Group = string.IsNullOrWhiteSpace(group) ? "Variations" : group.Trim(),
+            Description = description.Trim(), Reason = (reason ?? "").Trim(), Status = chain.Count == 0 ? ProjectRequestStatus.Approved : ProjectRequestStatus.Pending,
+            SubmittedByUserId = actor.UserId, SubmittedByName = actor.Name, SubmittedAt = DateTime.UtcNow,
+        };
+        OpenRequest(db, request, chain);
+        if (chain.Count == 0) await ApplyVariationAsync(db, project, request);
+        await db.SaveChangesAsync();
+        return request;
+    }
+
+    private static async Task ApplyVariationAsync(ChandleryDbContext db, Project project, ProjectApprovalRequest request)
+    {
+        if (project.Items.Count >= MaxItems) throw new InvalidOperationException($"A project can hold at most {MaxItems} specification items.");
+        var item = new ProjectItem
+        {
+            Id = Guid.CreateVersion7(), Group = request.Group, Description = request.Description, Source = ProjectItemSource.Variation, SourceId = request.Id, SourceRef = "Variation",
+            Status = ProjectItemStatus.Open, SortOrder = project.Items.Count == 0 ? 0 : project.Items.Max(i => i.SortOrder) + 1,
+        };
+        project.Items.Add(item);
+        db.Entry(item).State = EntityState.Added;
+        var order = await db.ProjectBudgetLines.Where(l => l.ProjectId == project.Id).Select(l => (int?)l.SortOrder).MaxAsync() ?? -1;
+        var label = "Variation: " + request.Description;
+        db.ProjectBudgetLines.Add(new ProjectBudgetLine { Id = Guid.CreateVersion7(), CompanyId = project.CompanyId, ProjectId = project.Id, Category = label.Length > 100 ? label[..100] : label, PlannedUsd = request.AmountUsd, SortOrder = order + 1 });
+        request.ItemId = item.Id;
+        request.ClosedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>The person who asked takes the request back (before it is decided), for instance to change the budget and ask again.</summary>
+    public async Task WithdrawRequestAsync(Guid companyId, Guid requestId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
+        var request = await db.ProjectApprovalRequests.FirstOrDefaultAsync(r => r.Id == requestId && r.CompanyId == companyId) ?? throw new InvalidOperationException("Request not found.");
+        if (request.Status != ProjectRequestStatus.Pending) throw new InvalidOperationException("This request has already been decided.");
+        request.Status = ProjectRequestStatus.Withdrawn;
+        request.ClosedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>An approver answers a request that is at their level. The last approval approves the project (or adds the variation); a rejection needs a reason and ends the request.</summary>
+    public async Task DecideApprovalAsync(Guid companyId, Guid requestId, Actor actor, bool approve, string comment)
+    {
+        if (actor.UserId is not { } userId) throw new InvalidOperationException("You must be signed in.");
+        comment = (comment ?? "").Trim();
+        if (!approve && comment == "") throw new InvalidOperationException("Give a reason when rejecting.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        var request = await db.ProjectApprovalRequests.FirstOrDefaultAsync(r => r.Id == requestId && r.CompanyId == companyId) ?? throw new InvalidOperationException("Request not found.");
+        if (request.Status != ProjectRequestStatus.Pending) throw new InvalidOperationException("This request is no longer waiting for approval.");
+        var slots = await db.ProjectApprovalSlots.Where(s => s.RequestId == requestId).ToListAsync();
+        var current = ApprovalEngine.CurrentLevel(slots.Select(s => (s.Level, s.Decision))) ?? throw new InvalidOperationException("Nothing is waiting for approval.");
+        var mine = slots.FirstOrDefault(s => s.Level == current && s.ApproverUserId == userId && s.Decision == ApprovalDecision.Pending)
+            ?? throw new InvalidOperationException("It is not your turn to approve this request.");
+        mine.Decision = approve ? ApprovalDecision.Approved : ApprovalDecision.Rejected;
+        (mine.DecidedByUserId, mine.DecidedAt, mine.Comment) = (userId, DateTime.UtcNow, comment);
+
+        if (!approve)
+        {
+            request.Status = ProjectRequestStatus.Rejected;
+            request.ClosedAt = mine.DecidedAt;
+        }
+        else if (ApprovalEngine.CurrentLevel(slots.Select(s => (s.Level, s.Decision))) is null)
+        {
+            var (project, _) = await LoadEditableAsync(db, companyId, request.ProjectId);
+            request.Status = ProjectRequestStatus.Approved;
+            request.ClosedAt = mine.DecidedAt;
+            if (request.Kind == ProjectRequestKind.Budget)
+                await RecordCoreAsync(db, companyId, request.ProjectId, ProjectEventKind.Approved, DateTime.UtcNow, "Approved through the approval matrix.", actor, throughMatrix: true);
+            else
+                await ApplyVariationAsync(db, project, request);
+        }
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Whether the approval matrix would have to approve the budget as it stands: the page then offers "Submit for approval" instead of "Approve".</summary>
+    public async Task<bool> NeedsMatrixAsync(Guid companyId, Guid projectId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) return false;
+        var lines = await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == projectId).ToListAsync();
+        return (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines))).Count > 0;
+    }
+
+    public record ApprovalRequestView(ProjectApprovalRequest Request, List<ApprovalSlotView> Slots, bool YourTurn);
+
+    /// <summary>The requests made on a project, newest first, each with who was asked and what they said.</summary>
+    public async Task<List<ApprovalRequestView>> RequestsOfAsync(Guid companyId, Guid projectId, Guid? forUserId = null)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) return [];
+        var requests = await db.ProjectApprovalRequests.AsNoTracking().Where(r => r.ProjectId == projectId).OrderByDescending(r => r.SubmittedAt).ThenByDescending(r => r.Id).ToListAsync();
+        var ids = requests.Select(r => r.Id).ToList();
+        var slots = (await db.ProjectApprovalSlots.AsNoTracking().Where(s => ids.Contains(s.RequestId)).OrderBy(s => s.Level).ThenBy(s => s.Id).ToListAsync()).ToLookup(s => s.RequestId);
+        var userIds = slots.SelectMany(g => g).SelectMany(s => new[] { s.ApproverUserId, s.DecidedByUserId ?? s.ApproverUserId }).Distinct().ToList();
+        var names = await db.Users.AsNoTracking().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName);
+        var levelNames = await ApprovalLevelNames.LoadAsync(db, companyId);
+        return requests.Select(r => new ApprovalRequestView(r, slots[r.Id].Select(s => new ApprovalSlotView(s.Level, levelNames.Name(s.Level), names.GetValueOrDefault(s.ApproverUserId) ?? "?", s.Decision,
+            s.DecidedByUserId is { } d ? names.GetValueOrDefault(d) ?? "?" : "", s.DecidedAt, s.Comment)).ToList(),
+            r.Status == ProjectRequestStatus.Pending && forUserId is { } me && ApprovalEngine.CurrentLevel(slots[r.Id].Select(s => (s.Level, s.Decision))) is { } level
+                && slots[r.Id].Any(s => s.Level == level && s.ApproverUserId == me && s.Decision == ApprovalDecision.Pending))).ToList();
+    }
+
+    public record ProjectPendingRow(ProjectApprovalRequest Request, string ProjectCode, string ProjectTitle, int Level, string LevelName);
+
+    /// <summary>The project requests waiting for this person to answer: those whose current level names them.</summary>
+    public async Task<List<ProjectPendingRow>> PendingForUserAsync(Guid companyId, Guid userId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) return [];
+        var mineIds = await db.ProjectApprovalSlots.AsNoTracking().Where(s => s.ApproverUserId == userId && s.Decision == ApprovalDecision.Pending).Select(s => s.RequestId).Distinct().ToListAsync();
+        if (mineIds.Count == 0) return [];
+        var requests = await db.ProjectApprovalRequests.AsNoTracking().Where(r => mineIds.Contains(r.Id) && r.Status == ProjectRequestStatus.Pending).OrderBy(r => r.SubmittedAt).ToListAsync();
+        var slots = (await db.ProjectApprovalSlots.AsNoTracking().Where(s => mineIds.Contains(s.RequestId)).ToListAsync()).ToLookup(s => s.RequestId);
+        var projects = await db.Projects.AsNoTracking().Where(p => requests.Select(r => r.ProjectId).Contains(p.Id)).ToDictionaryAsync(p => p.Id);
+        var levelNames = await ApprovalLevelNames.LoadAsync(db, companyId);
+        var rows = new List<ProjectPendingRow>();
+        foreach (var r in requests)
+        {
+            var level = ApprovalEngine.CurrentLevel(slots[r.Id].Select(s => (s.Level, s.Decision)));
+            if (level is null || !slots[r.Id].Any(s => s.Level == level && s.ApproverUserId == userId && s.Decision == ApprovalDecision.Pending)) continue;
+            var p = projects.GetValueOrDefault(r.ProjectId);
+            rows.Add(new ProjectPendingRow(r, p?.Code ?? "", p?.Title ?? "", level.Value, levelNames.Name(level.Value)));
+        }
+        return rows;
     }
 
     private static string Past(ProjectEventKind kind) => kind switch

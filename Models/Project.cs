@@ -8,7 +8,7 @@ public enum ProjectStatus { Planning, Approved, Ongoing, Complete, Closed }
 /// <summary>What the office recorded about a project's progress. Withdrawn takes an approved project back to Planning.</summary>
 public enum ProjectEventKind { Approved, Started, Completed, Closed, Withdrawn }
 
-public enum ProjectItemSource { Manual, WorklistTask, PmsJob, ClassRequirement, OwnerRequest, Other, VesselRequest }
+public enum ProjectItemSource { Manual, WorklistTask, PmsJob, ClassRequirement, OwnerRequest, Other, VesselRequest, Variation }
 
 public enum ProjectItemStatus { Open, Done, Dropped }
 
@@ -210,6 +210,53 @@ public class ProjectCostEntry
     public decimal AmountUsd { get; set; }
     public string ByName { get; set; } = "";
     public DateTime At { get; set; }
+}
+
+public enum ProjectRequestKind { Budget, Variation }
+
+public enum ProjectRequestStatus { Pending, Approved, Rejected, Withdrawn }
+
+/// <summary>
+/// A request for the approval matrix to approve a project's budget (before work) or a variation (extra work and money, after approval). The amount is held in US dollars,
+/// frozen when the request is made. Stays at the office like every other figure.
+/// </summary>
+public class ProjectApprovalRequest
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid ProjectId { get; set; }
+    public ProjectRequestKind Kind { get; set; }
+    public ProjectRequestStatus Status { get; set; }
+
+    /// <summary>What the matrix is asked to approve: the budget with its contingency, or the variation's amount.</summary>
+    public decimal AmountUsd { get; set; }
+    public decimal ContingencyUsd { get; set; }
+
+    /// <summary>For a variation: the specification group and the job it adds, and why.</summary>
+    public string Group { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public Guid? SubmittedByUserId { get; set; }
+    public string SubmittedByName { get; set; } = "";
+    public DateTime SubmittedAt { get; set; }
+    public DateTime? ClosedAt { get; set; }
+
+    /// <summary>For an approved variation: the specification item it became.</summary>
+    public Guid? ItemId { get; set; }
+}
+
+/// <summary>One approver's slot on a project request, the same shape as on a purchase order.</summary>
+public class ProjectApprovalSlot
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RequestId { get; set; }
+    public int Level { get; set; }
+    public Guid ApproverUserId { get; set; }
+    public ApprovalDecision Decision { get; set; } = ApprovalDecision.Pending;
+    public Guid? DecidedByUserId { get; set; }
+    public DateTime? DecidedAt { get; set; }
+    public string Comment { get; set; } = "";
 }
 
 /// <summary>What the budget came to when the project was approved, kept with the approval so a later change to the budget never rewrites what was approved.</summary>

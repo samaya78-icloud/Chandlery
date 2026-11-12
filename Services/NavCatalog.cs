@@ -49,7 +49,7 @@ public class NavCatalogService(
 
     private async Task<List<NavGroup>> CompanyGroupsAsync(Guid companyId, Guid userId, bool isVessel, bool isAdmin)
     {
-        var pendingApprovals = await approvals.GetPendingCountForUserAsync(companyId, userId) + (await invoices.GetPendingForUserAsync(companyId, userId)).Count;
+        var pendingApprovals = await approvals.GetPendingCountForUserAsync(companyId, userId) + (await invoices.GetPendingForUserAsync(companyId, userId)).Count + (await projects.PendingForUserAsync(companyId, userId)).Count;
 
         List<NavEntry> work = [new("/", "Dashboard", "home"), new("/company/approvals", "My Approvals", "approval", pendingApprovals)];
         List<NavEntry> onboard =
