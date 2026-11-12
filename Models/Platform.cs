@@ -122,7 +122,7 @@ public static class VesselRules
         typeof(RiskAssessment), typeof(RaTeamMember), typeof(RaActivity), typeof(RaHazard), typeof(RaSignOff),
         typeof(ProjectNote), typeof(ProjectLink), typeof(ProjectItemRequest),      // the office's Project, its items and status events are received, not written, onboard; budgets and costs stay ashore
         typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine), typeof(PoApproval), typeof(PurchaseOrder), typeof(PoLine),
-        typeof(Incident), typeof(IncidentPerson), typeof(IncidentSupplement), typeof(IncidentEvent),      // the office's investigations, causes and settings are received, not written, onboard
+        typeof(Incident), typeof(IncidentPerson), typeof(IncidentSupplement), typeof(IncidentEvent), typeof(IncidentExposure),      // the office's investigations, causes and settings are received, not written, onboard
         typeof(RestEntry), typeof(RestSignOff), typeof(RestBreachNote), typeof(VesselDayStatus), typeof(WorkArrangementSignOff),      // the office's WorkArrangementTable is received, not written, onboard
     ];
 

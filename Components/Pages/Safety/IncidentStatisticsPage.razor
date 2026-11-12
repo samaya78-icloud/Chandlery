@@ -1,0 +1,227 @@
+@page "/incidents/statistics"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject IncidentService Svc
+
+<PageTitle>Incident statistics · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Incident statistics"
+            Subtitle="What was reported, how serious it was, and how often it happens for the hours worked. A vessel that reports nothing is a warning, not a good sign.">
+    <Actions>
+        @if (!NodeContext.Current.IsVessel)
+        {
+            <a href="/incidents/reports/statistics.csv?from=@_from.ToString("yyyy-MM")&months=@_months" class="btn btn-secondary">Statistics CSV</a>
+            <a href="/incidents/reports/register.csv?from=@_from.ToString("yyyy-MM")&months=@_months" class="btn btn-secondary">Register CSV</a>
+        }
+        <a href="/incidents" class="btn btn-secondary">Reports</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Statistics are not available" Message="@_blocked" />
+}
+else if (_v is not null)
+{
+    var f = _v.Fleet;
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        <label>Period
+            <select class="select mt-1" @bind="_months" @bind:after="LoadAsync">
+                @foreach (var m in new[] { 3, 6, 12, 24, 36 }) { <option value="@m">The last @m months</option> }
+            </select>
+        </label>
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vessel" @bind:after="LoadAsync">
+                    <option value="@Guid.Empty">The whole fleet</option>
+                    @foreach (var x in _vessels) { <option value="@x.Id">@x.Name</option> }
+                </select>
+            </label>
+        }
+        <p class="text-xs text-muted">@_v.From.ToString("MMM yyyy") to @_v.From.AddMonths(_v.Months - 1).ToString("MMM yyyy"), by the month things happened.</p>
+    </div>
+
+    <div class="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard Label="Reports" Value="@f.Reports.ToString("N0")" Hint="@($"{f.NearMisses} near misses · {f.InjuryReports} injury reports")" />
+        <StatCard Label="Lost-time injuries" Value="@f.LostTimeInjuries.ToString("N0")" Tone="@(f.LostTimeInjuries > 0 ? "danger" : "success")" Hint="@($"{f.LostDays} days lost · {f.Recordable} recordable")" />
+        <StatCard Label="Lost-time injury frequency" Value="@Rate(f.Ltif)" Hint="@RateHint(f)" />
+        <StatCard Label="Recordable case frequency" Value="@Rate(f.Trcf)" Hint="@RateHint(f)" />
+        <StatCard Label="Near misses per injury report" Value="@(f.NearMissesPerInjury is { } ratio ? ratio.ToString("0.0") : "–")" Hint="Higher is healthier: more is being reported before someone is hurt" />
+        <StatCard Label="Days to close" Value="@(f.MeanDaysToClose is { } mean ? mean.ToString("0") : "–")" Hint="On average, from report to closed" />
+        <StatCard Label="Open" Value="@f.Open.ToString("N0")" Tone="info" Hint="@($"{f.Urgent} urgent in the period")" />
+        <StatCard Label="Investigations overdue" Value="@f.Overdue.ToString("N0")" Tone="@(f.Overdue > 0 ? "danger" : "success")" />
+    </div>
+
+    <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">By month</h2>
+            @{ var peak = Math.Max(1, _v.Trend.Max(t => t.Reports)); }
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Month</th><th>Reports</th><th>Near misses</th><th>Injuries</th><th>Other</th><th class="w-1/3"></th></tr></thead>
+                <tbody>
+                    @foreach (var t in _v.Trend)
+                    {
+                        <tr class="border-t border-line/60">
+                            <td class="py-1">@t.Month.ToString("MMM yyyy")</td><td>@t.Reports</td><td>@t.NearMisses</td><td>@t.Injuries</td><td>@t.Other</td>
+                            <td><div class="h-2 rounded" style="width:@(t.Reports * 100 / peak)%;background:var(--accent-from)"></div></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">By kind and band</h2>
+            <ul class="grid grid-cols-2 gap-x-6 gap-y-1">
+                @foreach (var k in Enum.GetValues<IncidentKind>().Where(k => f.ByKind.GetValueOrDefault(k) > 0))
+                {
+                    <li class="flex justify-between"><span>@IncidentLook.Kind(k)</span><span class="font-medium">@f.ByKind[k]</span></li>
+                }
+            </ul>
+            @if (f.ByBand.Count > 0)
+            {
+                <div class="mt-4 flex flex-wrap gap-2">
+                    @foreach (var b in f.ByBand.OrderByDescending(b => _matrix.RankOf(b.Key)))
+                    {
+                        <span class="chip" data-tone="@_matrix.ToneOf(b.Key)">@b.Key: @b.Value</span>
+                    }
+                </div>
+            }
+            @if (f.Reports == 0) { <p class="text-muted">No reports in this period.</p> }
+            <p class="mt-4 text-xs text-muted">
+                Lost-time injury: a person hurt or ill who lost days from work. Recordable case: one who lost days, was on light duty, or needed more than first aid.
+                Frequencies are per million hours worked. Near misses count the reports of that kind only. These are the usual definitions; a company that reports under another standard changes them.
+            </p>
+        </div>
+    </div>
+
+    @if (_v.Vessels.Count > 1)
+    {
+        <div class="card mt-5 overflow-x-auto p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">By vessel</h2>
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="py-1">Vessel</th><th>Reports</th><th>Near misses</th><th>Injury reports</th><th>Lost-time</th><th>LTIF</th><th>TRCF</th><th>Open</th><th>Overdue</th><th>Hours known</th><th>Last report</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _v.Vessels)
+                    {
+                        <tr class="border-t border-line/60">
+                            <td class="py-1 font-medium">@r.Vessel</td><td>@r.Reports</td><td>@r.NearMisses</td><td>@r.InjuryReports</td><td>@r.LostTimeInjuries</td><td>@Rate(r.Ltif)</td><td>@Rate(r.Trcf)</td>
+                            <td>@r.Open</td><td class="@(r.Overdue > 0 ? "font-semibold text-rose-600" : "")">@r.Overdue</td><td>@r.MonthsWithHours of @r.Months months</td><td>@(r.LastReported is { } last ? last.ToString("d MMM yyyy") : "never")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (_v.Quiet.Count > 0)
+    {
+        <div class="mt-5 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <p class="font-medium">No report for @_v.QuietMonths months or more</p>
+            <p>@string.Join(", ", _v.Quiet.Select(q => q.LastReported is { } l ? $"{q.Vessel} (last {l:d MMM yyyy})" : $"{q.Vessel} (never)")). A vessel that reports nothing is either safe by luck or not looking: ask.</p>
+        </div>
+    }
+
+    <div class="card mt-5 p-4 text-sm">
+        <h2 class="mb-1 text-base font-semibold text-ink">Hours worked</h2>
+        <p class="mb-3 text-xs text-muted">The rates need the hours worked by everyone onboard. They come from Hours of rest where the vessel records it; for a month it does not cover, type the hours in. A rate is worked out only over months with hours.</p>
+        @foreach (var vessel in _v.Vessels)
+        {
+            var hours = _v.Hours.GetValueOrDefault(vessel.VesselId) ?? [];
+            <div class="mb-3">
+                <p class="font-medium">@vessel.Vessel</p>
+                <div class="mt-1 flex flex-wrap gap-2">
+                    @foreach (var m in IncidentStats.MonthsFrom(_v.From, _v.Months))
+                    {
+                        var h = hours.FirstOrDefault(x => x.Month == m);
+                        <span class="chip" data-tone="@(h is null ? "warning" : h.Source == "Typed" ? "info" : "success")" title="@(h is null ? "No hours known" : h.Source)">@m.ToString("MMM yy"): @(h is null ? "none" : h.Hours.ToString("N0"))</span>
+                    }
+                </div>
+            </div>
+        }
+        @if (_canType)
+        {
+            <div class="mt-4 flex flex-wrap items-end gap-3 border-t border-line pt-4">
+                @if (_vessels.Count > 1 && !NodeContext.Current.IsVessel)
+                {
+                    <label>Vessel<select class="select mt-1" @bind="_hoursVessel">@foreach (var x in _vessels) { <option value="@x.Id">@x.Name</option> }</select></label>
+                }
+                <label>Month<input type="month" class="input mt-1" @bind="_hoursMonth" /></label>
+                <label>Hours worked by everyone<input type="number" min="1" step="1" class="input mt-1 w-40" @bind="_hoursValue" /></label>
+                <label>Note<input class="input mt-1 w-56" maxlength="300" placeholder="Optional" @bind="_hoursNote" /></label>
+                <button class="btn btn-secondary" disabled="@_busy" @onclick="SaveHoursAsync">Save the hours</button>
+            </div>
+            @if (_hoursError is not null) { <p class="mt-2 text-rose-600">@_hoursError</p> }
+            @if (_hoursDone) { <p class="mt-2 text-emerald-700">Saved. Where Hours of rest has records for the month, those are used instead.</p> }
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vessel, _hoursVessel;
+    private Actor _actor = default!;
+    private bool _loaded, _busy, _canType, _hoursDone;
+    private int _months = 12;
+    private DateTime _from = IncidentStats.MonthOf(DateTime.UtcNow).AddMonths(-11);
+    private string? _blocked, _hoursError;
+    private IncidentStatsView? _v;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private RiskMatrix _matrix = RiskMatrix.Default;
+    private DateTime _hoursMonth = IncidentStats.MonthOf(DateTime.UtcNow).AddMonths(-1);
+    private decimal _hoursValue;
+    private string _hoursNote = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Incidents module has not been switched on for any vessel."; _loaded = true; return; }
+        _matrix = await Svc.MatrixAsync(_companyId);
+        _hoursVessel = _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _from = IncidentStats.MonthOf(DateTime.UtcNow).AddMonths(1 - _months);
+        try
+        {
+            _v = await Svc.StatsAsync(_companyId, _actor, _from, _months, _vessel == Guid.Empty ? null : _vessel);
+            _canType = true;                       // the service lets only the Master onboard, or the office, type hours in
+        }
+        catch (InvalidOperationException ex) { _blocked = ex.Message; _v = null; }
+    }
+
+    private static string Rate(double? rate) => rate is { } r ? r.ToString("0.00") : "–";
+
+    private static string RateHint(IncidentStatsRow f)
+        => f.MonthsWithHours == 0 ? "Hours worked are not known for this period" : $"Per million hours · hours known for {f.MonthsWithHours} of {f.Months} months";
+
+    private async Task SaveHoursAsync()
+    {
+        _hoursError = null; _hoursDone = false; _busy = true;
+        try
+        {
+            var vesselId = NodeContext.Current.IsVessel ? _vessels[0].Id : _hoursVessel;
+            await Svc.SetExposureAsync(_companyId, vesselId, _actor, _hoursMonth, _hoursValue, _hoursNote);
+            _hoursDone = true; _hoursValue = 0; _hoursNote = "";
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _hoursError = ex.Message; }
+        finally { _busy = false; }
+    }
+}

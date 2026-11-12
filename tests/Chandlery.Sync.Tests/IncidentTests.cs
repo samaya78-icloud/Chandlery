@@ -522,4 +522,139 @@ public class IncidentTests : IAsyncLifetime
         Assert.EndsWith(".pdf", name);
         Assert.DoesNotContain(" ", name);
     }
+
+    // ---- hours worked and the statistics ----
+
+    private static readonly DateTime LastMonth = IncidentStats.MonthOf(DateTime.UtcNow).AddMonths(-1);
+
+    [Fact]
+    public async Task OnlyTheMasterOrTheOfficeTypesTheHoursWorked_TheNewestForAMonthCounts_AndItTravels()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SetExposureAsync(_s.CompanyId, _s.VesselId, As(_cook), LastMonth, 5000));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SetExposureAsync(_s.CompanyId, _s.VesselId, As(_reporter), LastMonth, 5000));
+        Assert.Contains("more than 0", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SetExposureAsync(_s.CompanyId, _s.VesselId, As(_master), LastMonth, 0))).Message);
+        Assert.Contains("not begun", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SetExposureAsync(_s.CompanyId, _s.VesselId, As(_master), LastMonth.AddMonths(3), 5000))).Message);
+
+        await _vessel.SetExposureAsync(_s.CompanyId, _s.VesselId, As(_master), LastMonth.AddDays(12), 5000);                     // any day of the month is the month
+        await Task.Delay(20);
+        await _shore.SetExposureAsync(_s.CompanyId, _s.VesselId, _s.User, LastMonth, 6000, "Corrected from the crew list");
+        await _s.SettleUntilQuietAsync();
+
+        foreach (var side in new[] { _shore, _vessel })
+        {
+            var view = await side.StatsAsync(_s.CompanyId, side == _shore ? _s.User : As(_master), LastMonth, 1);
+            var hours = Assert.Single(view.Hours[_s.VesselId]);
+            Assert.Equal((LastMonth, 6000m, "Typed"), (hours.Month, hours.Hours, hours.Source));
+        }
+        await using var db = await _s.ShoreFactory.CreateDbContextAsync();
+        db.CurrentCompanyId = _s.CompanyId;
+        Assert.Equal(2, await db.IncidentExposures.CountAsync());                                                                // both kept; the newest counts
+    }
+
+    [Fact]
+    public async Task TheStatisticsAddUpRealReports_AndTheRatesUseTheHoursTypedIn()
+    {
+        var injured = new IncidentPersonInput(_cook.Id, _cook.FullName, "Cook", "", IncidentPersonRole.Injured, "Fracture", "Wrist", IncidentTreatment.Hospital, 5);
+        var when = LastMonth.AddDays(10);
+        await SubmittedAsync(Input(IncidentKind.InjuryIllness, actual: 3, potential: 4, likelihood: 3, persons: [injured], occurred: when));
+        await SubmittedAsync(Input(occurred: when.AddDays(1)));
+        await SubmittedAsync(Input(occurred: when.AddDays(2)));
+        await _vessel.SetExposureAsync(_s.CompanyId, _s.VesselId, As(_master), LastMonth, 400_000);
+        await _s.SettleUntilQuietAsync();
+
+        var view = await _shore.StatsAsync(_s.CompanyId, _s.User, LastMonth, 1);
+        var fleet = view.Fleet;
+        Assert.Equal((3, 2, 1, 1, 5, 1), (fleet.Reports, fleet.NearMisses, fleet.InjuryReports, fleet.LostTimeInjuries, fleet.LostDays, fleet.Recordable));
+        Assert.Equal(2.5, fleet.Ltif);                                                                                           // 1 case in 400,000 hours
+        Assert.Equal(2.5, fleet.Trcf);
+        Assert.Equal(2.0, fleet.NearMissesPerInjury);
+        Assert.Equal((400_000m, 1, true), (fleet.Hours, fleet.MonthsWithHours, fleet.HoursComplete));
+        Assert.Equal(fleet.Reports, view.Vessels.Single().Reports);
+        Assert.Equal(3, view.Trend.Single().Reports);
+        Assert.Empty(view.Quiet);                                                                                                // the vessel has reported
+
+        // The same figures onboard, for the Master.
+        var onboard = (await _vessel.StatsAsync(_s.CompanyId, As(_master), LastMonth, 1)).Fleet;
+        Assert.Equal((fleet.Reports, fleet.LostTimeInjuries, fleet.Ltif), (onboard.Reports, onboard.LostTimeInjuries, onboard.Ltif));
+    }
+
+    [Fact]
+    public async Task AWithdrawnReportIsLeftOutOfTheStatistics_AndAMonthWithoutHoursGivesNoRate()
+    {
+        var when = LastMonth.AddDays(4);
+        var kept = await SubmittedAsync(Input(occurred: when));
+        var gone = await SubmittedAsync(Input(occurred: when.AddDays(1)));
+        await _vessel.WithdrawAsync(_s.CompanyId, gone.Id, As(_reporter), "Entered twice");
+        await _s.SettleUntilQuietAsync();
+        var fleet = (await _shore.StatsAsync(_s.CompanyId, _s.User, LastMonth, 1)).Fleet;
+        Assert.Equal(1, fleet.Reports);
+        Assert.Null(fleet.Ltif);
+        Assert.Equal(0, fleet.MonthsWithHours);
+        Assert.NotEqual(Guid.Empty, kept.Id);
+    }
+
+    [Fact]
+    public async Task TheHoursComeFromHoursOfRestWhereTheVesselRecordsThem_AndOverrideWhatWasTyped()
+    {
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = PolicyModules.RestHours, Enabled = true });
+            await db.SaveChangesAsync();
+        }
+        await _s.SettleUntilQuietAsync();
+        var rest = new RestHoursService(_s.VesselFactory);
+        var day = LastMonth.AddDays(6);
+        await rest.RecordAsync(_s.CompanyId, _s.VesselId, As(_reporter), _reporter.Id, day, "08:00-12:00,13:00-17:00");        // 8 h
+        await rest.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), _master.Id, day, "06:00-12:00");                         // 6 h
+        await rest.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), _master.Id, day, "06:00-10:00", "Corrected: only four hours");   // the correction counts: 4 h
+        await _vessel.SetExposureAsync(_s.CompanyId, _s.VesselId, As(_master), LastMonth, 100_000);
+        await _s.SettleUntilQuietAsync();
+
+        var view = await _shore.StatsAsync(_s.CompanyId, _s.User, LastMonth, 2);
+        var hours = view.Hours[_s.VesselId].Single();
+        Assert.Equal((LastMonth, 12m, "Hours of rest"), (hours.Month, hours.Hours, hours.Source));
+        Assert.Equal(1, view.Fleet.MonthsWithHours);
+        Assert.Equal(2, view.Fleet.Months);
+    }
+
+    [Fact]
+    public async Task TheMastersStatisticsAreTheirVesselsOnly_ACrewMemberHasNone_AndTheOfficeCanChooseAVessel()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.StatsAsync(_s.CompanyId, As(_cook), LastMonth, 1));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.StatsAsync(_s.CompanyId, _s.User, LastMonth, 1));      // the office user is no crew member onboard
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.StatsAsync(_s.CompanyId, _s.User, LastMonth, 0));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.StatsAsync(_s.CompanyId, _s.User, LastMonth, 61));
+
+        var onboard = await _vessel.StatsAsync(_s.CompanyId, As(_master), LastMonth, 3);
+        Assert.Equal([_s.VesselId], onboard.Vessels.Select(v => v.VesselId));
+        Assert.Empty(onboard.Quiet);                                                                                             // the quiet list is the office's
+        var chosen = await _shore.StatsAsync(_s.CompanyId, _s.User, LastMonth, 3, _s.VesselId);
+        Assert.Equal([_s.VesselId], chosen.Vessels.Select(v => v.VesselId));
+        Assert.Equal(chosen.Vessels.Single().Vessel, chosen.Fleet.Vessel);
+        Assert.Equal([_s.VesselId], (await _shore.StatsAsync(_s.CompanyId, _s.User, LastMonth, 3)).Quiet.Select(q => q.VesselId));   // no report yet: a quiet vessel
+    }
+
+    [Fact]
+    public async Task TheCountsForTheHomePage_FollowWhoIsAsking()
+    {
+        var urgent = await SubmittedAsync(Input(IncidentKind.Pollution, potential: 2, likelihood: 2));
+        var needsInvestigation = await SubmittedAsync(Input(potential: 4, likelihood: 3));
+        var unreviewed = await SubmittedAsync(Input(potential: 1, likelihood: 1));
+        foreach (var r in new[] { urgent, needsInvestigation }) await _vessel.ReviewAsync(_s.CompanyId, r.Id, As(_master), "ok");
+        await _s.SettleUntilQuietAsync();
+
+        var master = (await _vessel.CountsAsync(_s.CompanyId, As(_master)))!;
+        Assert.Equal((3, 1, 1, 0, 3), (master.Open, master.ToReview, master.UrgentOpen, master.Overdue, master.Mine));
+        Assert.True(master.IsMaster);
+        var office = (await _shore.CountsAsync(_s.CompanyId, _s.User))!;
+        Assert.Equal((3, 1, 1, 1), (office.Open, office.ToReview, office.ToInvestigate, office.UrgentOpen));       // only the reviewed report that needs an investigation waits for one; the pollution report was urgent
+        Assert.False(office.IsMaster);
+
+        var mine = (await _vessel.CountsAsync(_s.CompanyId, As(_reporter)))!;
+        Assert.Equal((3, 3), (mine.Open, mine.Mine));                                                              // the reporter made all three
+        var cook = (await _vessel.CountsAsync(_s.CompanyId, As(_cook)))!;
+        Assert.Equal(0, cook.Open);
+        Assert.Null(await _vessel.CountsAsync(_s.CompanyId, _s.User));                                             // not a crew member onboard
+        Assert.NotEqual(Guid.Empty, unreviewed.Id);
+    }
 }

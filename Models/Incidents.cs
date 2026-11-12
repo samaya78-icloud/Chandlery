@@ -164,6 +164,26 @@ public class IncidentInvestigation
     public string OwnerStage { get; set; } = SyncStages.Office;
 }
 
+/// <summary>
+/// Hours worked by a vessel's people in a month, typed in where Hours of rest does not supply them. Appended, never edited: the newest for a vessel and month counts.
+/// Written by the vessel (the Master) or by the office for a vessel.
+/// </summary>
+public class IncidentExposure
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VesselId { get; set; }
+
+    /// <summary>The first day of the month, midnight UTC.</summary>
+    public DateTime Month { get; set; }
+    public decimal Hours { get; set; }
+    public string Note { get; set; } = "";
+    public string ByName { get; set; } = "";
+    public Guid? ByUserId { get; set; }
+    public DateTime At { get; set; }
+    public string OwnerStage { get; set; } = SyncStages.Vessel;
+}
+
 /// <summary>A root-cause category the office offers when investigating. Master data.</summary>
 public class IncidentCause
 {

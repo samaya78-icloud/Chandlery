@@ -130,6 +130,7 @@ public class NavCatalogService(
             safety.Add(new("/incidents", "Reports", "incident", Section: incidentReports));
             if (!isVessel) safety.Add(new("/incidents/queue", "Investigation queue", "incident", (await incidents.QueueAsync(companyId, new Actor(userId, ""))).Count, incidentReports));
             safety.Add(new("/incidents/new", "Report an incident", "incident", Section: incidentReports));
+            if (!isVessel) safety.Add(new("/incidents/statistics", "Statistics", "incident", Section: incidentReports));
             safety.Add(new("/incidents/lessons", "Lessons learned", "incident", Section: incidentReports));
             if (!isVessel) admin.Add(new("/incidents/settings", "Incident settings", "incident"));
         }

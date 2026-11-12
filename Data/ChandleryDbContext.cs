@@ -74,6 +74,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<IncidentSupplement> IncidentSupplements => Set<IncidentSupplement>();
     public DbSet<IncidentEvent> IncidentEvents => Set<IncidentEvent>();
     public DbSet<IncidentInvestigation> IncidentInvestigations => Set<IncidentInvestigation>();
+    public DbSet<IncidentExposure> IncidentExposures => Set<IncidentExposure>();
     public DbSet<IncidentCause> IncidentCauses => Set<IncidentCause>();
     public DbSet<IncidentSettings> IncidentSettingsRows => Set<IncidentSettings>();
     public DbSet<RestRuleSet> RestRuleSets => Set<RestRuleSet>();
@@ -707,6 +708,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Incident>().WithMany().HasForeignKey(v => v.IncidentId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(v => new { v.IncidentId, v.Version }).IsUnique();
             b.HasQueryFilter(v => CurrentCompanyId == null || v.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<IncidentExposure>(b =>
+        {
+            b.Property(x => x.Hours).HasPrecision(14, 2);
+            b.Property(x => x.Note).HasMaxLength(300);
+            b.Property(x => x.ByName).HasMaxLength(120);
+            b.Property(x => x.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(x => x.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(x => new { x.VesselId, x.Month, x.At });
+            b.HasQueryFilter(x => CurrentCompanyId == null || x.CompanyId == CurrentCompanyId);
         });
         modelBuilder.Entity<IncidentCause>(b =>
         {

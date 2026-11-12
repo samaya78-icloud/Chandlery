@@ -399,6 +399,37 @@ app.MapGet("/rest/table/{vesselId:guid}/pdf", async (Guid vesselId, int? version
     return Results.File(ArrangementPdf.Build(doc), "application/pdf", name + ".pdf");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
+// Incident figures as CSV (office only): the register of reports and the statistics, for ?from=yyyy-MM and ?months=n (the last 12 months when left out).
+app.MapGet("/incidents/reports/{kind}.csv", async (string kind, string? from, int? months, HttpContext http, IncidentService incidents) =>
+{
+    if (NodeContext.Current.IsVessel || !Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var count = months is >= 1 and <= 60 ? months.Value : 12;
+    var start = IncidentStats.MonthOf(DateTime.UtcNow).AddMonths(1 - count);
+    if (from is not null && !DateTime.TryParseExact(from + "-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal, out start)) return Results.NotFound();
+    start = IncidentStats.MonthOf(start);
+    var actor = Actor.From(http.User);
+    string? csv;
+    try
+    {
+        csv = kind switch
+        {
+            "register" => IncidentReports.RegisterCsv((await incidents.ListAsync(companyId, actor)).Where(r => r.Status != IncidentStatus.Draft && r.Incident.OccurredAt >= start && r.Incident.OccurredAt < start.AddMonths(count))),
+            "statistics" => IncidentReports.StatisticsCsv(await StatsRowsAsync()),
+            _ => null,
+        };
+    }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    if (csv is null) return Results.NotFound();
+    var utf8 = new System.Text.UTF8Encoding(true);
+    return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"incident-{kind}-{start:yyyy-MM}-{count}m.csv");
+
+    async Task<List<IncidentStatsRow>> StatsRowsAsync()
+    {
+        var view = await incidents.StatsAsync(companyId, actor, start, count);
+        return [view.Fleet, .. view.Vessels];
+    }
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
 // An incident report as a PDF, as the person asking may see it (the reporter their own, the Master the vessel's, the office any). Works onboard and ashore.
 app.MapGet("/incidents/{incidentId:guid}/pdf", async (Guid incidentId, HttpContext http, IncidentService incidents, RiskLibraryService library, IDbContextFactory<ChandleryDbContext> factory) =>
 {

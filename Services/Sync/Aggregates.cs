@@ -55,6 +55,7 @@ public static class Aggregates
         new(nameof(Incident), typeof(Incident)),
         new(nameof(IncidentEvent), typeof(IncidentEvent)),
         new(nameof(IncidentInvestigation), typeof(IncidentInvestigation)),
+        new(nameof(IncidentExposure), typeof(IncidentExposure)),
         new(nameof(Project), typeof(Project)),
         new(nameof(ProjectStatusEvent), typeof(ProjectStatusEvent)),
         new(nameof(ProjectNote), typeof(ProjectNote)),
@@ -68,7 +69,7 @@ public static class Aggregates
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
-        || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation)
+        || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation) || clr == typeof(IncidentExposure)
         || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink) || clr == typeof(ProjectItemRequest) || clr == typeof(ProjectItemDecision)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
 
@@ -131,6 +132,7 @@ public static class Aggregates
         Incident inc => inc.OwnerStage,
         IncidentEvent incEvent => incEvent.OwnerStage,
         IncidentInvestigation incInvestigation => incInvestigation.OwnerStage,
+        IncidentExposure incExposure => incExposure.OwnerStage,
         RaSignOff rs => rs.OwnerStage,
         Project pr => pr.OwnerStage,
         ProjectStatusEvent pe => pe.OwnerStage,
@@ -172,6 +174,7 @@ public static class Aggregates
         else if (root is Incident incident) incident.OwnerStage = stage;
         else if (root is IncidentEvent incidentEvent) incidentEvent.OwnerStage = stage;
         else if (root is IncidentInvestigation investigation) investigation.OwnerStage = stage;
+        else if (root is IncidentExposure exposure) exposure.OwnerStage = stage;
         else if (root is RaSignOff signOff) signOff.OwnerStage = stage;
         else if (root is Project project) project.OwnerStage = stage;
         else if (root is ProjectStatusEvent projectEvent) projectEvent.OwnerStage = stage;

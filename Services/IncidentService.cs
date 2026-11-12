@@ -20,6 +20,12 @@ public sealed record IncidentFilter(Guid? VesselId = null, IncidentStatus? Statu
 
 public sealed record IncidentRow(Incident Incident, IncidentStatus Status, bool InvestigationOverdue, bool ReportedLate, string ReporterName, int OpenActions, string VesselName, DateTime? Due = null);
 
+public sealed record IncidentStatsView(DateTime From, int Months, IncidentStatsRow Fleet, IReadOnlyList<IncidentStatsRow> Vessels, IReadOnlyList<IncidentMonthPoint> Trend,
+    IReadOnlyList<(Guid VesselId, string Vessel, DateTime? LastReported)> Quiet, int QuietMonths, IReadOnlyDictionary<Guid, IReadOnlyList<MonthHours>> Hours);
+
+/// <summary>What the home page shows for incidents. <c>Mine</c> is the person's own open reports (what a crew member sees onboard).</summary>
+public sealed record IncidentCounts(int Open, int ToReview, int ToInvestigate, int Overdue, int UrgentOpen, int Mine, bool IsMaster = false);
+
 /// <summary>What the person looking at a report may do with it. The same rules the service enforces, so a page offers only what will be accepted.</summary>
 public sealed record IncidentCan(bool IsOffice, bool Edit, bool Submit, bool Review, bool Supplement, bool Findings, bool Withdraw, bool AddAction,
     bool OpenInvestigation, bool SkipInvestigation, bool WriteInvestigation, bool Notify, bool Close, bool Reopen);
@@ -609,6 +615,125 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
             if (IncidentRules.LessonOf(i, investigations.GetValueOrDefault(i.Id), list.Any(e => e.Kind == IncidentEventKind.Reviewed)) is { } lesson) lessons.Add(lesson);
         }
         return lessons;
+    }
+
+    // ---- hours worked, and the statistics ----
+
+    /// <summary>
+    /// Types in the hours worked by a vessel's people in a month, for where Hours of rest does not supply them. By the Master onboard or by the office. Appended: the newest for a month counts.
+    /// </summary>
+    public async Task<IncidentExposure> SetExposureAsync(Guid companyId, Guid vesselId, Actor actor, DateTime month, decimal hours, string note = "")
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        if (!who.IsOffice && (!who.IsMaster || who.Crew!.VesselId != vesselId)) throw new InvalidOperationException("The hours worked are typed in by the Master, or by the office.");
+        if (!await IsEnabledForVesselAsync(db, companyId, vesselId)) throw new InvalidOperationException("Incident reports are not switched on for this vessel.");
+        if (hours is <= 0 or > 500_000) throw new InvalidOperationException("Give the hours worked by everyone onboard in the month (more than 0).");
+        var first = IncidentStats.MonthOf(month);
+        if (first > IncidentStats.MonthOf(DateTime.UtcNow)) throw new InvalidOperationException("The hours of a month that has not begun cannot be entered.");
+        var row = new IncidentExposure { Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = vesselId, Month = first, Hours = hours, Note = (note ?? "").Trim(), ByName = who.Name, ByUserId = who.UserId, At = DateTime.UtcNow, OwnerStage = Stage(db) };
+        db.IncidentExposures.Add(row);
+        await db.SaveChangesAsync();
+        return row;
+    }
+
+    /// <summary>
+    /// The hours worked by a vessel in each month: from the recorded work periods where Hours of rest is on and has records for the month, else the newest number typed in, else none.
+    /// </summary>
+    private static async Task<List<MonthHours>> HoursAsync(ChandleryDbContext db, Guid companyId, Guid vesselId, DateTime from, int months)
+    {
+        var first = IncidentStats.MonthOf(from);
+        var last = first.AddMonths(months);
+        var result = new Dictionary<DateTime, MonthHours>();
+
+        var typed = await db.IncidentExposures.AsNoTracking().Where(x => x.VesselId == vesselId && x.Month >= first && x.Month < last).ToListAsync();
+        foreach (var g in typed.GroupBy(x => x.Month)) { var newest = g.OrderBy(x => x.At).ThenBy(x => x.Id).Last(); result[g.Key] = new MonthHours(g.Key, newest.Hours, "Typed"); }
+
+        if (await RestHoursService.IsEnabledForVesselAsync(db, companyId, vesselId))
+        {
+            var entries = await db.RestEntries.AsNoTracking().Where(e => e.VesselId == vesselId && e.Date >= first && e.Date < last).ToListAsync();
+            foreach (var month in entries.GroupBy(e => IncidentStats.MonthOf(e.Date)))
+            {
+                // the latest revision of each seafarer's day is the one that counts
+                var minutes = month.GroupBy(e => (e.CrewMemberId, e.Date)).Sum(g => (long)RestSpans.Minutes(RestSpans.Normalize(RestSpans.Parse(g.OrderBy(e => e.EnteredAt).ThenBy(e => e.Id).Last().WorkSpans))));
+                if (minutes > 0) result[month.Key] = new MonthHours(month.Key, IncidentStats.HoursFromMinutes(minutes), "Hours of rest");
+            }
+        }
+        return result.Values.OrderBy(h => h.Month).ToList();
+    }
+
+    /// <summary>The cases the statistics are worked out from: every submitted, unwithdrawn report of the vessels asked for, with where each stands.</summary>
+    private async Task<List<IncidentCase>> CasesAsync(ChandleryDbContext db, Guid companyId, IReadOnlyCollection<Guid> vesselIds)
+    {
+        var incidents = await db.Incidents.AsNoTracking().Include(i => i.Persons).Where(i => i.CompanyId == companyId && vesselIds.Contains(i.VesselId) && i.SubmittedAt != null).ToListAsync();
+        if (incidents.Count == 0) return [];
+        var ids = incidents.Select(i => i.Id).ToList();
+        var events = (await db.IncidentEvents.AsNoTracking().Where(e => ids.Contains(e.IncidentId)).ToListAsync()).GroupBy(e => e.IncidentId).ToDictionary(g => g.Key, g => (IReadOnlyList<IncidentEvent>)g.ToList());
+        var investigations = (await db.IncidentInvestigations.AsNoTracking().Where(x => ids.Contains(x.IncidentId)).ToListAsync()).GroupBy(x => x.IncidentId).ToDictionary(g => g.Key, g => g.OrderBy(x => x.Version).Last());
+        var openActions = await OpenActionCountsAsync(db, companyId, ids);
+        var matrix = await RiskAssessmentService.MatrixAsync(db, companyId);
+        var limits = await LimitsAsync(db, companyId);
+        var cases = new List<IncidentCase>();
+        foreach (var i in incidents)
+        {
+            var list = events.GetValueOrDefault(i.Id) ?? [];
+            var facts = new IncidentFacts(i, list, investigations.GetValueOrDefault(i.Id), openActions.GetValueOrDefault(i.Id), IncidentRules.InvestigationRequired(i.Band, matrix, limits));
+            var status = IncidentStatusRules.Of(facts);
+            DateTime? closedAt = status == IncidentStatus.Closed ? list.Where(e => e.Kind == IncidentEventKind.Closed).Max(e => e.At) : null;
+            cases.Add(new IncidentCase(i, status, closedAt, IncidentRules.InvestigationOverdue(facts, status, matrix, limits, DateTime.UtcNow)));
+        }
+        return cases;
+    }
+
+    /// <summary>
+    /// Counts, rates and trend for a period of whole months, for the fleet (the office) or one vessel (the office, or its Master). Hours worked come from Hours of rest where the vessel
+    /// has them for a month, else from the numbers typed in; a rate is worked out only over the months the hours are known for.
+    /// </summary>
+    public async Task<IncidentStatsView> StatsAsync(Guid companyId, Actor actor, DateTime from, int months, Guid? vesselId = null, int quietMonths = 3)
+    {
+        if (months is < 1 or > 60) throw new InvalidOperationException("Choose 1 to 60 months.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        var vessels = await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.Incidents);
+        if (!who.IsOffice)
+        {
+            if (!who.IsMaster) throw new InvalidOperationException("The vessel's statistics are for the Master.");
+            vessels = vessels.Where(v => v.Id == who.Crew!.VesselId).ToList();
+        }
+        else if (vesselId is { } only) vessels = vessels.Where(v => v.Id == only).ToList();
+
+        var start = IncidentStats.MonthOf(from);
+        var cases = await CasesAsync(db, companyId, vessels.Select(v => v.Id).ToList());
+        var rows = new List<IncidentStatsRow>();
+        var hoursOf = new Dictionary<Guid, IReadOnlyList<MonthHours>>();
+        foreach (var (id, name) in vessels)
+        {
+            var hours = await HoursAsync(db, companyId, id, start, months);
+            hoursOf[id] = hours;
+            rows.Add(IncidentStats.ForVessel(id, name, cases.Where(c => c.Incident.VesselId == id), hours, start, months));
+        }
+        var fleet = IncidentStats.Combine(who.IsOffice && vesselId is null ? "Fleet" : rows.FirstOrDefault()?.Vessel ?? "Fleet", rows, months);
+        return new IncidentStatsView(start, months, fleet, rows.OrderBy(r => r.Vessel).ToList(), IncidentStats.Trend(cases, start, months),
+            who.IsOffice ? IncidentStats.Quiet(vessels, cases, DateTime.UtcNow, quietMonths) : [], quietMonths, hoursOf);
+    }
+
+    /// <summary>The home-page counts for the person: what waits for the office or the Master, and a crew member's own open reports. Null where the module is off.</summary>
+    public async Task<IncidentCounts?> CountsAsync(Guid companyId, Actor actor)
+    {
+        var master = false;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = companyId;
+            if ((await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.Incidents)).Count == 0) return null;
+            try { master = (await WhoAsync(db, companyId, actor)).IsMaster; }
+            catch (InvalidOperationException) { return null; }
+        }
+        var rows = await ListAsync(companyId, actor);
+        var open = rows.Where(r => r.Status is not (IncidentStatus.Closed or IncidentStatus.Withdrawn or IncidentStatus.Draft)).ToList();
+        return new IncidentCounts(open.Count, open.Count(r => r.Status == IncidentStatus.Reported), open.Count(r => r.Status == IncidentStatus.Reviewed), open.Count(r => r.InvestigationOverdue),
+            open.Count(r => r.Incident.IsUrgent), open.Count, master);
     }
 
     // ---- shared helpers ----

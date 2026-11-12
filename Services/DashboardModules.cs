@@ -24,7 +24,7 @@ public record AttentionItem(int Count, string Text, string Href, bool Urgent);
 /// <summary>Gathers the per-module numbers for the home page, so the cards and the attention strip read from the same place.</summary>
 public class DashboardModuleService(
     WorklistService worklist, PmsReportService pms, TankTrendService tanks, RiskAssessmentService risk,
-    RestFleetService restFleet, RestReviewService restReview, ProjectService projects)
+    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents)
 {
     private static string Hot(int n, string tone, string cold = "success") => n > 0 ? tone : cold;
 
@@ -105,6 +105,29 @@ public class DashboardModuleService(
                 new("To sign", f.ToSign.ToString("N0"), "/rest/fleet", Hot(f.ToSign + f.OutOfDate, "warning"), $"Periods over and not fully signed · {f.OutOfDate} out of date", f.ToSign, "rest periods to sign"),
                 new("Not recorded", f.Missing.ToString("N0"), "/rest/fleet", Hot(f.Missing, "warning"), $"Days across {f.Vessels} vessel(s), last two months"),
             ]));
+        }
+
+        if (await incidents.CountsAsync(companyId, Actor.From(user)) is { } ic)
+        {
+            List<ModuleStat> stats;
+            if (isVessel)
+                stats =
+                [
+                    ic.IsMaster
+                        ? new("To review", ic.ToReview.ToString("N0"), "/incidents", Hot(ic.ToReview, "warning"), "Reported, waiting for you", ic.ToReview, "incident reports to review")
+                        : new("Waiting for the Master", ic.ToReview.ToString("N0"), "/incidents", "info", "Your reports not yet reviewed"),
+                    new(ic.IsMaster ? "Open reports" : "My open reports", ic.Open.ToString("N0"), "/incidents", "info", ic.UrgentOpen > 0 ? $"{ic.UrgentOpen} urgent" : null),
+                    new("Investigations overdue", ic.Overdue.ToString("N0"), "/incidents", Hot(ic.Overdue, "danger"), "Past the date for their band", ic.Overdue, "incident investigations overdue"),
+                ];
+            else
+                stats =
+                [
+                    new("To investigate", ic.ToInvestigate.ToString("N0"), "/incidents/queue", Hot(ic.ToInvestigate, "warning"), "Reviewed, no investigation opened or waived", ic.ToInvestigate, "incident reports to investigate"),
+                    new("Investigations overdue", ic.Overdue.ToString("N0"), "/incidents/queue", Hot(ic.Overdue, "danger"), "Past the date for their band", ic.Overdue, "incident investigations overdue"),
+                    new("Urgent and open", ic.UrgentOpen.ToString("N0"), "/incidents", Hot(ic.UrgentOpen, "danger"), "Serious reports not yet closed"),
+                    new("Waiting for the Master", ic.ToReview.ToString("N0"), "/incidents", "info", "Reported, not yet reviewed onboard"),
+                ];
+            modules.Add(new("incidents", "Incident reports", isVessel ? "/incidents" : "/incidents/queue", stats));
         }
 
         if (await projects.CountsAsync(companyId) is { } pc)

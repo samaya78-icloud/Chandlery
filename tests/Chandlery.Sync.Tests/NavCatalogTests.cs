@@ -121,7 +121,7 @@ public class NavCatalogTests : IAsyncLifetime
         var office = await _catalog.GetAsync(Person("CompanyAdmin"), isVessel: false);
         Assert.Equal(["Hours of rest", "Incident reports"], Sections(office));
         Assert.Equal(["Fleet compliance", "Working table", "Reports", "Rules"], In(office, "Hours of rest"));
-        Assert.Equal(["Reports", "Investigation queue", "Report an incident", "Lessons learned"], In(office, "Incident reports"));
+        Assert.Equal(["Reports", "Investigation queue", "Report an incident", "Statistics", "Lessons learned"], In(office, "Incident reports"));
         Assert.Contains("Incident settings", Pages(office, "Admin"));                                                                         // the office sets the rules and the cause list
 
         var vessel = await _catalog.GetAsync(Person("CompanyUser"), isVessel: true);

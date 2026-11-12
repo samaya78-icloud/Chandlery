@@ -10,6 +10,7 @@
 <PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Incident reports"
             Subtitle="@(_seesAll ? "Every report of the vessel, newest first." : "Your own reports. The Master sees all of the vessel's.")">
     <Actions>
+        @if (_seesAll) { <a href="/incidents/statistics" class="btn btn-secondary">Statistics</a> }
         <a href="/incidents/lessons" class="btn btn-secondary">Lessons learned</a>
         <a href="/incidents/new" class="btn btn-primary">Report an incident</a>
     </Actions>
