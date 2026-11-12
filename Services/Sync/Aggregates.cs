@@ -58,6 +58,8 @@ public static class Aggregates
         new(nameof(IncidentExposure), typeof(IncidentExposure)),
         new(nameof(Drill), typeof(Drill)),
         new(nameof(DrillComment), typeof(DrillComment)),
+        new(nameof(Meeting), typeof(Meeting)),
+        new(nameof(MeetingComment), typeof(MeetingComment)),
         new(nameof(Project), typeof(Project)),
         new(nameof(ProjectStatusEvent), typeof(ProjectStatusEvent)),
         new(nameof(ProjectNote), typeof(ProjectNote)),
@@ -71,7 +73,7 @@ public static class Aggregates
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
-        || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation) || clr == typeof(IncidentExposure) || clr == typeof(DrillComment)
+        || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation) || clr == typeof(IncidentExposure) || clr == typeof(DrillComment) || clr == typeof(MeetingComment)
         || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink) || clr == typeof(ProjectItemRequest) || clr == typeof(ProjectItemDecision)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
 
@@ -137,6 +139,8 @@ public static class Aggregates
         IncidentExposure incExposure => incExposure.OwnerStage,
         Drill drill => drill.OwnerStage,
         DrillComment drillComment => drillComment.OwnerStage,
+        Meeting meeting => meeting.OwnerStage,
+        MeetingComment meetingComment => meetingComment.OwnerStage,
         RaSignOff rs => rs.OwnerStage,
         Project pr => pr.OwnerStage,
         ProjectStatusEvent pe => pe.OwnerStage,
@@ -181,6 +185,8 @@ public static class Aggregates
         else if (root is IncidentExposure exposure) exposure.OwnerStage = stage;
         else if (root is Drill drillDoc) drillDoc.OwnerStage = stage;
         else if (root is DrillComment drillNote) drillNote.OwnerStage = stage;
+        else if (root is Meeting meetingDoc) meetingDoc.OwnerStage = stage;
+        else if (root is MeetingComment meetingNote) meetingNote.OwnerStage = stage;
         else if (root is RaSignOff signOff) signOff.OwnerStage = stage;
         else if (root is Project project) project.OwnerStage = stage;
         else if (root is ProjectStatusEvent projectEvent) projectEvent.OwnerStage = stage;

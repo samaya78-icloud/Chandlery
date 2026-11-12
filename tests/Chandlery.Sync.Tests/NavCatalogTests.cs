@@ -117,8 +117,8 @@ public class NavCatalogTests : IAsyncLifetime
         await SwitchOnAsync(PolicyModules.Drills);
         var vessel = (await _catalog.GetAsync(Person("CompanyUser"), isVessel: true)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
         var office = (await _catalog.GetAsync(Person("CompanyAdmin"), isVessel: false)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
-        Assert.Equal(["Drill schedule", "Record a drill", "Drill history"], vessel);
-        Assert.Equal(["Drill schedule", "Drill history"], office);                                    // drills are recorded onboard
+        Assert.Equal(["Drill schedule", "Record a drill", "Drill history", "Meetings", "Record a meeting"], vessel);
+        Assert.Equal(["Drill schedule", "Drill history", "Meetings"], office);                         // drills and meetings are recorded onboard
     }
 
     [Fact]

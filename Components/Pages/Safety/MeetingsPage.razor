@@ -1,0 +1,127 @@
+@page "/meetings"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject MeetingService Svc
+@inject DrillService Drills
+
+<PageTitle>Safety meetings · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Safety meetings"
+            Subtitle="The safety committee, toolbox talks and briefings, with their minutes and the actions that came out of them.">
+    <Actions>
+        @if (_mayConduct) { <a href="/meetings/new" class="btn btn-primary">Record a meeting</a> }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Meetings are not available" Message="@_blocked" />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vessel" @bind:after="LoadAsync">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Kind of meeting
+            <select class="select mt-1" @bind="_type" @bind:after="LoadAsync">
+                <option value="@Guid.Empty">All</option>
+                @foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }
+            </select>
+        </label>
+    </div>
+
+    <div class="mb-5 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+        @foreach (var row in _schedule)
+        {
+            var (label, tone) = row.Type.Scheduled ? DrillLook.Status(row.Status) : ("When needed", "neutral");
+            <div class="card p-4 text-sm">
+                <div class="flex items-center gap-2"><h2 class="font-semibold text-ink">@row.Type.Name</h2><span class="ml-auto"><StatusChip Label="@label" Tone="@tone" /></span></div>
+                <p class="mt-1 text-xs text-muted">@(row.Type.Scheduled ? DrillLook.Interval(row.Type.IntervalKind, row.Type.IntervalCount) : "Held when needed")</p>
+                <p class="mt-2">Last held: <span class="font-medium">@DrillLook.Day(row.LastHeld)</span></p>
+                @if (row.Type.Scheduled) { <p>Next due: <span class="font-medium">@(row.Due is null ? "when the first is held" : DrillLook.Day(row.Due))</span></p> }
+                @if (_mayConduct) { <a class="btn btn-secondary btn-sm mt-3" href="/meetings/new?type=@row.Type.Id">Record</a> }
+            </div>
+        }
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <EmptyState Title="No meetings" Message="No meeting has been recorded yet." />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="px-4 py-3">Meeting</th><th class="px-4 py-3">Held</th><th class="px-4 py-3">Kind</th><th class="px-4 py-3">Chair</th><th class="px-4 py-3">Present</th><th class="px-4 py-3">Items</th><th class="px-4 py-3">Outcome</th><th class="px-4 py-3">Signed</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _rows)
+                    {
+                        <tr class="border-t border-line/60">
+                            <td class="px-4 py-3"><a class="link font-mono font-semibold" href="/meetings/@r.Meeting.Id">@r.Meeting.Code</a>@if (_vessels.Count > 1) { <div class="text-xs text-muted">@r.VesselName</div> }</td>
+                            <td class="px-4 py-3 whitespace-nowrap">@DrillLook.When(r.Meeting.HeldAt)</td>
+                            <td class="px-4 py-3">@r.Meeting.TypeName</td>
+                            <td class="px-4 py-3">@r.Meeting.ChairName</td>
+                            <td class="px-4 py-3">@r.Present</td>
+                            <td class="px-4 py-3">@r.Items</td>
+                            <td class="px-4 py-3 text-muted">@r.Meeting.Summary</td>
+                            <td class="px-4 py-3">@if (r.Meeting.IsSigned) { <StatusChip Label="Signed" Tone="success" /> } else { <StatusChip Label="Not signed" Tone="warning" /> }</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vessel, _type;
+    private Actor _actor = default!;
+    private bool _loaded, _mayConduct;
+    private string? _blocked;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<MeetingType> _types = [];
+    private List<MeetingScheduleRow> _schedule = [];
+    private List<MeetingRow> _rows = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Drills and Meetings module has not been switched on for any vessel."; _loaded = true; return; }
+        if (NodeContext.Current.IsVessel)
+        {
+            var me = await Drills.CrewOfUserAsync(_companyId, _actor.UserId);
+            if (me?.VesselId is not { } mine || _vessels.All(v => v.Id != mine)) { _blocked = "Meetings onboard are for the crew of the vessel, and the module must be switched on for it."; _loaded = true; return; }
+            _vessel = mine;
+            _mayConduct = me.IsMaster || me.Has(CrewAuthority.ConductDrills);
+        }
+        else _vessel = _vessels[0].Id;
+        _types = await Svc.TypesAsync(_companyId, includeInactive: true);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _schedule = await Svc.ScheduleAsync(_companyId, _vessel, _actor);
+        _rows = await Svc.ListAsync(_companyId, _actor, _vessel, _type == Guid.Empty ? null : _type);
+    }
+}

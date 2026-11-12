@@ -141,6 +141,8 @@ public class NavCatalogService(
             safety.Add(new("/drills", "Drill schedule", "drill", Section: drillsAndMeetings));
             if (isVessel) safety.Add(new("/drills/new", "Record a drill", "drill", Section: drillsAndMeetings));
             safety.Add(new("/drills/history", "Drill history", "drill", Section: drillsAndMeetings));
+            safety.Add(new("/meetings", "Meetings", "drill", Section: drillsAndMeetings));
+            if (isVessel) safety.Add(new("/meetings/new", "Record a meeting", "drill", Section: drillsAndMeetings));
         }
 
         if (await tanks.IsEnabledForCompanyAsync(companyId))

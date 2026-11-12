@@ -75,7 +75,7 @@ else if (_schedule is { } sc)
                         <ul class="mt-1 grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-2">
                             @foreach (var p in row.People)
                             {
-                                var (pl, pt) = DrillLook.Status(p.Status);
+                                var (pl, pt) = p.Status == DrillStatus.NeverHeld ? ("No record", "warning") : DrillLook.Status(p.Status);
                                 <li class="flex items-center gap-2"><span class="font-medium">@p.Name</span><span class="text-xs text-muted">@p.Rank</span><StatusChip Label="@pl" Tone="@pt" /><span class="text-xs text-muted">@(p.LastTookPart is { } l ? $"last took part {l:d MMM yyyy}" : "has not taken part")</span></li>
                             }
                         </ul>

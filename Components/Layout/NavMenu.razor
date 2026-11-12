@@ -37,7 +37,7 @@
                         section = item.Section;
                         @if (section != "") { <div class="nav-section-title">@section</div> }
                     }
-                    <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" or "/tanks" or "/rest" or "/incidents" or "/drills" or "/projects" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
+                    <NavLink href="@item.Href" Match="@(item.Href is "/" or "/worklist" or "/pms" or "/tanks" or "/rest" or "/incidents" or "/drills" or "/meetings" or "/projects" ? NavLinkMatch.All : NavLinkMatch.Prefix)" class="nav-link" ActiveClass="active" title="@item.Label">
                         <span class="nav-icon">@IconFor(item.Icon)</span>
                         <span class="nav-label">@item.Label</span>
                         @if (badge > 0)

@@ -1,0 +1,214 @@
+@page "/meetings/new"
+@page "/meetings/{Id:guid}/edit"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject MeetingService Svc
+@inject DrillService Drills
+@inject NavigationManager Nav
+
+<PageTitle>@(Id is null ? "Record a meeting" : "Change the minutes") · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Vessel" Title="@(Id is null ? "Record a meeting" : "Change the minutes")" Subtitle="Pick the kind of meeting, tick who was there, and write down what was said under each item. The Master signs the minutes afterwards.">
+    <Actions>
+        <a href="/meetings" class="btn btn-secondary">Meetings</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="@_blocked.Value.Title" Message="@_blocked.Value.Message" />
+}
+else
+{
+    <div class="space-y-5">
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">1. The meeting</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label>Kind of meeting
+                    <select class="select mt-1 w-full" value="@_typeId" @onchange="OnTypeChangedAsync">
+                        <option value="@Guid.Empty">Choose…</option>
+                        @foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }
+                    </select>
+                </label>
+                <label>Held (ship's time)<input type="datetime-local" class="input mt-1 w-full" @bind="_held" /></label>
+                <label>Where<input class="input mt-1 w-full" maxlength="200" placeholder="For example: officers' mess" @bind="_place" /></label>
+                <label>Secretary<input class="input mt-1 w-full" maxlength="120" @bind="_secretary" /></label>
+                @if (_isMaster)
+                {
+                    <label>Chair
+                        <select class="select mt-1 w-full" @bind="_chair">
+                            <option value="@Guid.Empty">Me</option>
+                            @foreach (var c in _crew.Where(c => c.IsMaster || c.Has(CrewAuthority.ConductDrills))) { <option value="@c.Id">@c.FullName (@c.Rank)</option> }
+                        </select>
+                    </label>
+                }
+            </div>
+            <label class="mt-4 block">The outcome in a line or two<textarea class="textarea mt-1 w-full" rows="2" maxlength="1000" @bind="_summary"></textarea></label>
+        </div>
+
+        @if (_carried.Count > 0)
+        {
+            <div class="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <p class="font-medium">Still open from earlier meetings: go through these first</p>
+                <ul class="mt-1 list-disc pl-5">@foreach (var c in _carried) { <li>@c.Task.Code @c.Task.Title <span class="text-xs">(from @c.FromCode, @c.FromHeldAt.ToString("d MMM yyyy"))</span></li> }</ul>
+            </div>
+        }
+
+        <div class="card p-4 text-sm">
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+                <h2 class="text-base font-semibold text-ink">2. Who was there</h2>
+                <button type="button" class="btn btn-secondary btn-sm" @onclick="() => SetAll(DrillAttendance.Present)">Everyone attended</button>
+                <button type="button" class="btn btn-ghost btn-sm" @onclick="() => SetAll(DrillAttendance.Absent)">Nobody yet</button>
+            </div>
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Name</th><th>Rank</th><th>Attendance</th><th>If absent, why</th></tr></thead>
+                <tbody>
+                    @foreach (var p in _people)
+                    {
+                        <tr class="border-t border-line/60">
+                            <td class="py-1 font-medium">@p.Name</td><td>@p.Rank</td>
+                            <td><select class="select" @bind="p.Attendance">@foreach (var a in Enum.GetValues<DrillAttendance>()) { <option value="@a">@DrillLook.Attendance(a)</option> }</select></td>
+                            <td>@if (p.Attendance == DrillAttendance.Absent) { <select class="select" @bind="p.Absence">@foreach (var a in Enum.GetValues<DrillAbsence>().Where(a => a != DrillAbsence.None)) { <option value="@a">@DrillLook.Absence(a)</option> }</select> }</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card p-4 text-sm">
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+                <h2 class="text-base font-semibold text-ink">3. Agenda, suggestions and what was said</h2>
+                <button type="button" class="btn btn-secondary btn-sm" @onclick="() => AddItem(MeetingItemKind.Agenda)">Add an item</button>
+                <button type="button" class="btn btn-secondary btn-sm" @onclick="() => AddItem(MeetingItemKind.Suggestion)">Add a suggestion</button>
+            </div>
+            @foreach (var item in _items)
+            {
+                <div class="mb-3 rounded-lg border border-line p-3">
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
+                        <label class="md:col-span-3">@(item.Kind == MeetingItemKind.Suggestion ? "Suggestion" : "Item")<input class="input mt-1 w-full" maxlength="300" @bind="item.Title" /></label>
+                        @if (item.Kind == MeetingItemKind.Suggestion) { <label>Raised by<input class="input mt-1 w-full" maxlength="120" @bind="item.RaisedBy" /></label> }
+                    </div>
+                    <label class="mt-2 block">What was said and decided<textarea class="textarea mt-1 w-full" rows="2" maxlength="4000" @bind="item.Notes"></textarea></label>
+                    <button type="button" class="btn btn-ghost btn-sm mt-1" @onclick="() => _items.Remove(item)">Remove</button>
+                </div>
+            }
+            @if (_items.Count == 0) { <p class="text-muted">Choose a kind of meeting to start from its standard agenda, or add items by hand.</p> }
+        </div>
+
+        @if (_error is not null) { <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+        <div class="flex flex-wrap items-center gap-3">
+            <button type="button" class="btn btn-primary" disabled="@_busy" @onclick="() => SaveAsync(false)">@(Id is null ? "Record the meeting" : "Save the changes")</button>
+            @if (_isMaster) { <button type="button" class="btn btn-secondary" disabled="@_busy" @onclick="() => SaveAsync(true)">@(Id is null ? "Record and sign" : "Save and sign")</button> }
+            <a href="@(Id is null ? "/meetings" : $"/meetings/{Id}")" class="btn btn-ghost">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "type")] private Guid? TypeQuery { get; set; }
+
+    private sealed class Row
+    {
+        public Guid CrewId;
+        public string Name = "", Rank = "";
+        public DrillAttendance Attendance = DrillAttendance.Present;
+        public DrillAbsence Absence = DrillAbsence.OnWatch;
+    }
+
+    private sealed class ItemRow
+    {
+        public MeetingItemKind Kind;
+        public string Title = "", Notes = "", RaisedBy = "";
+    }
+
+    private Guid _companyId, _vesselId, _typeId, _chair;
+    private Actor _actor = default!;
+    private bool _loaded, _busy, _isMaster;
+    private (string Title, string Message)? _blocked;
+    private string? _error;
+    private List<MeetingType> _types = [];
+    private List<CrewMember> _crew = [];
+    private List<MeetingCarriedAction> _carried = [];
+    private readonly List<Row> _people = [];
+    private readonly List<ItemRow> _items = [];
+    private DateTime _held = DateTime.UtcNow.AddHours(-1);
+    private string _place = "", _secretary = "", _summary = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        if (!NodeContext.Current.IsVessel) { _blocked = ("Meetings are recorded onboard", "The office reads and comments on the vessels' minutes; the Master or an officer onboard records them."); _loaded = true; return; }
+        var me = await Drills.CrewOfUserAsync(_companyId, _actor.UserId);
+        if (me?.VesselId is not { } vesselId || !(await Svc.EnabledVesselsAsync(_companyId)).Any(v => v.Id == vesselId)) { _blocked = ("Meetings are switched off", "The Drills and Meetings module has not been switched on for this vessel, or you are not one of its crew."); _loaded = true; return; }
+        if (!me.IsMaster && !me.Has(CrewAuthority.ConductDrills)) { _blocked = ("Not yours to record", "Only the Master, or crew the office has given the authority to conduct drills and record meetings, record a meeting."); _loaded = true; return; }
+        _vesselId = vesselId;
+        _isMaster = me.IsMaster;
+        _types = await Svc.TypesAsync(_companyId);
+        _crew = await Drills.CrewAboardAsync(_companyId, vesselId);
+        foreach (var c in _crew) _people.Add(new Row { CrewId = c.Id, Name = c.FullName, Rank = c.Rank });
+
+        if (Id is { } id)
+        {
+            var detail = await Svc.GetAsync(_companyId, id, _actor);
+            if (detail is null || !detail.Can.Edit) { _blocked = ("These minutes cannot be changed", "They are signed, or they are not yours to change. Add a note on the meeting page."); _loaded = true; return; }
+            Fill(detail.Meeting);
+            _carried = [.. detail.Carried];
+        }
+        else if (TypeQuery is { } wanted && _types.Any(t => t.Id == wanted)) await ChooseTypeAsync(wanted);
+        _loaded = true;
+    }
+
+    private void Fill(Meeting m)
+    {
+        (_typeId, _held, _place, _secretary, _summary, _chair) = (m.MeetingTypeId, m.HeldAt, m.Place, m.SecretaryName, m.Summary, m.ChairCrewId ?? Guid.Empty);
+        foreach (var row in _people)
+            if (m.Attendees.FirstOrDefault(a => a.CrewMemberId == row.CrewId) is { } a) (row.Attendance, row.Absence) = (a.Attendance, a.Absence == DrillAbsence.None ? DrillAbsence.OnWatch : a.Absence);
+            else row.Attendance = DrillAttendance.Absent;
+        foreach (var i in m.Items.OrderBy(i => i.Position)) _items.Add(new ItemRow { Kind = i.Kind, Title = i.Title, Notes = i.Notes, RaisedBy = i.RaisedBy });
+    }
+
+    private async Task OnTypeChangedAsync(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id) && id != Guid.Empty) await ChooseTypeAsync(id);
+        else { _typeId = Guid.Empty; _carried = []; }
+    }
+
+    private async Task ChooseTypeAsync(Guid typeId)
+    {
+        _typeId = typeId;
+        if (_types.FirstOrDefault(t => t.Id == typeId) is { } type && _items.Count == 0)
+            foreach (var line in type.StandardAgenda.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) _items.Add(new ItemRow { Kind = MeetingItemKind.Agenda, Title = line });
+        try { _carried = await Svc.OpenActionsAsync(_companyId, _vesselId, typeId, _actor); }
+        catch (InvalidOperationException) { _carried = []; }
+    }
+
+    private void SetAll(DrillAttendance attendance) { foreach (var p in _people) p.Attendance = attendance; }
+
+    private void AddItem(MeetingItemKind kind) => _items.Add(new ItemRow { Kind = kind });
+
+    private async Task SaveAsync(bool sign)
+    {
+        _error = null; _busy = true;
+        try
+        {
+            var people = _people.Select(p => new MeetingAttendeeInput(p.CrewId, "", "", p.Attendance, p.Attendance == DrillAttendance.Absent ? p.Absence : DrillAbsence.None)).ToList();
+            var items = _items.Select(i => new MeetingItemInput(i.Kind, i.Title, i.Notes, i.RaisedBy)).ToList();
+            var input = new MeetingInput(_typeId, _held, _place, _chair == Guid.Empty ? null : _chair, _secretary, _summary, people, items);
+            var saved = Id is { } id ? await Svc.UpdateAsync(_companyId, id, _actor, input) : await Svc.RecordAsync(_companyId, _vesselId, _actor, input);
+            if (sign) await Svc.SignAsync(_companyId, saved.Id, _actor);
+            Nav.NavigateTo($"/meetings/{saved.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}
