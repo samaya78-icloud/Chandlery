@@ -96,7 +96,7 @@ else
     private RestHoursService.RestMonth? _sheet;
 
     private string _vesselName => _vessels.FirstOrDefault(v => v.Id == _vesselId).Name ?? "";
-    private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
+    private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { ActsForMaster: true } || _me is { IsCrewAdmin: true };
 
     protected override async Task OnInitializedAsync()
     {

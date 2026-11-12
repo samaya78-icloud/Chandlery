@@ -35,6 +35,8 @@ else
         <StatCard Label="Hours out of date" Value="@stale.ToString()" Tone="info" Hint="No reading for over a week" Href="/pms/hours" />
     </div>
 
+    <RestCapacityPanel CompanyId="_companyId" VesselId="_vesselId" Jobs="_jobs" />
+
     <div class="card mb-5 flex flex-wrap items-end gap-3 p-4 text-sm">
         @if (_vessels.Count > 1)
         {

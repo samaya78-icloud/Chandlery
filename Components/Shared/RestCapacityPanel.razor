@@ -1,0 +1,84 @@
+@inject RestCapacityService Capacity
+
+@* Planned maintenance against the work time the crew has left under the hours-of-rest rules. Shown only where Rest Hours is on for the vessel. *@
+@if (_view is not null)
+{
+    <div class="card mb-5 p-4 text-sm">
+        <div class="flex flex-wrap items-center gap-3">
+            <h2 class="text-base font-semibold text-ink">Work and rest in the next @_view.Days days</h2>
+            <StatusChip Label="@VerdictLabel" Tone="@VerdictTone" />
+            <a href="/rest/table" class="link ml-auto text-xs">Working table</a>
+        </div>
+
+        @if (!_view.HasTable)
+        {
+            <p class="mt-2 text-muted">This vessel has no table of working arrangements yet, so the time the crew has left cannot be worked out. The office publishes the table under Safety.</p>
+        }
+        else
+        {
+            <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div>
+                    <p class="text-xs font-medium uppercase tracking-wide text-muted">Planned jobs</p>
+                    <p class="mt-1 text-lg font-semibold text-ink">@Hours(_view.Jobs.Minutes) in @_view.Jobs.Count job@(_view.Jobs.Count == 1 ? "" : "s")</p>
+                    <p class="text-xs text-muted">
+                        @if (_view.Jobs.Overdue > 0) { <span>@_view.Jobs.Overdue already overdue. </span> }
+                        @if (_view.Jobs.WithoutEstimate > 0) { <span>@_view.Jobs.WithoutEstimate without an estimate, not counted.</span> }
+                    </p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium uppercase tracking-wide text-muted">Work time left under the rules</p>
+                    <p class="mt-1 text-lg font-semibold text-ink">@Hours(_view.SpareMinutes)</p>
+                    <p class="text-xs text-muted">Across @_view.Lines.Sum(l => l.People) crew, on @(_view.InPort ? "port" : "sea") days. An upper bound: the table's own work is already taken off.</p>
+                </div>
+                <div>
+                    <p class="text-xs font-medium uppercase tracking-wide text-muted">Share used</p>
+                    <p class="mt-1 text-lg font-semibold text-ink">@(_view.Ratio is { } r ? $"{r:P0}" : "–")</p>
+                    <p class="text-xs text-muted">Tight from @RestCapacity.TightFromPercent%. Nothing is changed by this check.</p>
+                </div>
+            </div>
+
+            @if (_view.Lines.Count > 0)
+            {
+                <details class="mt-3">
+                    <summary class="cursor-pointer text-xs text-muted">By position</summary>
+                    <table class="mt-2 w-full text-left text-xs">
+                        <thead class="text-muted"><tr><th class="py-1">Position</th><th>Crew</th><th>Table has them work a day</th><th>Left per person</th><th>Left in total</th></tr></thead>
+                        <tbody>
+                            @foreach (var l in _view.Lines)
+                            {
+                                <tr class="border-t border-line/60"><td class="py-1">@l.Position</td><td>@l.People</td><td>@Hours(l.WorkMinutesPerDay)</td><td>@Hours(l.SpareMinutesPerPerson)</td><td>@Hours(l.SpareMinutes)</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </details>
+            }
+            @if (_view.Unmatched.Count > 0)
+            {
+                <p class="mt-2 text-xs text-amber-700">Not counted, no row of that name in the table: @string.Join(", ", _view.Unmatched). Rank names must match the table's positions.</p>
+            }
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid VesselId { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<PlannedJob> Jobs { get; set; } = [];
+
+    private RestCapacityView? _view;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try { _view = VesselId == Guid.Empty ? null : await Capacity.ForVesselAsync(CompanyId, VesselId, Jobs); }
+        catch (InvalidOperationException) { _view = null; }
+    }
+
+    private string VerdictLabel => _view!.Verdict switch
+    {
+        CapacityVerdict.Fits => "Fits", CapacityVerdict.Tight => "Tight", CapacityVerdict.Exceeds => "More than the crew can do within the rules", _ => "Cannot tell yet",
+    };
+
+    private string VerdictTone => _view!.Verdict switch { CapacityVerdict.Fits => "success", CapacityVerdict.Tight => "warning", CapacityVerdict.Exceeds => "danger", _ => "neutral" };
+
+    private static string Hours(int minutes) => minutes % 60 == 0 ? $"{minutes / 60} h" : $"{minutes / 60} h {minutes % 60:00} min";
+}

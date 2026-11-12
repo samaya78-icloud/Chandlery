@@ -51,6 +51,7 @@ builder.Services.AddScoped<RestHoursService>();
 builder.Services.AddScoped<RestReviewService>();
 builder.Services.AddScoped<WorkArrangementService>();
 builder.Services.AddScoped<RestFleetService>();
+builder.Services.AddScoped<RestCapacityService>();
 builder.Services.AddScoped<RiskAssessmentService>();
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<RiskLibraryService>();
@@ -415,7 +416,7 @@ app.MapGet("/rest/sheet/{vesselId:guid}/{crewId:guid}/{month}/pdf", async (Guid 
     return Results.File(RestSheetPdf.Build(doc), "application/pdf", name + ".pdf");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
-// Hours-of-rest reports as CSV (office only): fleet, breaches, unsigned, daily (?month=yyyy-MM, this month when left out).
+// Hours-of-rest reports as CSV (office only): fleet, breaches, unsigned, daily (?month=yyyy-MM, this month when left out), and retention (periods past the time records are kept, whatever the month).
 app.MapGet("/rest/reports/{kind}.csv", async (string kind, string? month, HttpContext http, RestFleetService fleet) =>
 {
     if (NodeContext.Current.IsVessel || !Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
@@ -427,6 +428,7 @@ app.MapGet("/rest/reports/{kind}.csv", async (string kind, string? month, HttpCo
         "breaches" => RestReports.BreachesCsv(await fleet.FleetAsync(companyId, first.Year, first.Month)),
         "unsigned" => RestReports.UnsignedCsv(await fleet.FleetAsync(companyId, first.Year, first.Month)),
         "daily" => RestReports.DailyCsv(await fleet.DailyAsync(companyId, first.Year, first.Month)),
+        "retention" => RestReports.RetentionCsv(await fleet.RetentionAsync(companyId)),
         _ => null,
     };
     if (csv is null) return Results.NotFound();

@@ -486,6 +486,10 @@ namespace Chandlery.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("Authorities")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<Guid>("CompanyId")
                         .HasColumnType("uuid");
 
@@ -4372,6 +4376,9 @@ namespace Chandlery.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("AsDeputy")
+                        .HasColumnType("boolean");
 
                     b.Property<Guid>("CompanyId")
                         .HasColumnType("uuid");

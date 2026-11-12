@@ -18,7 +18,10 @@ One platform used by ship managers and their vessels. The **office (shore)** and
 | 08 | [Tank inspection](08-tank-inspection.md) | Tank master and plan, inspections, ratings, trends, exceptions, review |
 | 09 | [Projects](09-projects.md) | Drydock and technical projects with budget vs actual. Plan: [09a](09a-projects-plan.md) |
 | 10 | [Collaboration and chat](10-collaboration-chat.md) | A conversation thread on every record in every module, across vessel, office and suppliers |
-| 11 | [Safety: rest hours](11-safety-rest-hours.md) | Seafarers' hours of work and rest (ILO 180 / STCW / MLC): daily records, limits check, sign-off, working-arrangements table, fleet compliance. Plan: [11a](11a-rest-hours-plan.md) |
+| 11 | [Safety: rest hours](11-safety-rest-hours.md) | Seafarers' hours of work and rest (ILO 180 / STCW / MLC): daily records, limits check, sign-off, working-arrangements table, fleet compliance. Plan: [11a](11a-rest-hours-plan.md). Built and merged 2026-11-09. Roadmap and follow-ups for the whole family: [11b](11b-safety-roadmap.md) |
+| 12 | [Safety: incidents](12-safety-incidents.md) | Incidents, near-misses and observations: report, Master review, investigation and root cause, actions in the Worklist, fleet statistics and rates. Draft |
+| 13 | [Safety: drills and meetings](13-safety-drills-meetings.md) | Drill schedule and records, per-person participation, safety committee and toolbox meetings with actions. Draft |
+| 14 | [Safety: permit to work](14-safety-permit-to-work.md) | Hot work, enclosed space and other permits: checklists, issue, gas readings, entry log, validity, close-out. Draft |
 
 ## Principles (apply to every module)
 1. **Offline-first.** Every screen reads and writes the local store; sync is a background process. A vessel must work for weeks without connectivity.

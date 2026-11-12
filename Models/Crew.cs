@@ -44,6 +44,17 @@ public class CrewMember
     /// <summary>May start a review of, sign or return a risk assessment onboard (the Master or Chief Engineer, named by the office).</summary>
     public bool IsRiskReviewer { get; set; }
 
+    /// <summary>
+    /// What else the office lets this person do onboard, as a comma-separated list of <see cref="CrewAuthority"/> names. A list rather than a
+    /// column for each, so the next module that needs "who may do this" adds a name, not a column and a migration.
+    /// </summary>
+    public string Authorities { get; set; } = "";
+
+    public bool Has(string authority) => CrewAuthority.Has(Authorities, authority);
+
+    /// <summary>The Master, or a deputy the office has named for signing hours of rest. Only the Master holds the Master's own powers (exceptions, the lock).</summary>
+    public bool ActsForMaster => IsMaster || Has(CrewAuthority.SignHoursAsDeputy);
+
     /// <summary>The local sign-in account (<see cref="AppUser"/>) onboard. The id is fixed here so both sides agree.</summary>
     public Guid UserId { get; set; }
 
@@ -59,4 +70,40 @@ public class CrewMember
         [nameof(PasswordHash), nameof(MustChangePassword), nameof(LoginEnabled), nameof(CredentialsChangedAt), nameof(CredentialsChangedBy)];
 
     public bool CanSignIn => LoginEnabled && IsActive && PasswordHash != "";
+}
+
+/// <summary>
+/// The things the office can allow a person to do onboard beyond their rank. Stored on <see cref="CrewMember.Authorities"/>.
+/// <see cref="Available"/> lists the ones a screen can offer: a module adds its own name here when it starts to use it.
+/// </summary>
+public static class CrewAuthority
+{
+    /// <summary>May sign a seafarer's hours of rest for the Master and acknowledge breaches, never their own and never an exception.</summary>
+    public const string SignHoursAsDeputy = "SignHoursAsDeputy";
+
+    public sealed record Info(string Name, string Label, string Help);
+
+    public static readonly IReadOnlyList<Info> Available =
+    [
+        new(SignHoursAsDeputy, "Deputy for the Master on hours of rest", "May sign a seafarer's hours as Master and acknowledge breaches, but not their own hours, and not declare exceptions."),
+    ];
+
+    public static IReadOnlySet<string> Parse(string? list)
+        => (list ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+
+    public static bool Has(string? list, string authority) => Parse(list).Contains(authority);
+
+    /// <summary>The list as stored: only names this build knows, each once, in a fixed order, so the same set always gives the same text.</summary>
+    public static string Normalise(IEnumerable<string>? names)
+    {
+        var wanted = (names ?? []).ToHashSet(StringComparer.Ordinal);
+        return string.Join(',', Available.Select(a => a.Name).Where(wanted.Contains));
+    }
+
+    public static string Set(string? list, string authority, bool on)
+    {
+        var names = Parse(list).ToHashSet(StringComparer.Ordinal);
+        if (on) names.Add(authority); else names.Remove(authority);
+        return Normalise(names);
+    }
 }

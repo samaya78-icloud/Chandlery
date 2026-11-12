@@ -111,6 +111,12 @@ public class RestSignOff
     public string SignedByName { get; set; } = "";
     public Guid? SignedByCrewId { get; set; }
     public DateTime SignedAt { get; set; }
+
+    /// <summary>The Master's signature was given by a deputy the office had named, not by the Master. Always false for the seafarer's own signature.</summary>
+    public bool AsDeputy { get; set; }
+
+    /// <summary>The name as printed: a deputy's signature says so.</summary>
+    public string SignerLabel => AsDeputy ? $"{SignedByName} (deputy for the Master)" : SignedByName;
     public string OwnerStage { get; set; } = SyncStages.Vessel;
 }
 

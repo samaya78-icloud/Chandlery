@@ -235,7 +235,7 @@ public class RestHoursService(IDbContextFactory<ChandleryDbContext> factory)
             await using var db = await factory.CreateDbContextAsync();
             db.CurrentCompanyId = companyId;
             if (await RestReview.MasterLockAsync(db, crewMemberId, date) is { } locked)
-                throw new InvalidOperationException($"{locked.FromDate:d MMM}–{locked.ToDate:d MMM} was signed by the Master ({locked.SignedByName}). Ask the Master to make the change; both signatures are then given again.");
+                throw new InvalidOperationException($"{locked.FromDate:d MMM}–{locked.ToDate:d MMM} was signed {(locked.AsDeputy ? "for the Master by " + locked.SignedByName : "by the Master (" + locked.SignedByName + ")")}. Ask the Master to make the change; both signatures are then given again.");
         }
         return await RecordDayAsync(companyId, vesselId, crewMemberId, date, workSpans, new Actor(actor.UserId, me.FullName), me.Id, reason);
     }

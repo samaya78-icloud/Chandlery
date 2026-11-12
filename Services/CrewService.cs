@@ -7,7 +7,7 @@ namespace Chandlery.Services;
 
 public record CrewInput(Guid? Id, string CrewCode, string FullName, string Rank, string Nationality, DateTime? DateOfBirth,
     string IdType, string? IdNumber, DateTime? IdExpiry, string Phone, string Email, Guid? VesselId, DateTime? SignOnDate,
-    bool IsActive, bool IsCrewAdmin, bool IsMaster = false, bool IsRiskReviewer = false);
+    bool IsActive, bool IsCrewAdmin, bool IsMaster = false, bool IsRiskReviewer = false, string Authorities = "");
 
 public record CrewRow(CrewMember Crew, string? VesselName);
 
@@ -85,7 +85,7 @@ public class CrewService(IDbContextFactory<ChandleryDbContext> factory, CrewCryp
             ? new CrewMember { Id = Guid.CreateVersion7(), CompanyId = companyId, UserId = Guid.CreateVersion7(), CredentialsChangedAt = DateTime.UtcNow, CredentialsChangedBy = actor.Name }
             : await db.CrewMembers.FirstOrDefaultAsync(c => c.Id == input.Id) ?? throw new InvalidOperationException("Crew member not found.");
 
-        var before = isNew ? "" : $"{crew.FullName}/{crew.Rank}/{crew.VesselId}/{crew.IsActive}/{crew.IsCrewAdmin}";
+        var before = isNew ? "" : $"{crew.FullName}/{crew.Rank}/{crew.VesselId}/{crew.IsActive}/{crew.IsCrewAdmin}/{crew.Authorities}";
         crew.CrewCode = code;
         crew.FullName = input.FullName.Trim();
         crew.Rank = (input.Rank ?? "").Trim();
@@ -108,9 +108,10 @@ public class CrewService(IDbContextFactory<ChandleryDbContext> factory, CrewCryp
         crew.IsCrewAdmin = input.IsCrewAdmin;
         crew.IsMaster = input.IsMaster;
         crew.IsRiskReviewer = input.IsRiskReviewer;
+        crew.Authorities = CrewAuthority.Normalise(CrewAuthority.Parse(input.Authorities));
         if (isNew) db.CrewMembers.Add(crew);
 
-        var after = $"{crew.FullName}/{crew.Rank}/{crew.VesselId}/{crew.IsActive}/{crew.IsCrewAdmin}";
+        var after = $"{crew.FullName}/{crew.Rank}/{crew.VesselId}/{crew.IsActive}/{crew.IsCrewAdmin}/{crew.Authorities}";
         AuditLog.Add(db, companyId, AuditEntityTypes.CrewMember, crew.Id, actor, isNew ? $"ADDED crew member {crew.CrewCode} {crew.FullName}" : before == after ? $"UPDATED details of {crew.CrewCode}" : $"CHANGED {crew.CrewCode}: [{before}] to [{after}]");
         await db.SaveChangesAsync();
         return crew;
@@ -129,6 +130,7 @@ public class CrewService(IDbContextFactory<ChandleryDbContext> factory, CrewCryp
         crew.IsCrewAdmin = false;
         crew.IsMaster = false;
         crew.IsRiskReviewer = false;
+        crew.Authorities = "";
         AuditLog.Add(db, companyId, AuditEntityTypes.CrewMember, crew.Id, actor, $"SIGNED OFF {crew.CrewCode}");
         await db.SaveChangesAsync();
     }

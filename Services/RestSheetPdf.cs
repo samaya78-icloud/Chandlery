@@ -132,7 +132,7 @@ public static class RestSheetPdf
         _ => $"Exception declared by the Master ({b.Decision?.ExceptionKind}).{(b.Compensatory is null ? " Compensatory rest owed." : " Compensatory rest given.")}",
     };
 
-    private static string Sign(SignView? s) => s is null ? "Not signed" : s.Current ? $"{s.Sign.SignedByName}, {s.Sign.SignedAt:d MMM yyyy HH:mm} UTC" : $"Out of date: {s.Sign.SignedByName}, {s.Sign.SignedAt:d MMM yyyy}";
+    private static string Sign(SignView? s) => s is null ? "Not signed" : s.Current ? $"{s.Sign.SignerLabel}, {s.Sign.SignedAt:d MMM yyyy HH:mm} UTC" : $"Out of date: {s.Sign.SignerLabel}, {s.Sign.SignedAt:d MMM yyyy}";
 
     private static int WorkIn(List<WorkSpan> spans, int hour)
     {

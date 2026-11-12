@@ -122,6 +122,27 @@ public class RestFleetService(IDbContextFactory<ChandleryDbContext> factory)
         return list;
     }
 
+    /// <summary>Signed periods older than each vessel's retention time (its rule set's, else the default), for review. Reads only; nothing is removed.</summary>
+    public async Task<List<RestRetentionRow>> RetentionAsync(Guid companyId, DateTime? today = null)
+    {
+        var now = (today ?? DateTime.UtcNow).Date;
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var rows = new List<RestRetentionRow>();
+        foreach (var (id, name) in await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.RestHours))
+        {
+            var (set, _) = await RestHoursService.RulesForAsync(db, companyId, id);
+            var months = set?.RetentionMonths ?? new RestRuleSet().RetentionMonths;
+            var cutoff = now.AddMonths(-months);
+            var signs = await db.RestSignOffs.AsNoTracking().Where(s => s.VesselId == id && s.Role == RestRole.Master && s.ToDate < cutoff).ToListAsync();
+            if (signs.Count == 0) continue;
+            var crew = signs.Select(s => s.CrewMemberId).Distinct().ToList();
+            var entries = await db.RestEntries.AsNoTracking().Where(e => e.VesselId == id && crew.Contains(e.CrewMemberId) && e.Date <= cutoff).ToListAsync();
+            rows.AddRange(RestRetention.PastRetention(name, id, months, now, signs, entries));
+        }
+        return rows.OrderBy(r => r.Vessel).ThenBy(r => r.CrewName).ThenBy(r => r.From).ToList();
+    }
+
     /// <summary>Every date of the month for every seafarer, for the daily export.</summary>
     public async Task<List<RestDailyRow>> DailyAsync(Guid companyId, int year, int month, DateTime? today = null)
     {
@@ -191,6 +212,10 @@ public static class RestReports
         })));
 
     private static string Sign(SignView? s) => s is null ? "Not signed" : s.Current ? "Signed " + D(s.Sign.SignedAt) : "Out of date (signed " + D(s.Sign.SignedAt) + ")";
+
+    public static string RetentionCsv(IEnumerable<RestRetentionRow> rows) => WorklistReports.Csv(
+        ["Vessel", "Seafarer", "From", "To", "Age (months)", "Kept for (months)", "Entries and corrections", "Master signed by", "Master signed on"],
+        rows.Select(r => new[] { r.Vessel, r.CrewName, D(r.From), D(r.To), r.AgeMonths.ToString(), r.RetentionMonths.ToString(), r.Revisions.ToString(), r.SignedBy, D(r.SignedAt) }));
 
     public static string DailyCsv(IEnumerable<RestDailyRow> rows) => WorklistReports.Csv(
         ["Vessel", "Seafarer", "Rank", "Date", "Work periods", "Work (h)", "Rest (h)", "Least rest in 24 h", "Least rest in 7 days", "Result", "Findings"],

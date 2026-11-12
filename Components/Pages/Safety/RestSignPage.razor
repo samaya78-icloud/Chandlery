@@ -98,9 +98,9 @@ else
                             {
                                 <button class="btn btn-primary" disabled="@(_busy || !CanSign(p))" @onclick="() => SignAsync(p, RestRole.Seafarer)">@(p.Seafarer is null ? "Sign my hours" : "Sign my hours again")</button>
                             }
-                            @if (_me.IsMaster && p.SeafarerSigned && !p.MasterSigned)
+                            @if (CanEndorse && p.SeafarerSigned && !p.MasterSigned)
                             {
-                                <button class="btn btn-primary" disabled="@(_busy || p.BreachesUnresolved > 0)" @onclick="() => SignAsync(p, RestRole.Master)">@(p.Master is null ? "Sign as Master" : "Sign as Master again")</button>
+                                <button class="btn btn-primary" disabled="@(_busy || p.BreachesUnresolved > 0)" @onclick="() => SignAsync(p, RestRole.Master)">@(p.Master is null ? (_me.IsMaster ? "Sign as Master" : "Sign as deputy for the Master") : (_me.IsMaster ? "Sign as Master again" : "Sign as deputy again"))</button>
                             }
                             @if (Hint(p) is { } hint) { <span class="text-sm text-muted">@hint</span> }
                         </div>
@@ -127,7 +127,10 @@ else
     private List<CrewMember> _crew = [];
     private RestMonthReview? _review;
 
-    private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
+    private bool CanPickSeafarer => !NodeContext.Current.IsVessel || _me is { ActsForMaster: true } || _me is { IsCrewAdmin: true };
+
+    /// <summary>The Master, or a deputy for someone else's hours (never their own).</summary>
+    private bool CanEndorse => _me is { } me && me.ActsForMaster && (me.IsMaster || _crewId != me.Id);
 
     protected override async Task OnInitializedAsync()
     {
@@ -166,8 +169,8 @@ else
         if (_me is null) return null;
         if (_crewId == _me.Id && !p.SeafarerSigned)
             return p.Gaps.Count > 0 ? "Record the days that are missing first." : p.Recorded == 0 ? "Nothing is recorded in this period." : !p.Ended ? "The period is not over yet. You can sign it now and again if a day changes." : null;
-        if (_me.IsMaster && _crewId != _me.Id && !p.SeafarerSigned && p.Recorded > 0) return p.Seafarer is null ? "Waiting for the seafarer to sign." : "The seafarer signs again first: a day was changed after they signed.";
-        if (_me.IsMaster && p.SeafarerSigned && !p.MasterSigned && p.BreachesUnresolved > 0) return $"{p.BreachesUnresolved} breach(es) need your acknowledgement first (see Breaches).";
+        if (CanEndorse && _crewId != _me.Id && !p.SeafarerSigned && p.Recorded > 0) return p.Seafarer is null ? "Waiting for the seafarer to sign." : "The seafarer signs again first: a day was changed after they signed.";
+        if (CanEndorse && p.SeafarerSigned && !p.MasterSigned && p.BreachesUnresolved > 0) return $"{p.BreachesUnresolved} breach(es) need your acknowledgement first (see Breaches).";
         return null;
     }
 
@@ -195,13 +198,13 @@ else
             else if (view.Current)
             {
                 <p class="mt-1"><StatusChip Label="Signed" Tone="success" /></p>
-                <p class="mt-1 text-ink">@view.Sign.SignedByName</p>
+                <p class="mt-1 text-ink">@view.Sign.SignerLabel</p>
                 <p class="text-xs text-muted">@view.Sign.SignedAt.ToString("d MMM yyyy HH:mm") UTC</p>
             }
             else
             {
                 <p class="mt-1"><StatusChip Label="Out of date" Tone="warning" /></p>
-                <p class="mt-1 text-ink">@view.Sign.SignedByName, @view.Sign.SignedAt.ToString("d MMM yyyy")</p>
+                <p class="mt-1 text-ink">@view.Sign.SignerLabel, @view.Sign.SignedAt.ToString("d MMM yyyy")</p>
                 <p class="text-xs text-amber-700">A day was changed after this signature was given.</p>
             }
         </div>

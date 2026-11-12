@@ -151,7 +151,7 @@ public static class RestReview
 }
 
 /// <summary>What the signed-in seafarer (or the Master) has waiting, for the vessel's home page.</summary>
-public sealed record RestAttention(bool IsMaster, int MissingDays, int ToSign, int MyUnexplained, int ToAcknowledge, int ToEndorse)
+public sealed record RestAttention(bool IsMaster, int MissingDays, int ToSign, int MyUnexplained, int ToAcknowledge, int ToEndorse, bool IsDeputy = false)
 {
     public bool Any => MissingDays + ToSign + MyUnexplained + ToAcknowledge + ToEndorse > 0;
 }
@@ -270,7 +270,8 @@ public class RestReviewService(IDbContextFactory<ChandleryDbContext> factory, Re
         if (t > DateTime.UtcNow.Date) throw new InvalidOperationException("A period can be signed once its last day has begun.");
 
         if (role == RestRole.Seafarer && crewMemberId != me.Id) throw new InvalidOperationException("Only the seafarer signs their own hours.");
-        if (role == RestRole.Master && !me.IsMaster) throw new InvalidOperationException("Only the Master signs as Master.");
+        if (role == RestRole.Master && !me.ActsForMaster) throw new InvalidOperationException("Only the Master, or a deputy the office has named, signs as Master.");
+        if (role == RestRole.Master && !me.IsMaster && crewMemberId == me.Id) throw new InvalidOperationException("A deputy cannot sign their own hours as Master. The Master or another deputy does.");
 
         var book = (await BooksAsync(db, companyId, vesselId, f, t, crewMemberId)).FirstOrDefault(b => b.CrewId == crewMemberId)
             ?? throw new InvalidOperationException("That seafarer was not found.");
@@ -296,6 +297,7 @@ public class RestReviewService(IDbContextFactory<ChandleryDbContext> factory, Re
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, VesselId = vesselId, CrewMemberId = crewMemberId, CrewName = book.Name, FromDate = f, ToDate = t, Role = role,
             Fingerprint = RestRules.Fingerprint(inputs, f, t), SignedByName = me.FullName, SignedByCrewId = me.Id, SignedAt = DateTime.UtcNow,
+            AsDeputy = role == RestRole.Master && !me.IsMaster,
         };
         db.RestSignOffs.Add(sign);
         await db.SaveChangesAsync();
@@ -330,6 +332,10 @@ public class RestReviewService(IDbContextFactory<ChandleryDbContext> factory, Re
             case RestNoteKind.Explanation:
                 if (crewMemberId != me.Id && !me.IsMaster && !me.IsCrewAdmin) throw new InvalidOperationException("You can explain your own breaches. The Master or a crew admin can do it for someone else.");
                 if (text.Length < 3) throw new InvalidOperationException("Say what happened.");
+                break;
+            case RestNoteKind.MasterAcknowledged:
+                if (!me.ActsForMaster) throw new InvalidOperationException("Only the Master, or a deputy the office has named, does this.");
+                if (!me.IsMaster && crewMemberId == me.Id) throw new InvalidOperationException("A deputy cannot acknowledge their own breaches. The Master or another deputy does.");
                 break;
             default:
                 if (!me.IsMaster) throw new InvalidOperationException("Only the Master does this.");
@@ -425,7 +431,7 @@ public class RestReviewService(IDbContextFactory<ChandleryDbContext> factory, Re
         var today = DateTime.UtcNow.Date;
         var from = new DateTime(today.Year, today.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(-1);
         var (set, limits) = await RestHoursService.RulesForAsync(db, companyId, vesselId);
-        var books = await BooksAsync(db, companyId, vesselId, from, today, me.IsMaster ? null : me.Id);
+        var books = await BooksAsync(db, companyId, vesselId, from, today, me.ActsForMaster ? null : me.Id);
 
         int missing = 0, toSign = 0, unexplained = 0, toAck = 0, toEndorse = 0;
         foreach (var book in books)
@@ -441,12 +447,12 @@ public class RestReviewService(IDbContextFactory<ChandleryDbContext> factory, Re
                 toSign += periods.Count(p => p.Ended && p.Recorded > 0 && p.Gaps.Count == 0 && !p.SeafarerSigned);
                 unexplained += breaches.Count(b => b.Status == BreachStatus.Unexplained);
             }
-            if (me.IsMaster)
+            if (me.ActsForMaster && (me.IsMaster || book.CrewId != me.Id))
             {
                 toAck += breaches.Count(b => b.Status is BreachStatus.Explained or BreachStatus.Stale);
                 toEndorse += periods.Count(p => p.Ended && p.SeafarerSigned && !p.MasterSigned);
             }
         }
-        return new RestAttention(me.IsMaster, missing, toSign, unexplained, toAck, toEndorse);
+        return new RestAttention(me.IsMaster, missing, toSign, unexplained, toAck, toEndorse, !me.IsMaster && me.ActsForMaster);
     }
 }

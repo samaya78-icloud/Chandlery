@@ -249,7 +249,7 @@ else
 
     private string ReadOnlyReason => !NodeContext.Current.IsVessel
         ? "Hours are recorded onboard. This is the vessel's record, as it reached the office."
-        : Locked ? $"{_window!.MasterLock!.FromDate:d MMM} – {_window.MasterLock.ToDate:d MMM} was signed by the Master ({_window.MasterLock.SignedByName}). Ask the Master to make a change: both signatures are then given again."
+        : Locked ? $"{_window!.MasterLock!.FromDate:d MMM} – {_window.MasterLock.ToDate:d MMM} was signed {(_window.MasterLock.AsDeputy ? "for the Master by " + _window.MasterLock.SignedByName : "by the Master (" + _window.MasterLock.SignedByName + ")")}. Ask the Master to make a change: both signatures are then given again."
         : _me is null ? "Only the seafarers of the vessel record hours." : "You can record your own hours. The Master or a crew admin can record them for someone else.";
 
     private static List<WorkSpan> SafeParse(string text) { try { return RestSpans.Parse(text); } catch (FormatException) { return []; } }

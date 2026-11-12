@@ -112,15 +112,16 @@ else
                             </div>
                         }
 
+                        @if (CanAcknowledge(g) && g.Breaches.Any(b => b.Status is BreachStatus.Explained or BreachStatus.Stale))
+                        {
+                            <div>
+                                <button class="btn btn-primary btn-sm" disabled="@_busy" @onclick="() => AcknowledgeAsync(g)">Acknowledge</button>
+                                <span class="ml-2 text-xs text-muted">Raises a follow-up task for the office.@(_me.IsMaster ? "" : " You act as deputy for the Master.")</span>
+                            </div>
+                        }
+
                         @if (_me.IsMaster)
                         {
-                            @if (g.Breaches.Any(b => b.Status is BreachStatus.Explained or BreachStatus.Stale))
-                            {
-                                <div>
-                                    <button class="btn btn-primary btn-sm" disabled="@_busy" @onclick="() => AcknowledgeAsync(g)">Acknowledge</button>
-                                    <span class="ml-2 text-xs text-muted">Raises a follow-up task for the office.</span>
-                                </div>
-                            }
                             @if (g.Breaches.Any(b => b.Status != BreachStatus.Excepted))
                             {
                                 <div class="flex flex-wrap items-center gap-3">
@@ -190,7 +191,7 @@ else
     private readonly Dictionary<string, RestExceptionKind> _kinds = [];
     private readonly Dictionary<string, string> _errors = [], _notices = [];
 
-    private bool CanSeeEveryone => !NodeContext.Current.IsVessel || _me is { IsMaster: true } || _me is { IsCrewAdmin: true };
+    private bool CanSeeEveryone => !NodeContext.Current.IsVessel || _me is { ActsForMaster: true } || _me is { IsCrewAdmin: true };
 
     protected override async Task OnInitializedAsync()
     {
@@ -236,6 +237,8 @@ else
     private async Task MoveMonth(int months) { _month = _month.AddMonths(months); await LoadAsync(); }
 
     private bool CanExplain(Group g) => _me is not null && (g.CrewId == _me.Id || _me.IsMaster || _me.IsCrewAdmin);
+
+    private bool CanAcknowledge(Group g) => _me is { ActsForMaster: true } && (_me.IsMaster || g.CrewId != _me.Id);
 
     // ---- the words ----
 

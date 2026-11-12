@@ -90,9 +90,9 @@ public class DashboardModuleService(
                 modules.Add(new("rest", "Hours of rest", "/rest",
                 [
                     new("Breaches", breaches.ToString("N0"), "/rest/breaches", Hot(breaches, "danger"),
-                        a.IsMaster ? $"{a.MyUnexplained} of yours to explain · {a.ToAcknowledge} to acknowledge" : "Waiting for your explanation", breaches, "rest breaches to deal with"),
+                        (a.IsMaster || a.IsDeputy) ? $"{a.MyUnexplained} of yours to explain · {a.ToAcknowledge} to acknowledge" : "Waiting for your explanation", breaches, "rest breaches to deal with"),
                     new("To sign", a.ToSign.ToString("N0"), "/rest/sign", Hot(toSign, "warning"),
-                        a.IsMaster ? $"{a.ToEndorse} more waiting for your signature as Master" : "Periods you have not signed, or must sign again", toSign, "rest periods to sign"),
+                        (a.IsMaster || a.IsDeputy) ? $"{a.ToEndorse} more waiting for your signature as {(a.IsMaster ? "Master" : "deputy")}" : "Periods you have not signed, or must sign again", toSign, "rest periods to sign"),
                     new("Not recorded", a.MissingDays.ToString("N0"), "/rest", Hot(a.MissingDays, "warning"), "Days since your first record"),
                 ]));
             }
