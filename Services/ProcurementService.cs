@@ -97,6 +97,7 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
         await TankDefaults.EnsureDefaultsAsync(db, company.Id);
         await RestDefaults.EnsureDefaultsAsync(db, company.Id);
         await IncidentDefaults.EnsureDefaultsAsync(db, company.Id);
+        await DrillDefaults.EnsureDefaultsAsync(db, company.Id);
         await RaDefaults.EnsureDefaultsAsync(db, company.Id);
         foreach (var code in CurrencyCatalog.DefaultForCompany)
             db.CompanyCurrencies.Add(new CompanyCurrency { CompanyId = company.Id, CurrencyCode = code });

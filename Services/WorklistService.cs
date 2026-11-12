@@ -32,6 +32,8 @@ public static class WorklistLinkTypes
     public const string RiskAssessment = "riskassessment";
     public const string RestBreach = "restbreach";
     public const string Incident = "incident";
+    public const string Drill = "drill";
+    public const string Meeting = "meeting";
     public const string Project = "project";
 
     /// <summary>Where the link opens, on the office or on a vessel.</summary>
@@ -45,6 +47,8 @@ public static class WorklistLinkTypes
         RiskAssessment => $"/risk/{target}",
         RestBreach => $"/rest/breaches?note={target}",
         Incident => $"/incidents/{target}",
+        Drill => $"/drills/{target}",
+        Meeting => $"/meetings/{target}",
         Project => $"/projects/{target}",
         _ => "#",
     };

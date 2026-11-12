@@ -1,0 +1,264 @@
+using Chandlery.Models;
+using Chandlery.Services;
+using Microsoft.EntityFrameworkCore;
+
+namespace Chandlery.Sync.Tests;
+
+/// <summary>Drills between a vessel and the office: who records and signs, what a drill holds, the schedule worked out on both sides, and the types and vessel rules the office sets.</summary>
+public class DrillTests : IAsyncLifetime
+{
+    private readonly TwoSites _s = new();
+    private DrillService _shore = null!, _vessel = null!;
+    private WorklistService _shoreWorklist = null!;
+    private CrewMember _master = null!, _officer = null!, _cook = null!, _oldHand = null!;
+    private List<DrillType> _types = null!;
+    private DrillType Fire => _types.Single(t => t.Name == "Fire drill");
+    private DrillType Mob => _types.Single(t => t.Name == "Man overboard");
+
+    public async Task InitializeAsync()
+    {
+        await _s.InitializeAsync();
+        _shoreWorklist = new WorklistService(_s.ShoreFactory);
+        _shore = new DrillService(_s.ShoreFactory, _shoreWorklist);
+        _vessel = new DrillService(_s.VesselFactory, new WorklistService(_s.VesselFactory));
+        await SwitchOnAsync(_s.VesselId, PolicyModules.Drills, PolicyModules.Worklist);
+        _master = await SignOnAsync("R1001", "Master", master: true);
+        _officer = await SignOnAsync("R1002", "Chief Officer", authorities: CrewAuthority.ConductDrills);
+        _cook = await SignOnAsync("R1003", "Cook");
+        _oldHand = await SignOnAsync("R1004", "Able Seaman", signedOn: DateTime.UtcNow.Date.AddMonths(-6));
+        _types = await _shore.TypesAsync(_s.CompanyId);
+    }
+
+    public Task DisposeAsync() => _s.DisposeAsync();
+
+    private async Task SwitchOnAsync(Guid vesselId, params string[] modules)
+    {
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            foreach (var module in modules) db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = vesselId, Module = module, Enabled = true });
+            await db.SaveChangesAsync();
+        }
+        await _s.SettleUntilQuietAsync();
+    }
+
+    private async Task<CrewMember> SignOnAsync(string code, string rank, bool master = false, string authorities = "", DateTime? signedOn = null, Guid? vessel = null)
+    {
+        var crew = await _s.ShoreCrew.SaveAsync(_s.CompanyId, new CrewInput(null, code, $"Name of {code}", rank, "Singaporean", null, "Passport", "E1234567X", null, "", "", vessel ?? _s.VesselId, signedOn, true, false, master, Authorities: authorities), _s.User);
+        await _s.SettleUntilQuietAsync();
+        return crew;
+    }
+
+    private static Actor As(CrewMember crew) => new(crew.UserId, crew.FullName);
+
+    private static DrillParticipantInput Present(CrewMember c) => new(c.Id, "", "", DrillAttendance.Present);
+
+    private DrillInput Input(DrillType? type = null, DateTime? started = null, DateTime? ended = null, IReadOnlyList<DrillParticipantInput>? people = null, Guid? conductor = null,
+        string findings = "", string deficiencies = "")
+        => new((type ?? Fire).Id, (started ??= DateTime.UtcNow.AddHours(-3)), ended ?? started.Value.AddHours(1), IncidentShipStatus.AtSea, "Muster stations", "A fire in the galley", conductor,
+            "Fire pump, hydrants", findings, deficiencies, "", people ?? [Present(_officer), Present(_master), Present(_cook)]);
+
+    private static string Line(DrillDetail d)
+        => $"{d.Drill.Code}|{d.Drill.TypeName}|signed {d.Drill.IsSigned}:{d.Drill.SignedByName}|{d.Drill.ConductedByName}|people {string.Join(",", d.Drill.Participants.OrderBy(p => p.Name).Select(p => $"{p.Name}:{p.Attendance}:{p.Absence}"))}|"
+           + $"notes {d.Drill.Notes.Count}|comments {d.Comments.Count}|actions {d.Actions.Count}|dup {d.PossibleDuplicate}|find {d.Drill.Findings}|def {d.Drill.Deficiencies}";
+
+    // ---- recording and signing ----
+
+    [Fact]
+    public async Task TheMasterAndAnAuthorisedOfficerRecordADrill_TheMasterSigns_AndBothSidesHoldTheSameThing()
+    {
+        Assert.Contains("authority", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_cook), Input()))).Message);
+        Assert.Contains("onboard", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.RecordAsync(_s.CompanyId, _s.VesselId, _s.User, Input()))).Message);
+
+        var people = new[] { Present(_officer), Present(_master), Present(_cook), new DrillParticipantInput(_oldHand.Id, "", "", DrillAttendance.Absent, DrillAbsence.OnWatch),
+                             new DrillParticipantInput(null, "Port State Control inspector", "Visitor", DrillAttendance.Observer) };
+        var drill = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input(people: people, findings: "Muster was slow at the aft station.", deficiencies: "Fire pump pressure low"));
+        Assert.Contains("-DR-", drill.Code);
+        Assert.Equal((_officer.FullName, false, 5), (drill.ConductedByName, drill.IsSigned, drill.Participants.Count));
+        Assert.Equal(DrillAbsence.OnWatch, drill.Participants.Single(p => p.CrewMemberId == _oldHand.Id).Absence);
+
+        // Until the Master signs, its conductor or the Master may change it; nobody else.
+        await _vessel.UpdateAsync(_s.CompanyId, drill.Id, As(_officer), Input(people: people, findings: "Muster was slow at the aft station and the foam monitor stuck.", deficiencies: "Fire pump pressure low"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.UpdateAsync(_s.CompanyId, drill.Id, As(_cook), Input(people: people)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SignAsync(_s.CompanyId, drill.Id, As(_officer)));               // only the Master signs
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.AddNoteAsync(_s.CompanyId, drill.Id, As(_officer), "Not yet signed"));
+        await _vessel.SignAsync(_s.CompanyId, drill.Id, As(_master));
+        Assert.Contains("signed", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.UpdateAsync(_s.CompanyId, drill.Id, As(_master), Input(people: people)))).Message);
+        Assert.Contains("already", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SignAsync(_s.CompanyId, drill.Id, As(_master)))).Message);
+        await _vessel.AddNoteAsync(_s.CompanyId, drill.Id, As(_officer), "Foam monitor freed and tested again at 16:00.");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.AddNoteAsync(_s.CompanyId, drill.Id, As(_cook), "Not mine"));
+        await _vessel.AddActionAsync(_s.CompanyId, drill.Id, As(_master), new NewDrillAction("Test the fire pump and clear the foam monitor", "Before the next drill.", DateTime.UtcNow.AddDays(7)));
+        await _s.SettleUntilQuietAsync();
+
+        await _shore.CommentAsync(_s.CompanyId, drill.Id, _s.User, "Please send the pump test record.");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.CommentAsync(_s.CompanyId, drill.Id, As(_master), "Onboard comments are notes"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SignAsync(_s.CompanyId, drill.Id, _s.User));
+        await _s.SettleUntilQuietAsync();
+
+        var ashore = (await _shore.GetAsync(_s.CompanyId, drill.Id, _s.User))!;
+        var onboard = (await _vessel.GetAsync(_s.CompanyId, drill.Id, As(_cook)))!;                      // any crew member sees the vessel's drills
+        Assert.Equal(Line(ashore), Line(onboard));
+        Assert.Equal((true, 1, 1, 1), (ashore.Drill.IsSigned, ashore.Drill.Notes.Count, ashore.Comments.Count, ashore.Actions.Count));
+        Assert.Equal(TimeSpan.FromHours(1), ashore.Duration);
+        Assert.True(ashore.Can.IsOffice && ashore.Can.Comment && ashore.Can.AddAction && !ashore.Can.Edit && !ashore.Can.Sign);
+        var master = (await _vessel.GetAsync(_s.CompanyId, drill.Id, As(_master)))!.Can;
+        Assert.True(master.Note && master.AddAction && !master.Edit && !master.Sign && !master.Comment);          // signed: notes only
+    }
+
+    [Fact]
+    public async Task ADrillIsRefusedWhenItsTimesItsPeopleOrItsTypeAreWrong()
+    {
+        async Task<string> Refused(DrillInput input, CrewMember? by = null) => (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(by ?? _officer), input))).Message;
+
+        Assert.Contains("future", await Refused(Input(started: DateTime.UtcNow.AddDays(3))));
+        Assert.Contains("before it starts", await Refused(Input(started: DateTime.UtcNow.AddHours(-3), ended: DateTime.UtcNow.AddHours(-4))));
+        Assert.Contains("12 hours", await Refused(Input(started: DateTime.UtcNow.AddHours(-20), ended: DateTime.UtcNow.AddHours(-2))));
+        Assert.Contains("kind of drill", await Refused(Input() with { DrillTypeId = Guid.NewGuid() }));
+        Assert.Contains("at least one", await Refused(Input(people: [new DrillParticipantInput(_cook.Id, "", "", DrillAttendance.Absent, DrillAbsence.Sick)])));
+        Assert.Contains("twice", await Refused(Input(people: [Present(_cook), Present(_cook)])));
+        Assert.Contains("not one of the vessel's crew", await Refused(Input(people: [Present(_cook), new DrillParticipantInput(Guid.NewGuid(), "", "", DrillAttendance.Present)])));
+        Assert.Contains("observer", await Refused(Input(people: [Present(_cook), new DrillParticipantInput(null, "A visitor", "", DrillAttendance.Present)])));
+        Assert.Contains("absent", await Refused(Input(people: [Present(_cook), new DrillParticipantInput(_master.Id, "", "", DrillAttendance.Present, DrillAbsence.Sick)])));
+        Assert.Contains("not one of the vessel's crew", await Refused(Input(conductor: Guid.NewGuid())));
+        Assert.Contains("Master names", await Refused(Input(conductor: _master.Id), by: _officer));                       // an officer names themselves only
+        Assert.Contains("authority", await Refused(Input(conductor: _cook.Id), by: _master));                              // the cook has not been given it
+
+        // The Master may name an officer with the authority as the conductor.
+        var named = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(conductor: _officer.Id));
+        Assert.Equal(_officer.FullName, named.ConductedByName);
+    }
+
+    [Fact]
+    public async Task ATypeThatNoLongerApplies_OrIsSwitchedOff_CannotBeRecorded()
+    {
+        await _shore.SaveOverrideAsync(_s.CompanyId, _s.VesselId, Mob.Id, applies: false, null, null, "No rescue boat on this vessel");
+        var inactive = _types.Single(t => t.Name == "Blackout");
+        await _shore.SaveTypeAsync(_s.CompanyId, new DrillType { Id = inactive.Id, Name = inactive.Name, Category = inactive.Category, IntervalKind = inactive.IntervalKind, IntervalCount = inactive.IntervalCount, WarningDays = inactive.WarningDays, EveryCrewMember = inactive.EveryCrewMember, IsActive = false });
+        await _s.SettleUntilQuietAsync();
+        Assert.Contains("does not apply", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(Mob)))).Message);
+        Assert.Contains("no longer in use", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(inactive)))).Message);
+        await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(Fire));
+    }
+
+    // ---- the schedule ----
+
+    [Fact]
+    public async Task TheScheduleIsTheSameOnBothSides_AnAbsentPersonKeepsTheirClock_AndOnlyApplicableTypesAreShown()
+    {
+        await _shore.SaveOverrideAsync(_s.CompanyId, _s.VesselId, Mob.Id, applies: false, null, null, "No rescue boat on this vessel");
+        await _s.SettleUntilQuietAsync();
+        var today = DateTime.UtcNow.Date;
+        await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(Fire, started: today.AddDays(-2).AddHours(10),
+            people: [Present(_master), Present(_officer), Present(_cook), new DrillParticipantInput(_oldHand.Id, "", "", DrillAttendance.Absent, DrillAbsence.OnWatch)]));
+        await _s.SettleUntilQuietAsync();
+
+        var onboard = await _vessel.ScheduleAsync(_s.CompanyId, _s.VesselId, As(_cook));
+        var ashore = await _shore.ScheduleAsync(_s.CompanyId, _s.VesselId, _s.User);
+        string Show(DrillSchedule s) => string.Join("|", s.Rows.Select(r => $"{r.Type.Name}:{r.LastHeld:yyyy-MM-dd}:{r.Due:yyyy-MM-dd}:{r.ShipStatus}:{r.Status}:{string.Join(",", r.People.Select(p => $"{p.Name}={p.Status}"))}")) + $"|{s.Worst}|{s.Quarter}";
+        Assert.Equal(Show(ashore), Show(onboard));
+
+        Assert.DoesNotContain(onboard.Rows, r => r.Type.Id == Mob.Id);                                             // not applicable here
+        var fire = onboard.Rows.Single(r => r.Type.Id == Fire.Id);
+        Assert.Equal((today.AddDays(-2), DrillStatus.NotDue), (fire.LastHeld, fire.ShipStatus));
+        Assert.Equal([_oldHand.FullName], fire.People.Select(p => p.Name));                                        // joined six months ago and has never taken part: late, though the ship is not
+        Assert.Equal(DrillStatus.Overdue, fire.People[0].Status);
+        Assert.Equal(DrillStatus.Overdue, fire.Status);
+        Assert.Equal(DrillStatus.NeverHeld, onboard.Rows.Single(r => r.Type.Name == "Abandon ship drill").ShipStatus);
+        Assert.Equal(DrillStatus.Overdue, onboard.Worst);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.ScheduleAsync(_s.CompanyId, _s.OtherVesselId, As(_cook)));                  // not their vessel
+    }
+
+    [Fact]
+    public async Task TheQuarterRuleFollowsLastMonthsDrillsOfTheTypesEveryoneAttends()
+    {
+        var lastMonth = DrillRules.PreviousMonth(DateTime.UtcNow.Date).From.AddDays(9);
+        await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(Fire, started: lastMonth.AddHours(10), people: [Present(_master), Present(_officer)]));      // two of four took part
+        await _s.SettleUntilQuietAsync();
+        var q = (await _shore.ScheduleAsync(_s.CompanyId, _s.VesselId, _s.User)).Quarter;
+        Assert.Equal((4, 2, true), (q.CrewCount, q.NotTakenPart, q.Triggered));                                    // two of four is half: more than a quarter
+    }
+
+    // ---- types and the vessel's own rules ----
+
+    [Fact]
+    public async Task TheOfficeKeepsTheTypes_TheyReachTheVessel_AndAVesselRuleReachesOnlyThatVessel()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveTypeAsync(_s.CompanyId, new DrillType { Name = "Own drill" }));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.SaveOverrideAsync(_s.CompanyId, _s.VesselId, Fire.Id, false, null, null, "No"));
+        Assert.Contains("name", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveTypeAsync(_s.CompanyId, new DrillType { Name = " " }))).Message);
+        Assert.Contains("already", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveTypeAsync(_s.CompanyId, new DrillType { Name = "Fire drill" }))).Message);
+        Assert.Contains("1 to 24 months", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveTypeAsync(_s.CompanyId, new DrillType { Name = "X drill", IntervalKind = DrillIntervalKind.CalendarMonths, IntervalCount = 25 }))).Message);
+        Assert.Contains("1 to 730 days", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveTypeAsync(_s.CompanyId, new DrillType { Name = "X drill", IntervalKind = DrillIntervalKind.Days, IntervalCount = 0 }))).Message);
+        Assert.Contains("warning", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveTypeAsync(_s.CompanyId, new DrillType { Name = "X drill", IntervalCount = 1, WarningDays = 120 }))).Message);
+
+        var added = await _shore.SaveTypeAsync(_s.CompanyId, new DrillType { Name = "Crane failure", Category = DrillCategory.Emergency, IntervalKind = DrillIntervalKind.Days, IntervalCount = 90, WarningDays = 14, Checklist = "Stop the crane\nLower the load", IsActive = true });
+        await _shore.SaveOverrideAsync(_s.CompanyId, _s.VesselId, added.Id, true, DrillIntervalKind.Days, 45, "A busier crane on this vessel");
+        Assert.Contains("why", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveOverrideAsync(_s.CompanyId, _s.VesselId, added.Id, true, DrillIntervalKind.Days, 30, " "))).Message);
+        Assert.Contains("both", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.SaveOverrideAsync(_s.CompanyId, _s.VesselId, added.Id, true, DrillIntervalKind.Days, null, "Why"))).Message);
+        await _s.SettleUntilQuietAsync();
+
+        var onboardTypes = await _vessel.TypesAsync(_s.CompanyId);
+        Assert.Contains(onboardTypes, t => t.Id == added.Id && t.IntervalCount == 90);
+        var over = Assert.Single(await _vessel.OverridesAsync(_s.CompanyId, _s.VesselId));
+        Assert.Equal((added.Id, 45), (over.DrillTypeId, over.IntervalCount));
+
+        // Putting the vessel back on the company's rule needs no reason.
+        await _shore.SaveOverrideAsync(_s.CompanyId, _s.VesselId, added.Id, true, null, null, "");
+        await _s.SettleUntilQuietAsync();
+        Assert.Null(Assert.Single(await _vessel.OverridesAsync(_s.CompanyId, _s.VesselId)).IntervalCount);
+    }
+
+    // ---- what travels ----
+
+    [Fact]
+    public async Task ChangesToThePeopleAndNotesMadeAfterTheDrillHasAlreadyTravelled_TravelToo()
+    {
+        var drill = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input(people: [Present(_master), Present(_cook)]));
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(2, (await _shore.GetAsync(_s.CompanyId, drill.Id, _s.User))!.Drill.Participants.Count);
+
+        await _vessel.UpdateAsync(_s.CompanyId, drill.Id, As(_master), Input(people: [Present(_master), Present(_cook), Present(_officer), Present(_oldHand)]));
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(4, (await _shore.GetAsync(_s.CompanyId, drill.Id, _s.User))!.Drill.Participants.Count);
+
+        await _vessel.SignAsync(_s.CompanyId, drill.Id, As(_master));
+        await _s.SettleUntilQuietAsync();
+        await _vessel.AddNoteAsync(_s.CompanyId, drill.Id, As(_master), "Two late arrivals joined after the alarm.");
+        await _s.SettleUntilQuietAsync();
+        var ashore = (await _shore.GetAsync(_s.CompanyId, drill.Id, _s.User))!.Drill;
+        Assert.Equal((true, 1), (ashore.IsSigned, ashore.Notes.Count));
+    }
+
+    [Fact]
+    public async Task AVesselNeverHoldsAnotherVesselsDrillsOrRules_NotEvenAfterAFullBaseline()
+    {
+        await SwitchOnAsync(_s.OtherVesselId, PolicyModules.Drills);
+        await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_master), Input());
+        await _shore.SaveOverrideAsync(_s.CompanyId, _s.OtherVesselId, Fire.Id, true, DrillIntervalKind.Days, 20, "A smaller crew");
+        await _shore.SaveOverrideAsync(_s.CompanyId, _s.VesselId, Fire.Id, true, DrillIntervalKind.Days, 25, "A busy vessel");
+        await _s.SettleUntilQuietAsync();
+        await _s.ShorePublisher.BaselineAsync(_s.VesselNode.SyncNodeId!);
+        await _s.SettleUntilQuietAsync();
+
+        await using var vessel = await _s.VesselFactory.CreateDbContextAsync();
+        Assert.All(await vessel.Drills.IgnoreQueryFilters().ToListAsync(), d => Assert.Equal(_s.VesselId, d.VesselId));
+        var overrides = await vessel.DrillOverrides.IgnoreQueryFilters().ToListAsync();
+        Assert.Equal([_s.VesselId], overrides.Select(o => o.VesselId));
+        Assert.Equal(25, overrides.Single().IntervalCount);
+        Assert.Equal(_types.Count, await vessel.DrillTypes.IgnoreQueryFilters().CountAsync());                     // the types are the company's: every vessel has them all
+        Assert.Single(await _shore.ListAsync(_s.CompanyId, _s.User, _s.VesselId));
+        Assert.Empty(await _shore.ListAsync(_s.CompanyId, _s.User, _s.OtherVesselId));
+        Assert.Single(await _vessel.ListAsync(_s.CompanyId, As(_cook)));
+    }
+
+    [Fact]
+    public async Task ANewCompanyStartsWithTheCommonDrillTypes_EachWithAnIntervalAndAReferenceToVerify()
+    {
+        Assert.Equal(11, _types.Count);
+        Assert.All(_types, t => Assert.Contains("to verify", t.Reference));
+        Assert.Equal((DrillIntervalKind.CalendarMonths, 1, true), (Fire.IntervalKind, Fire.IntervalCount, Fire.EveryCrewMember));
+        Assert.Equal(2, _types.Single(t => t.Name.StartsWith("Enclosed space")).IntervalCount);
+        Assert.Equal(2, _types.Count(t => t.EveryCrewMember));                                                       // fire and abandon ship
+        await Task.CompletedTask;
+    }
+}

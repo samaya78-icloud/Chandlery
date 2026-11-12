@@ -28,6 +28,8 @@ public static class DocumentNumbers
         DocType.RiskAssessment => "RA",
         DocType.Project => "PR",
         DocType.Incident => "INC",
+        DocType.Drill => "DR",
+        DocType.Meeting => "MT",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

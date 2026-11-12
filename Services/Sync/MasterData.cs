@@ -31,7 +31,7 @@ public static class MasterData
         Of<Company>(), Of<Supplier>(), Of<CompanySupplier>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(), Of<CrewMember>(),
         Of<Department>(), Of<Category>(), Of<WorklistListItem>(), Of<MachineryClass>(), Of<JobTemplate>(), Of<TankChecklistTemplate>(), Of<TankCriterion>(), Of<RaCategory>(), Of<RaMatrixLabel>(), Of<RaMatrixBand>(), Of<RaTemplate>(), Of<RaTemplateActivity>(), Of<RaTemplateHazard>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
         Of<VesselPolicy>(), Of<VesselModuleSwitch>(),
-        Of<RestRuleSet>(), Of<IncidentCause>(), Of<IncidentSettings>(),
+        Of<RestRuleSet>(), Of<IncidentCause>(), Of<IncidentSettings>(), Of<DrillType>(), Of<DrillOverride>(),
     ];
 
     private static readonly Dictionary<string, MasterType> ByName = Types.ToDictionary(t => t.DocType);
@@ -211,6 +211,8 @@ public static class MasterData
                     : ReadGuid(d, "GroupId") is { } group && scope.Groups.Contains(group);
             case nameof(RestRuleSet):      // the company's default, and the set written for this vessel; never another vessel's
                 return company == scope.CompanyId && (ReadGuid(d, "VesselId") is not { } ruleVessel || ruleVessel == scope.VesselId);
+            case nameof(DrillOverride):      // a vessel's own drill rules, never another vessel's
+                return company == scope.CompanyId && ReadGuid(d, "VesselId") == scope.VesselId;
             default: return company == scope.CompanyId;
         }
     }
