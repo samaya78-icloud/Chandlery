@@ -1285,7 +1285,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement ? IncidentOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -1380,6 +1380,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<RiskAssessment>().FirstOrDefault(e => e.Entity.Id == assessmentId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A part of a risk assessment was changed without loading the assessment; load it with its team, activities and hazards.");
+        return parent;
+    }
+
+    /// <summary>A person or a supplement of an incident report is its own table but part of the report: changing one moves the report's version, so the change travels.</summary>
+    private EntityEntry? IncidentOf(EntityEntry child)
+    {
+        var property = child.Property("IncidentId");
+        var incidentId = (Guid)(child.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Incident>().FirstOrDefault(e => e.Entity.Id == incidentId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of an incident report was changed without loading the report; load it with its persons and supplements.");
         return parent;
     }
 

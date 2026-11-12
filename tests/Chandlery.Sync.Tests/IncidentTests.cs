@@ -523,6 +523,33 @@ public class IncidentTests : IAsyncLifetime
         Assert.DoesNotContain(" ", name);
     }
 
+    // ---- changes after the report has already travelled ----
+
+    [Fact]
+    public async Task ChangesToThePeopleAndAdditionsMadeAfterTheReportHasAlreadyTravelled_TravelToo()
+    {
+        var injured = new IncidentPersonInput(_cook.Id, _cook.FullName, "Cook", "", IncidentPersonRole.Injured, "Burn", "Hand", IncidentTreatment.FirstAid, 0);
+        var report = await SubmittedAsync(Input(IncidentKind.InjuryIllness, actual: 1, potential: 3, likelihood: 2, persons: [injured]));      // submitted and settled: the office holds it
+        Assert.Single((await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.Incident.Persons);
+
+        // The reporter corrects it before the Master reviews: the injury was worse, and a witness is added.
+        var worse = injured with { Treatment = IncidentTreatment.Hospital, DaysLost = 4, BodyPart = "Left forearm" };
+        await _vessel.SaveDraftAsync(_s.CompanyId, _s.VesselId, As(_reporter), report.Id,
+            Input(IncidentKind.InjuryIllness, actual: 1, potential: 3, likelihood: 2, persons: [worse, new IncidentPersonInput(_reporter.Id, _reporter.FullName, "Third Officer", "", IncidentPersonRole.Witness)]));
+        await _s.SettleUntilQuietAsync();
+        var seen = (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!;
+        Assert.Equal(2, seen.Incident.Persons.Count);
+        Assert.Equal((IncidentTreatment.Hospital, 4, true), (seen.Incident.Persons.Single(p => p.Role == IncidentPersonRole.Injured).Treatment, seen.Incident.Persons.Single(p => p.Role == IncidentPersonRole.Injured).DaysLost, seen.Incident.IsUrgent));   // four days lost makes it urgent
+
+        // After the review, a supplement travels as well.
+        await _vessel.ReviewAsync(_s.CompanyId, report.Id, As(_master), "Reviewed");
+        await _s.SettleUntilQuietAsync();
+        await _vessel.AddSupplementAsync(_s.CompanyId, report.Id, As(_reporter), "Treated by the Chief Officer, then landed at the next port.");
+        await _s.SettleUntilQuietAsync();
+        Assert.Single((await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.Incident.Supplements);
+        Assert.Equal(2, (await _shore.GetAsync(_s.CompanyId, report.Id, _s.User))!.Incident.Persons.Count);
+    }
+
     // ---- hours worked and the statistics ----
 
     private static readonly DateTime LastMonth = IncidentStats.MonthOf(DateTime.UtcNow).AddMonths(-1);
