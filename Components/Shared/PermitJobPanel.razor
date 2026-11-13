@@ -1,0 +1,37 @@
+@inject PermitService Permits
+
+@if (_on)
+{
+    <div class="card p-5 text-sm">
+        <h2 class="mb-3 font-display text-base font-extrabold text-ink">Permit to work</h2>
+        @if (_rows.Count == 0) { <p class="text-muted">No permit has been raised for this job.</p> }
+        <ul class="space-y-1">
+            @foreach (var r in _rows)
+            {
+                var (label, tone) = PermitLook.State(r.State);
+                <li class="flex flex-wrap items-center gap-2"><a class="link font-mono font-semibold" href="/permits/@r.Permit.Id">@r.Permit.Code</a><span>@r.Permit.TypeName</span><StatusChip Label="@label" Tone="@tone" /></li>
+            }
+        </ul>
+        @if (NodeContext.Current.IsVessel) { <a href="/permits/new?job=@Job.Id" class="btn btn-secondary btn-sm mt-3">Request a permit for this job</a> }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public PlannedJob Job { get; set; } = null!;
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _on;
+    private List<PermitRow> _rows = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var state = await AuthStateTask!;
+        try
+        {
+            _rows = await Permits.ForJobAsync(CompanyId, Job.VesselId, Job.Id, Actor.From(state.User));
+            _on = (await Permits.EnabledVesselsAsync(CompanyId)).Any(v => v.Id == Job.VesselId);
+        }
+        catch (InvalidOperationException) { _on = false; _rows = []; }
+    }
+}

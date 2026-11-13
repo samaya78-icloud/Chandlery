@@ -24,7 +24,7 @@ public record AttentionItem(int Count, string Text, string Href, bool Urgent);
 /// <summary>Gathers the per-module numbers for the home page, so the cards and the attention strip read from the same place.</summary>
 public class DashboardModuleService(
     WorklistService worklist, PmsReportService pms, TankTrendService tanks, RiskAssessmentService risk,
-    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, DrillFleetService drillFleet)
+    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, DrillFleetService drillFleet, PermitService permits)
 {
     private static string Hot(int n, string tone, string cold = "success") => n > 0 ? tone : cold;
 
@@ -142,6 +142,19 @@ public class DashboardModuleService(
                 new("Meetings overdue", dc.MeetingsOverdue.ToString("N0"), dc.IsOffice ? "/drills/fleet" : "/meetings", Hot(dc.MeetingsOverdue, "warning"), "Scheduled meetings past their date", dc.MeetingsOverdue, "safety meetings overdue"),
             ];
             modules.Add(new("drills", "Drills and meetings", href, stats));
+        }
+
+        if (await permits.CountsAsync(companyId, Actor.From(user)) is { } ptw)
+        {
+            var href = ptw.IsOffice ? "/permits/fleet" : "/permits";
+            List<ModuleStat> stats =
+            [
+                new("Active", ptw.Active.ToString("N0"), href, "info", ptw.IsOffice ? "Permits being worked under now, fleet-wide" : "Permits being worked under now"),
+                new("Awaiting issue", ptw.Awaiting.ToString("N0"), href, Hot(ptw.Awaiting, "warning"), "Requested or issued, work not started"),
+                new("Expired, not closed", ptw.Expired.ToString("N0"), href, Hot(ptw.Expired, "danger"), "Past their window and still open", ptw.Expired, "permits expired and not closed"),
+                new("Gas outside limits", ptw.GasOutside30Days.ToString("N0"), ptw.IsOffice ? "/permits/audit" : "/permits", Hot(ptw.GasOutside30Days, "warning"), "Readings outside the limits in the last 30 days"),
+            ];
+            modules.Add(new("permits", "Permit to work", href, stats));
         }
 
         if (await projects.CountsAsync(companyId) is { } pc)

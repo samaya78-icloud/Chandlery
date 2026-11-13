@@ -26,8 +26,17 @@ public sealed record PermitIssueCheck(IReadOnlyList<string> Missing, IReadOnlyLi
 
 public sealed record PermitConflictInfo(Guid PermitId, string Code, string Message);
 
+/// <summary>Hours of work recorded for a person named on a permit, on the day it starts. Shown to issuers and the Master only, read-only, so a long job on tired crew is visible.</summary>
+public sealed record PermitFatigue(string Name, int WorkMinutes);
+
 public sealed record PermitDetail(Permit Permit, string VesselName, PermitTerms Terms, PermitState State, PermitValidity Validity, PermitGasStatus Gas, DateTime? NextGasDue, DateTime Until,
-    IReadOnlyList<PermitEntry> Inside, IReadOnlyList<PermitComment> Comments, IReadOnlyList<WorklistTask> Actions, PermitIssueCheck Check, PermitCan Can);
+    IReadOnlyList<PermitEntry> Inside, IReadOnlyList<PermitComment> Comments, IReadOnlyList<WorklistTask> Actions, PermitIssueCheck Check, PermitCan Can, IReadOnlyList<PermitFatigue>? Fatigue = null);
+
+/// <summary>What the home page card shows. Onboard it is the vessel's own; ashore, the whole fleet.</summary>
+public sealed record PermitCounts(bool IsOffice, int Active, int Awaiting, int Suspended, int Expired, int GasOutside30Days);
+
+/// <summary>Where a tank stands for entry: the permit module is on, and the enclosed-space permit open for it, if any.</summary>
+public sealed record PermitTankStatus(bool ModuleOn, PermitRow? Permit);
 
 public sealed record PermitRow(Permit Permit, string VesselName, PermitState State, bool Valid, string Reason, DateTime Until, int Inside);
 
@@ -233,13 +242,13 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         _ => "withdrawn",
     };
 
-    private async Task<WorklistTask?> RaiseTaskAsync(ChandleryDbContext db, Permit permit, string title, string body, Actor actor)
+    private async Task<WorklistTask?> RaiseTaskAsync(ChandleryDbContext db, Permit permit, string title, string body, Actor actor, string assignee = "")
     {
         try
         {
             var source = await db.WorklistListItems.AsNoTracking().Where(i => i.CompanyId == permit.CompanyId && i.Kind == WorklistListKind.Source && i.IsActive && i.Name == "Vessel").Select(i => (Guid?)i.Id).FirstOrDefaultAsync();
             var category = await db.WorklistListItems.AsNoTracking().Where(i => i.CompanyId == permit.CompanyId && i.Kind == WorklistListKind.Category && i.IsActive && i.ParentId == null && i.Name == "Safety").Select(i => (Guid?)i.Id).FirstOrDefaultAsync();
-            var task = await worklist.CreateTaskAsync(permit.CompanyId, new NewWorklistTask(permit.VesselId, title, $"{body}{Environment.NewLine}{Environment.NewLine}Permit {permit.Code} ({permit.TypeName}), {permit.Location}.", source, CategoryId: category, Priority: WorklistPriority.Urgent), actor);
+            var task = await worklist.CreateTaskAsync(permit.CompanyId, new NewWorklistTask(permit.VesselId, title, $"{body}{Environment.NewLine}{Environment.NewLine}Permit {permit.Code} ({permit.TypeName}), {permit.Location}.", source, CategoryId: category, Priority: WorklistPriority.Urgent, Assignee: assignee), actor);
             await worklist.AddEntryAsync(permit.CompanyId, task.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Permit, LinkTarget: permit.Id, LinkLabel: $"Permit {permit.Code}"), actor);
             return task;
         }
@@ -281,6 +290,7 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         if (input.TankId is { } tank && !await db.Tanks.AnyAsync(t => t.Id == tank && t.VesselId == vesselId)) throw new InvalidOperationException("That tank is not on this vessel.");
         if (input.MachineryItemId is { } machine && !await db.MachineryItems.AnyAsync(m => m.Id == machine && m.VesselId == vesselId)) throw new InvalidOperationException("That equipment is not on this vessel's maintenance plan.");
         if (input.RiskAssessmentId is { } risk && !await db.RiskAssessments.AnyAsync(r => r.Id == risk && r.VesselId == vesselId)) throw new InvalidOperationException("That risk assessment is not for this vessel.");
+        if (input.PlannedJobId is { } job && !await db.PlannedJobs.AnyAsync(j => j.Id == job && j.VesselId == vesselId)) throw new InvalidOperationException("That maintenance job is not on this vessel's plan.");
 
         var items = await db.PermitChecklistItems.AsNoTracking().Where(i => i.PermitTypeId == type.Id && i.Version == type.ChecklistVersion).OrderBy(i => i.Position).ToListAsync();
         var permit = new Permit
@@ -303,6 +313,8 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         Add(db, permit, PermitEventKind.Requested, who.Name, who.Crew.Id);
         if (items.All(i => !i.Mandatory)) Add(db, permit, PermitEventKind.ChecklistCompleted, who.Name, who.Crew.Id);
         await db.SaveChangesAsync();
+        if (type.MasterApprovalRequired)
+            await RaiseTaskAsync(db, permit, $"Permit {permit.Code} awaits the Master's approval", $"{who.Name} has requested a {type.Name.ToLowerInvariant()} permit that the Master must approve before it can be issued.", new Actor(who.UserId, who.Name), "Master");
         return permit;
     }
 
@@ -474,8 +486,8 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         if (!terms.EntryLogRequired) throw new InvalidOperationException("This kind of permit has no entry log.");
         var validity = PermitRules.Validity(terms, permit.Events, permit.Readings, permit.ValidFrom, permit.ValidUntil, Now);
         if (!validity.Valid) throw new InvalidOperationException($"Nobody enters while the permit is not valid ({validity.Reason.ToLowerInvariant()}).");
-        var person = permit.Persons.FirstOrDefault(p => p.CrewMemberId == personId) ?? throw new InvalidOperationException("That person is not named on the permit.");
         if (permit.AttendantCrewId == personId) throw new InvalidOperationException("The attendant stays outside.");
+        var person = permit.Persons.FirstOrDefault(p => p.CrewMemberId == personId) ?? throw new InvalidOperationException("That person is not named on the permit.");
         if (PermitRules.Inside(permit.Entries).Any(e => e.CrewMemberId == personId)) throw new InvalidOperationException($"{person.Name} is already inside.");
         var entry = new PermitEntry { Id = Guid.CreateVersion7(), PermitId = permit.Id, CrewMemberId = personId, PersonName = person.Name, In = Now, AttendantName = permit.AttendantName };
         db.PermitEntries.Add(entry);
@@ -755,6 +767,7 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         var tasks = await worklist.TasksLinkedToAsync(companyId, WorklistLinkTypes.Permit, permitId);
         var vessel = await db.Vessels.AsNoTracking().Where(v => v.Id == permit.VesselId).Select(v => v.Name).FirstOrDefaultAsync() ?? "";
         var check = who.IsOffice ? new PermitIssueCheck([], []) : await CheckAsync(db, permit, who);
+        var fatigue = !who.IsOffice && who.MayIssue && await ModuleGate.IsEnabledAsync(db, companyId, permit.VesselId, PolicyModules.RestHours) ? await FatigueAsync(db, permit) : null;
 
         var open = PermitRules.IsOpen(state);
         var works = Works(who, permit);
@@ -776,7 +789,61 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
             HandOver: !who.IsOffice && (IsRequester(who, permit) || who.IsMaster) && state is PermitState.Issued or PermitState.Active or PermitState.Suspended,
             Comment: who.IsOffice);
         return new(permit, vessel, terms, state, validity, gas, PermitRules.NextGasDue(terms, PermitRules.LastReading(permit.Readings)), PermitRules.Until(permit.ValidUntil, permit.Events),
-            PermitRules.Inside(permit.Entries), comments, tasks, check, can);
+            PermitRules.Inside(permit.Entries), comments, tasks, check, can, fatigue);
+    }
+
+    /// <summary>The work recorded for each person named on the permit (and the attendant) on the day it starts, from the latest entry of that day. Nothing is shown for a day not recorded.</summary>
+    private static async Task<List<PermitFatigue>> FatigueAsync(ChandleryDbContext db, Permit permit)
+    {
+        var ids = permit.Persons.Where(p => p.CrewMemberId != null).Select(p => p.CrewMemberId!.Value).Concat(permit.AttendantCrewId is { } a ? [a] : []).Distinct().ToList();
+        var day = permit.ValidFrom.Date;
+        var entries = await db.RestEntries.AsNoTracking().Where(e => e.VesselId == permit.VesselId && e.Date == day && ids.Contains(e.CrewMemberId)).ToListAsync();
+        return entries.GroupBy(e => e.CrewMemberId).Select(g => g.OrderBy(e => e.EnteredAt).ThenBy(e => e.Id).Last())
+            .Select(e => new PermitFatigue(e.CrewName, RestSpans.Parse(e.WorkSpans).Sum(s => s.End - s.Start))).OrderByDescending(f => f.WorkMinutes).ToList();
+    }
+
+    // ---- links to the home page, the tank inspection and PMS ----
+
+    /// <summary>The numbers for the home page card, or null when the module is on for no vessel (or the person is not signed on to one).</summary>
+    public async Task<PermitCounts?> CountsAsync(Guid companyId, Actor actor)
+    {
+        var vessels = await EnabledVesselsAsync(companyId);
+        await using var db = await factory.CreateDbContextAsync();
+        var office = !db.Node.IsVessel;
+        if (!office)
+        {
+            var mine = (await CrewOfUserAsync(companyId, actor.UserId))?.VesselId;
+            vessels = vessels.Where(v => v.Id == mine).ToList();
+        }
+        if (vessels.Count == 0) return null;
+        var open = await ListAsync(companyId, actor, null, openOnly: true);
+        var recent = await ListAsync(companyId, actor, null, false, Now.AddDays(-30), Now);
+        var view = PermitFleet.Build(Now.AddDays(-30), Now, [.. open, .. recent]);
+        return new(office, view.Vessels.Sum(v => v.Active), view.Vessels.Sum(v => v.Awaiting), view.Vessels.Sum(v => v.Suspended), view.Vessels.Sum(v => v.Expired), view.Vessels.Sum(v => v.GasExceedances));
+    }
+
+    /// <summary>
+    /// The enclosed-space permit open for a tank, so the tank inspection can warn when it is missing. "Enclosed space" here is a kind of permit with an entry log. A warning only:
+    /// nothing is blocked.
+    /// </summary>
+    public async Task<PermitTankStatus> TankStatusAsync(Guid companyId, Guid vesselId, Guid tankId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (!await IsEnabledForVesselAsync(db, companyId, vesselId)) return new(false, null);
+        var rows = await ListAsync(companyId, actor, vesselId, openOnly: true);
+        var found = rows.Where(r => r.Permit.TankId == tankId && PermitRules.ReadTerms(r.Permit.Terms).EntryLogRequired && r.State is PermitState.Active or PermitState.Issued or PermitState.Suspended)
+            .OrderByDescending(r => r.Valid).ThenBy(r => r.Until).FirstOrDefault();
+        return new(true, found);
+    }
+
+    /// <summary>The permits raised for a maintenance job, newest first. Starting the job offers a permit prefilled from the job and its machinery.</summary>
+    public async Task<List<PermitRow>> ForJobAsync(Guid companyId, Guid vesselId, Guid jobId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (!await IsEnabledForVesselAsync(db, companyId, vesselId)) return [];
+        return (await ListAsync(companyId, actor, vesselId)).Where(r => r.Permit.PlannedJobId == jobId).ToList();
     }
 
     /// <summary>The permits an office user or a crew member may see: the office all, a vessel only its own.</summary>

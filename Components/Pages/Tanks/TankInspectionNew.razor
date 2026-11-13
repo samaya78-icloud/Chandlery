@@ -54,6 +54,7 @@ else
             <label>Where <input class="input mt-1" @bind="_place" placeholder="At sea, or the port" /></label>
             <label class="md:col-span-2">Work done <textarea class="textarea mt-1" rows="2" @bind="_workDone" placeholder="For example: cleaned and gas-freed, inspected from the manhole"></textarea></label>
         </div>
+        <div class="mt-4"><PermitTankNotice CompanyId="_companyId" VesselId="_vesselId" TankId="_tankId" /></div>
         <div class="mt-5 flex gap-2">
             <button class="btn btn-primary" @onclick="StartAsync">Start the inspection</button>
             <a href="/tanks/inspections" class="btn btn-ghost">Cancel</a>

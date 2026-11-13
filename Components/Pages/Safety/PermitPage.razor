@@ -33,6 +33,7 @@ else
         @if (_d.Terms.GasTestRequired) { var (gl, gt) = PermitLook.Gas(_d.Gas); <StatusChip Label="@gl" Tone="@gt" /> }
         <span class="chip">Checklist version @p.ChecklistVersion</span>
         <span class="chip">@PermitLook.Window(p, _d.Until)</span>
+        @if (NeedsIncident()) { <a class="chip" data-tone="info" href="/incidents/new?permit=@p.Id">Report an incident about this</a> }
         @if (_d.Inside.Count > 0) { <span class="chip" data-tone="warning">@_d.Inside.Count inside: @string.Join(", ", _d.Inside.Select(e => e.PersonName))</span> }
     </div>
 
@@ -61,6 +62,8 @@ else
                 @Block("The work", p.Description)
                 @Block("Isolation points and equipment", p.Isolation)
                 @Block("Conditions", p.Conditions)
+                @if (p.RiskAssessmentId is { } riskId) { <p class="mt-3">Risk assessment: <a class="link" href="/risk/@riskId">open it</a></p> }
+                @if (p.PlannedJobId is { } jobId) { <p class="mt-1">Maintenance job: <a class="link" href="/pms/jobs/@jobId">open it</a></p> }
             </div>
 
             <div class="card p-4 text-sm">
@@ -243,6 +246,20 @@ else
         </div>
 
         <div class="space-y-5">
+            @if (_d.Fatigue is { Count: > 0 })
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-1 text-base font-semibold text-ink">Hours of work that day</h2>
+                    <p class="mb-3 text-xs text-muted">From the recorded hours of rest, for the people on this permit. For the issuer and the Master only.</p>
+                    <ul class="space-y-1">
+                        @foreach (var f in _d.Fatigue)
+                        {
+                            <li class="flex items-center gap-2"><span class="font-medium">@f.Name</span><span class="ml-auto">@(f.WorkMinutes / 60) h @((f.WorkMinutes % 60).ToString("00")) min</span>@if (f.WorkMinutes >= 600) { <span class="chip" data-tone="warning">long day</span> }</li>
+                        }
+                    </ul>
+                </div>
+            }
+
             <div class="card p-4 text-sm">
                 <h2 class="mb-3 text-base font-semibold text-ink">What happened</h2>
                 <ol class="space-y-2">
@@ -334,6 +351,9 @@ else
         if (_crew.Count == 0 && NodeContext.Current.IsVessel) _crew = await Svc.CrewAboardAsync(_companyId, _d.Permit.VesselId);
         _extendUntil = new DateTime(_d.Until.Year, _d.Until.Month, _d.Until.Day, _d.Until.Hour, _d.Until.Minute, 0).AddHours(2);
     }
+
+    /// <summary>A report is worth starting when a gas reading was outside the limits, or the permit was closed with the work left unsafe.</summary>
+    private bool NeedsIncident() => !_d!.Can.IsOffice && (_d.Permit.Readings.Any(r => !r.WithinLimits) || _d.Permit.Events.Any(e => e.Kind == PermitEventKind.Completed && e.Note.StartsWith("LeftUnsafe")));
 
     private IEnumerable<(int N, string Label, bool Done)> Steps()
     {

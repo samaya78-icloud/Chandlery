@@ -8,6 +8,7 @@
 @inject RiskLibraryService Library
 @inject PmsService Pms
 @inject DrillService Drills
+@inject PermitService Permits
 @inject NavigationManager Nav
 
 <PageTitle>@(Id is null ? "Report an incident" : "Change report") · Chandlery</PageTitle>
@@ -196,6 +197,7 @@ else
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
     [SupplyParameterFromQuery(Name = "drill")] private Guid? DrillQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "permit")] private Guid? PermitQuery { get; set; }
 
     private sealed class Form
     {
@@ -267,6 +269,7 @@ else
             _vesselId = VesselQuery is { } wanted && _vessels.Any(v => v.Id == wanted) ? wanted : _vessels[0].Id;
         }
         if (Id is null && DrillQuery is { } drillId) await PrefillFromDrillAsync(drillId);
+        if (Id is null && PermitQuery is { } permitId) await PrefillFromPermitAsync(permitId);
         await LoadVesselAsync();
         Rescore();
         _loaded = true;
@@ -285,6 +288,22 @@ else
         if (x.Findings != "") lines.Add($"Findings: {x.Findings}");
         if (x.Deficiencies != "") lines.Add($"Deficiencies: {x.Deficiencies}");
         (_f.Description, _f.OccurredAt, _f.Place, _f.ShipStatus, _f.EquipmentName) = (string.Join("\n", lines), x.StartedAt, x.Place, x.ShipStatus, x.EquipmentTested);
+    }
+
+    /// <summary>A report started from a permit: the gas readings outside the limits and how it was closed, with the permit named so the two can be read together.</summary>
+    private async Task PrefillFromPermitAsync(Guid permitId)
+    {
+        PermitDetail? d;
+        try { d = await Permits.GetAsync(_companyId, permitId, _actor); }
+        catch (InvalidOperationException) { return; }
+        if (d is null || (NodeContext.Current.IsVessel && d.Permit.VesselId != _vesselId)) return;
+        var x = d.Permit;
+        if (!NodeContext.Current.IsVessel && _vessels.Any(v => v.Id == x.VesselId)) _vesselId = x.VesselId;
+        var lines = new List<string> { $"Arose under permit to work {x.Code} ({x.TypeName}), {x.Location}." };
+        var bad = x.Readings.Where(r => !r.WithinLimits).OrderBy(r => r.At).ToList();
+        foreach (var r in bad) lines.Add($"Gas reading at {r.At:d MMM HH:mm} outside the limits: {r.Failures}.");
+        if (x.Events.FirstOrDefault(e => e.Kind == PermitEventKind.Completed && e.Note.StartsWith("LeftUnsafe")) is { } closed) lines.Add($"Closed with the work left unsafe: {closed.Note}.");
+        (_f.Description, _f.OccurredAt, _f.Place) = (string.Join("\n", lines), bad.Count > 0 ? bad[0].At : x.ValidFrom, x.Location);
     }
 
     private async Task LoadVesselAsync()

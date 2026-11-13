@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @using Chandlery.Models
 @inject PermitService Svc
+@inject PmsService Pms
 @inject NavigationManager Nav
 
 <PageTitle>New permit · Chandlery</PageTitle>
@@ -52,7 +53,7 @@ else
         </div>
 
         <div class="card p-4 text-sm">
-            <h2 class="mb-3 text-base font-semibold text-ink">2. Where and what</h2>
+            <h2 class="mb-3 text-base font-semibold text-ink">2. Where and what@(_jobCode is null ? "" : $" (for maintenance job {_jobCode})")</h2>
             <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <label>Where (as written on the permit)<input class="input mt-1 w-full" maxlength="200" @bind="_location" /></label>
                 <label>Tank (if it is a tank or space)
@@ -108,8 +109,11 @@ else
 
 @code {
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "job")] public Guid? JobQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "tank")] public Guid? TankQuery { get; set; }
 
-    private Guid _companyId, _vesselId, _typeId, _tank, _machine, _risk, _attendant;
+    private Guid _companyId, _vesselId, _typeId, _tank, _machine, _risk, _attendant, _job;
+    private string? _jobCode;
     private Actor _actor = default!;
     private bool _loaded, _busy;
     private string? _blocked, _error;
@@ -138,6 +142,23 @@ else
         _tanks = await Svc.TanksAsync(_companyId, vessel);
         _machinery = await Svc.MachineryAsync(_companyId, vessel);
         _risks = await Svc.RisksAsync(_companyId, vessel);
+        if (TankQuery is { } tankId && _tanks.Any(t => t.Id == tankId)) { _tank = tankId; OnTankChanged(); }
+        if (JobQuery is { } jobId)
+        {
+            try
+            {
+                if (await Pms.GetJobAsync(_companyId, jobId) is { } found && found.Job.VesselId == vessel)
+                {
+                    _job = jobId;
+                    _jobCode = found.Job.Code;
+                    if (_machinery.Any(m => m.Id == found.Job.MachineryItemId)) _machine = found.Job.MachineryItemId;
+                    _description = found.Job.Title;
+                    if (_location.Trim() == "") _location = found.Item.Name;
+                    if (found.Job.TankId is { } jobTank && _tanks.Any(t => t.Id == jobTank)) { _tank = jobTank; }
+                }
+            }
+            catch (InvalidOperationException) { }
+        }
         _from = new DateTime(_from.Year, _from.Month, _from.Day, _from.Hour, _from.Minute, 0);
         _until = _from.AddHours(4);
         _loaded = true;
@@ -163,7 +184,7 @@ else
         try
         {
             var input = new PermitInput(_typeId, _location, _description, _from, _until, _people.ToList(), _attendant == Guid.Empty ? null : _attendant,
-                _tank == Guid.Empty ? null : _tank, _machine == Guid.Empty ? null : _machine, _risk == Guid.Empty ? null : _risk, Isolation: _isolation);
+                _tank == Guid.Empty ? null : _tank, _machine == Guid.Empty ? null : _machine, _risk == Guid.Empty ? null : _risk, _job == Guid.Empty ? null : _job, _isolation);
             var permit = await Svc.RequestAsync(_companyId, _vesselId, _actor, input);
             Nav.NavigateTo($"/permits/{permit.Id}");
         }

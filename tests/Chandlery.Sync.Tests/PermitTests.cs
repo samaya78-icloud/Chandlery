@@ -140,7 +140,7 @@ public class PermitTests : IAsyncLifetime
         await _vessel.RecordGasAsync(_s.CompanyId, permit.Id, As(_bosun), Gas(lel: 6m));
         var suspended = (await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_second)))!;
         Assert.Equal(PermitState.Suspended, suspended.State);
-        Assert.Single(suspended.Actions);
+        Assert.Contains(suspended.Actions, a => a.Title.Contains("Gas reading outside limits"));
         await _vessel.LeaveAsync(_s.CompanyId, permit.Id, As(_bosun), entry.Id);                                                   // leaving is always allowed
         Assert.Contains("gas reading", await RefusedAsync(() => _vessel.ResumeAsync(_s.CompanyId, permit.Id, As(_chief))));
         await _vessel.RecordGasAsync(_s.CompanyId, permit.Id, As(_bosun), Gas());
@@ -192,6 +192,7 @@ public class PermitTests : IAsyncLifetime
         Assert.Equal(0, await _vessel.SweepAsync(_s.CompanyId, _s.VesselId));                                                       // still inside the window
 
         _now = _now.AddHours(3);
+        await _s.SettleUntilQuietAsync();
         var ashoreEarly = (await _shore.GetAsync(_s.CompanyId, permit.Id, _s.User))!;
         Assert.Equal(PermitState.Expired, (await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_second)))!.State);
         Assert.Equal(1, await _vessel.SweepAsync(_s.CompanyId, _s.VesselId));
@@ -338,5 +339,95 @@ public class PermitTests : IAsyncLifetime
         Assert.Contains("to " + _master.FullName, handed.Permit.Events.Single(e => e.Kind == PermitEventKind.HandedOver).Note);
         Assert.True(handed.Can.FinishWork && handed.Can.HandOver);
         Assert.False((await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_second)))!.Can.FinishWork);                               // no longer theirs to sign
+    }
+
+    // ---- links to the home page, tasks, tank inspection, PMS and rest hours (P5) ----
+
+    [Fact]
+    public async Task APermitThatNeedsTheMasterRaisesATaskForHim_AndTheHomeCountsAgreeOnBothSides()
+    {
+        await RelaxAsync(Enclosed, risk: false, master: true);
+
+        var permit = await _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Enclosed));
+        var detail = (await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_second)))!;
+        Assert.Contains(detail.Actions, a => a.Title.Contains("awaits the Master's approval") && a.AssigneeName == "Master");
+
+        var onboard = (await _vessel.CountsAsync(_s.CompanyId, As(_ab1)))!;
+        Assert.Equal((false, 0, 1, 0, 0), (onboard.IsOffice, onboard.Active, onboard.Awaiting, onboard.Suspended, onboard.Expired));
+        await _s.SettleUntilQuietAsync();
+        var ashore = (await _shore.CountsAsync(_s.CompanyId, _s.User))!;
+        Assert.Equal((true, 0, 1, 0, 0), (ashore.IsOffice, ashore.Active, ashore.Awaiting, ashore.Suspended, ashore.Expired));
+        Assert.Equal(0, await _shore.ExpiredCountAsync(_s.CompanyId, _s.User));
+        Assert.Equal(0, await _vessel.ExpiredCountAsync(_s.CompanyId, As(_master)));                                                // onboard there is no fleet badge
+    }
+
+    [Fact]
+    public async Task ATankInspectionSeesTheEnclosedSpacePermitForItsTank_AsAWarningOnly()
+    {
+        await SwitchOnAsync(_s.VesselId, PolicyModules.TankInspection);
+        await RelaxAsync(Enclosed);
+        var tank = await new TankService(_s.VesselFactory).AddTankAsync(_s.CompanyId, _s.VesselId, new TankInput("VS1", "Void space 1", TankType.VoidSpace), As(_master));
+
+        var none = await _vessel.TankStatusAsync(_s.CompanyId, _s.VesselId, tank.Id, As(_second));
+        Assert.True(none.ModuleOn);
+        Assert.Null(none.Permit);                                                                                                  // a warning to show, nothing is blocked
+
+        var permit = await _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Enclosed) with { TankId = tank.Id });
+        await AnswerAllAsync(permit, _second);
+        await _vessel.RecordGasAsync(_s.CompanyId, permit.Id, As(_second), Gas());
+        await _vessel.IssueAsync(_s.CompanyId, permit.Id, As(_chief));
+        await _vessel.StartAsync(_s.CompanyId, permit.Id, As(_second));
+        var ok = await _vessel.TankStatusAsync(_s.CompanyId, _s.VesselId, tank.Id, As(_second));
+        Assert.Equal((permit.Id, true), (ok.Permit!.Permit.Id, ok.Permit.Valid));
+
+        _now = _now.AddMinutes(45);                                                                                                // the gas reading is out of date
+        var late = await _vessel.TankStatusAsync(_s.CompanyId, _s.VesselId, tank.Id, As(_second));
+        Assert.Equal((permit.Id, false), (late.Permit!.Permit.Id, late.Permit.Valid));
+        Assert.Null((await _vessel.TankStatusAsync(_s.CompanyId, _s.VesselId, Guid.NewGuid(), As(_second))).Permit);               // another tank: no permit
+
+        // A permit of a kind without an entry log is not an enclosed space permit.
+        await RelaxAsync(Cold);
+        var cold = await _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Cold, attendant: null) with { AttendantCrewId = null, TankId = tank.Id });
+        Assert.Equal(permit.Id, (await _vessel.TankStatusAsync(_s.CompanyId, _s.VesselId, tank.Id, As(_second))).Permit!.Permit.Id);
+        Assert.NotEqual(cold.Id, permit.Id);
+    }
+
+    [Fact]
+    public async Task APermitCanBeRaisedForAMaintenanceJob_AndTheJobListsIt_ButOnlyForAJobOnThisVessel()
+    {
+        await SwitchOnAsync(_s.VesselId, PolicyModules.Pms);
+        await RelaxAsync(Hot);
+        var pms = new PmsService(_s.ShoreFactory);
+        var item = await pms.AddMachineryItemAsync(_s.CompanyId, new NewMachineryItem(_s.VesselId, "Bilge pump", "BP-1"), _s.User);
+        var job = await pms.AddJobAsync(_s.CompanyId, new NewPlannedJob(item.Id, Code: "BP-1-A", Title: "Weld the pump base", CalendarInterval: 6, StartDate: _now.Date.AddDays(-30)), _s.User);
+        await _s.SettleUntilQuietAsync();
+
+        Assert.Contains("maintenance job", await RefusedAsync(() => _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Hot) with { PlannedJobId = Guid.NewGuid() })));
+        var permit = await _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Hot) with { PlannedJobId = job.Id, MachineryItemId = item.Id });
+        Assert.Equal(job.Id, permit.PlannedJobId);
+        Assert.Equal([permit.Id], (await _vessel.ForJobAsync(_s.CompanyId, _s.VesselId, job.Id, As(_second))).Select(r => r.Permit.Id));
+        Assert.Empty(await _vessel.ForJobAsync(_s.CompanyId, _s.VesselId, Guid.NewGuid(), As(_second)));
+        await _s.SettleUntilQuietAsync();
+        Assert.Single(await _shore.ForJobAsync(_s.CompanyId, _s.VesselId, job.Id, _s.User));                                       // the office sees the same list
+    }
+
+    [Fact]
+    public async Task TheIssuerAndTheMasterSeeTheHoursWorkedByThePeopleOnAPermit_NobodyElseDoes()
+    {
+        await SwitchOnAsync(_s.VesselId, PolicyModules.RestHours);
+        await RelaxAsync(Cold);
+        var permit = await _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Cold, attendant: null, people: [_ab1.Id, _ab2.Id]) with { AttendantCrewId = null });
+        var day = permit.ValidFrom.Date;
+        var rest = new RestHoursService(_s.VesselFactory);
+        await rest.RecordDayAsync(_s.CompanyId, _s.VesselId, _ab1.Id, day, "05:00-16:00", As(_ab1));                                // eleven hours
+        await rest.RecordDayAsync(_s.CompanyId, _s.VesselId, _ab1.Id, day, "05:00-16:00,18:00-19:00", As(_ab1), reason: "Extra watch");   // a later entry replaces it: twelve hours
+
+        var seen = (await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_chief)))!.Fatigue!;
+        Assert.Equal([(_ab1.FullName, 12 * 60)], seen.Select(f => (f.Name, f.WorkMinutes)));                                        // the second man recorded nothing, so nothing is shown
+        Assert.NotNull((await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_master)))!.Fatigue);
+        Assert.Null((await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_second)))!.Fatigue);                                       // the person in charge is not an issuer
+        Assert.Null((await _vessel.GetAsync(_s.CompanyId, permit.Id, As(_ab1)))!.Fatigue);
+        await _s.SettleUntilQuietAsync();
+        Assert.Null((await _shore.GetAsync(_s.CompanyId, permit.Id, _s.User))!.Fatigue);                                            // the office reads the hours on their own screens
     }
 }
