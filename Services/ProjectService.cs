@@ -62,12 +62,15 @@ public record ProjectRow(Project Project, ProjectStatus Status, DateTime? Actual
 /// Projects: planned and run by the office, with the vessel adding notes and links. A project's status is worked out from the events the office records and a closed project is
 /// locked. Budget, estimates and cost entries are kept in tables that never leave the office, and a vessel installation cannot write them.
 /// </summary>
-public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, WorklistService? worklist = null)
+public partial class ProjectService(IDbContextFactory<ChandleryDbContext> factory, WorklistService? worklist = null)
 {
     public const int MaxItems = 300;
 
     /// <summary>An extension of more than this many days needs a second step of approval, even when the money alone would not.</summary>
     public const int ExtensionSecondApprovalDays = 7;
+
+    /// <summary>The scope name of the extra sign-off by the project's own superintendent.</summary>
+    public const string SuperintendentScope = "Project superintendent";
 
     private static DateTime Day(DateTime d) => DateTime.SpecifyKind(d.Date, DateTimeKind.Utc);
 
@@ -382,7 +385,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         }
 
         var lines = kind == ProjectEventKind.Approved ? await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == id).ToListAsync() : [];
-        if (kind == ProjectEventKind.Approved && !throughMatrix && (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines))).Count > 0)
+        if (kind == ProjectEventKind.Approved && !throughMatrix && (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines), superintendent: await SignerAsync(db, companyId, project.SuperintendentUserId, actor.UserId))).Count > 0)
             throw new InvalidOperationException("This budget needs approval through the approval matrix: submit it for approval.");
 
         var record = new ProjectStatusEvent
@@ -409,7 +412,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
     /// then, for each budget category the matrix has its own rules for, the tier of those rules that covers what the budget holds in that category, as an extra sign-off.
     /// A long extension also gets a second step if the money alone would not have. Empty when no rule applies, which means no approval is needed.
     /// </summary>
-    private static async Task<List<(string Scope, ApprovalRule Rule)>> ChainAsync(ChandleryDbContext db, Guid companyId, decimal amountUsd, IReadOnlyList<(string Category, decimal Amount)>? categories = null, int extraDays = 0)
+    private static async Task<List<(string Scope, ApprovalRule Rule)>> ChainAsync(ChandleryDbContext db, Guid companyId, decimal amountUsd, IReadOnlyList<(string Category, decimal Amount)>? categories = null, int extraDays = 0, Guid? superintendent = null)
     {
         var all = await db.ApprovalRules.AsNoTracking().Where(r => r.CompanyId == companyId).ToListAsync();
         var general = ApprovalEngine.ResolveChain(all, null, amountUsd);
@@ -424,7 +427,19 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
             var rules = all.Where(r => r.ProjectCategory is not null && string.Equals(r.ProjectCategory, category, StringComparison.OrdinalIgnoreCase)).ToList();
             if (rules.Count > 0) chain.AddRange(ApprovalEngine.Tier(rules, amount).Select(r => (Scope: r.ProjectCategory!, Rule: r)));
         }
+        if (superintendent is { } sup) chain.Add((SuperintendentScope, new ApprovalRule { CompanyId = companyId, Level = 1, ApproverUserId = sup }));
         return chain.GroupBy(c => (c.Scope, c.Rule.Level, c.Rule.ApproverUserId)).Select(g => g.First()).ToList();
+    }
+
+    /// <summary>
+    /// The superintendent whose own sign-off a request needs: the project's superintendent, when the company asks for it, unless that person is the one asking (they have then endorsed it
+    /// already). Null when no such step applies.
+    /// </summary>
+    private static async Task<Guid?> SignerAsync(ChandleryDbContext db, Guid companyId, Guid? superintendentUserId, Guid? requesterId)
+    {
+        if (superintendentUserId is not { } sup || sup == requesterId) return null;
+        if (!await db.Companies.AsNoTracking().AnyAsync(c => c.Id == companyId && c.ProjectSuperintendentSignOff)) return null;
+        return await db.Users.AsNoTracking().AnyAsync(u => u.Id == sup && u.CompanyId == companyId && u.IsEnabled) ? sup : null;
     }
 
     /// <summary>What the budget holds in each category, with its contingency, for the category rules.</summary>
@@ -455,7 +470,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
 
         var lines = await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == projectId).ToListAsync();
         var (total, contingency) = (ProjectCostRules.Budget(lines), ProjectCostRules.Contingency(lines));
-        var chain = await ChainAsync(db, companyId, total + contingency, CategoryAmounts(lines));
+        var chain = await ChainAsync(db, companyId, total + contingency, CategoryAmounts(lines), superintendent: await SignerAsync(db, companyId, (await db.Projects.AsNoTracking().FirstAsync(p => p.Id == projectId)).SuperintendentUserId, actor.UserId));
         var request = new ProjectApprovalRequest
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Budget, AmountUsd = total + contingency, ContingencyUsd = contingency,
@@ -490,7 +505,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         if (target is { Status: not ProjectItemStatus.Open }) throw new InvalidOperationException("Only a job that is still open can be changed by a variation.");
 
         category = (category ?? "").Trim();
-        var chain = await ChainAsync(db, companyId, amountUsd, category == "" ? null : new List<(string Category, decimal Amount)> { (category, amountUsd) });
+        var chain = await ChainAsync(db, companyId, amountUsd, category == "" ? null : new List<(string Category, decimal Amount)> { (category, amountUsd) }, superintendent: await SignerAsync(db, companyId, project.SuperintendentUserId, actor.UserId));
         var request = new ProjectApprovalRequest
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Variation, AmountUsd = amountUsd,
@@ -554,7 +569,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
             throw new InvalidOperationException("An extension is already with the approvers.");
 
         category = (category ?? "").Trim();
-        var chain = await ChainAsync(db, companyId, amountUsd, amountUsd > 0 && category != "" ? new List<(string Category, decimal Amount)> { (category, amountUsd) } : null, extraDays);
+        var chain = await ChainAsync(db, companyId, amountUsd, amountUsd > 0 && category != "" ? new List<(string Category, decimal Amount)> { (category, amountUsd) } : null, extraDays, await SignerAsync(db, companyId, project.SuperintendentUserId, actor.UserId));
         var request = new ProjectApprovalRequest
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Extension, AmountUsd = amountUsd, ExtraDays = extraDays, Category = category,
@@ -626,13 +641,14 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
     }
 
     /// <summary>Whether the approval matrix would have to approve the budget as it stands: the page then offers "Submit for approval" instead of "Approve".</summary>
-    public async Task<bool> NeedsMatrixAsync(Guid companyId, Guid projectId)
+    public async Task<bool> NeedsMatrixAsync(Guid companyId, Guid projectId, Guid? userId = null)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         if (db.Node.IsVessel) return false;
         var lines = await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == projectId).ToListAsync();
-        return (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines), CategoryAmounts(lines))).Count > 0;
+        var superintendent = await SignerAsync(db, companyId, await db.Projects.AsNoTracking().Where(p => p.Id == projectId).Select(p => p.SuperintendentUserId).FirstOrDefaultAsync(), userId);
+        return (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines), CategoryAmounts(lines), superintendent: superintendent)).Count > 0;
     }
 
     public record ApprovalRequestView(ProjectApprovalRequest Request, List<ApprovalSlotView> Slots, bool YourTurn);

@@ -482,6 +482,7 @@ else
 
         @* ---- J9: the office's planning tools. None of it leaves the office. ---- *@
         <ProjectTenders CompanyId="_companyId" ProjectId="ProjectId" User="_actor" Items="p.Items" CanEdit="@(canEdit && _detail.Status is ProjectStatus.Planning or ProjectStatus.Approved or ProjectStatus.Ongoing)" OnAwarded="ReloadAsync" />
+        <ProjectTenderDialogue CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
         <ProjectPhases CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
         <ProjectDocuments CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
         <ProjectRisks CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
@@ -646,7 +647,7 @@ else
         _approvals = _onVessel ? [] : await Svc.ApprovalsAsync(_companyId, ProjectId);
         _pmsWaiting = _onVessel ? [] : await Svc.PmsWaitingAsync(_companyId, ProjectId);
         _approvalRequests = _onVessel ? [] : await Svc.RequestsOfAsync(_companyId, ProjectId, _actor.UserId);
-        _needsMatrix = !_onVessel && await Svc.NeedsMatrixAsync(_companyId, ProjectId);
+        _needsMatrix = !_onVessel && await Svc.NeedsMatrixAsync(_companyId, ProjectId, _actor.UserId);
         var costs = _onVessel ? new Dictionary<Guid, ProjectItemCost>() : (await Svc.ItemCostsAsync(_companyId, ProjectId)).ToDictionary(c => c.ItemId);
         _requests = await Svc.RequestsAsync(_companyId, ProjectId);
         foreach (var waiting in _requests.Where(r => r.Decision is null)) _answers.TryAdd(waiting.Request.Id, new AnswerRow());

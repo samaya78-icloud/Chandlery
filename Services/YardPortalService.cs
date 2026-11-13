@@ -97,4 +97,76 @@ public class YardPortalService(IDbContextFactory<ChandleryDbContext> factory, IF
         var content = files.OpenRead(row.StoredKey);
         return content is null ? null : (row, content);
     }
+
+    // ---- J12: declining, asking, revising history, and the yard's own contact details ----
+
+    /// <summary>The yard says it will not quote. Only a yard that has not quoted can decline.</summary>
+    public async Task DeclineAsync(Guid companyId, Guid yardId, Guid tenderId, string reason)
+    {
+        reason = (reason ?? "").Trim();
+        if (reason == "") throw new InvalidOperationException("Say why you are declining.");
+        await using var db = await OpenAsync(companyId);
+        var (tender, project, status) = await LoadAsync(db, companyId, yardId, tenderId);
+        if (!Open(status)) throw new InvalidOperationException("This tender is closed: the work is already complete.");
+        if (tender.Status != TenderStatus.Invited) throw new InvalidOperationException("Only an invitation you have not quoted on can be declined.");
+        (tender.Status, tender.Remarks) = (TenderStatus.Declined, reason);
+        var yardName = await db.ProjectYards.Where(y => y.Id == yardId).Select(y => y.Name).FirstAsync();
+        ProjectPlanningService.Notify(db, companyId, project.Id, tender.Id, $"{yardName} declined to quote on {project.Title}: {reason}");
+        await db.SaveChangesAsync();
+    }
+
+    public record YardQuestion(Guid Id, string Question, DateTime AskedAt, string Answer, DateTime? AnsweredAt);
+
+    /// <summary>The yard's own questions on a tender, with the answers given.</summary>
+    public async Task<List<YardQuestion>> QuestionsAsync(Guid companyId, Guid yardId, Guid tenderId)
+    {
+        await using var db = await OpenAsync(companyId);
+        await LoadAsync(db, companyId, yardId, tenderId);
+        return (await db.ProjectTenderQuestions.AsNoTracking().Where(q => q.TenderId == tenderId).OrderBy(q => q.AskedAt).ToListAsync())
+            .Select(q => new YardQuestion(q.Id, q.Question, q.AskedAt, q.Answer, q.AnsweredAt)).ToList();
+    }
+
+    public async Task AskAsync(Guid companyId, Guid yardId, Guid tenderId, string question, string askedBy)
+    {
+        question = (question ?? "").Trim();
+        if (question == "") throw new InvalidOperationException("Write your question.");
+        if (question.Length > 2000) throw new InvalidOperationException("A question can be at most 2000 characters.");
+        await using var db = await OpenAsync(companyId);
+        var (tender, project, status) = await LoadAsync(db, companyId, yardId, tenderId);
+        if (!Open(status)) throw new InvalidOperationException("This tender is closed: the work is already complete.");
+        if (await db.ProjectTenderQuestions.CountAsync(q => q.TenderId == tenderId && q.Answer == "") >= 5) throw new InvalidOperationException("You already have five questions waiting for an answer.");
+        db.ProjectTenderQuestions.Add(new ProjectTenderQuestion { Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = project.Id, TenderId = tenderId, Question = question, AskedAt = DateTime.UtcNow, AskedByName = askedBy });
+        var yardName = await db.ProjectYards.Where(y => y.Id == yardId).Select(y => y.Name).FirstAsync();
+        ProjectPlanningService.Notify(db, companyId, project.Id, tender.Id, $"{yardName} asked a question on {project.Title}: {(question.Length > 200 ? question[..200] + "…" : question)}");
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The yard's own earlier versions of its quote, oldest first.</summary>
+    public async Task<List<ProjectTenderRevision>> RevisionsAsync(Guid companyId, Guid yardId, Guid tenderId)
+    {
+        await using var db = await OpenAsync(companyId);
+        await LoadAsync(db, companyId, yardId, tenderId);
+        return await db.ProjectTenderRevisions.AsNoTracking().Where(r => r.TenderId == tenderId).OrderBy(r => r.Number).ToListAsync();
+    }
+
+    public record YardProfile(string Name, string Location, string ContactName, string ContactEmail);
+
+    public async Task<YardProfile> ProfileAsync(Guid companyId, Guid yardId)
+    {
+        await using var db = await OpenAsync(companyId);
+        var y = await db.ProjectYards.AsNoTracking().FirstOrDefaultAsync(y => y.Id == yardId && y.CompanyId == companyId) ?? throw new InvalidOperationException("Yard not found.");
+        return new YardProfile(y.Name, y.Location, y.ContactName, y.ContactEmail);
+    }
+
+    /// <summary>The yard keeps its own contact details up to date. Its name, notes and whether it is in use stay with the office.</summary>
+    public async Task SaveProfileAsync(Guid companyId, Guid yardId, string location, string contactName, string contactEmail)
+    {
+        (location, contactName, contactEmail) = ((location ?? "").Trim(), (contactName ?? "").Trim(), (contactEmail ?? "").Trim());
+        if (location.Length > 150 || contactName.Length > 120 || contactEmail.Length > 200) throw new InvalidOperationException("One of the details is too long.");
+        if (contactEmail != "" && !(contactEmail.Contains('@') && contactEmail.IndexOf('@') > 0 && contactEmail.IndexOf('@') < contactEmail.Length - 1 && !contactEmail.Contains(' '))) throw new InvalidOperationException("That is not an email address.");
+        await using var db = await OpenAsync(companyId);
+        var y = await db.ProjectYards.FirstOrDefaultAsync(y => y.Id == yardId && y.CompanyId == companyId) ?? throw new InvalidOperationException("Yard not found.");
+        (y.Location, y.ContactName, y.ContactEmail) = (location, contactName, contactEmail);
+        await db.SaveChangesAsync();
+    }
 }

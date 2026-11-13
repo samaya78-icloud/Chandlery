@@ -66,9 +66,54 @@ else
         @if (inv.CanQuote)
         {
             <label class="mt-4 block text-sm">Remarks <input class="input mt-1 w-full max-w-3xl" @bind="_remarks" /></label>
+            @if (inv.Status == TenderStatus.Quoted)
+            {
+                <label class="mt-4 block text-sm">Why are you changing your quote? <input class="input mt-1 w-full max-w-3xl" @bind="_reason" placeholder="required when you update a quote you have already sent" /></label>
+            }
             <div class="mt-4 flex items-center gap-3">
                 <button @onclick="Submit" disabled="@_busy" class="btn btn-primary">@(inv.Status == TenderStatus.Invited ? "Submit quote" : "Update quote")</button>
                 @if (inv.QuoteTotal is { } total) { <span class="text-sm text-muted">Current quote: @Money.Format(total, "USD")</span> }
+                @if (inv.Status == TenderStatus.Invited)
+                {
+                    <button @onclick="() => _declining = !_declining" disabled="@_busy" class="btn btn-secondary ml-auto">Decline to quote</button>
+                }
+            </div>
+            @if (_declining)
+            {
+                <div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+                    <input class="input min-w-64 flex-1" placeholder="Why you will not quote" @bind="_declineReason" />
+                    <button @onclick="Decline" disabled="@_busy" class="btn btn-secondary btn-sm">Confirm decline</button>
+                </div>
+            }
+        }
+    </section>
+
+    @if (_revisions.Count > 1)
+    {
+        <section class="card mb-6 p-5">
+            <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Your quote history</h2>
+            <ol class="ml-4 list-decimal text-sm">
+                @foreach (var r in _revisions) { <li>@Money.Format(r.TotalUsd, "USD") <span class="text-xs text-muted">@r.At.ToString("d MMM yyyy")@(r.Reason == "" ? "" : " · " + r.Reason)</span></li> }
+            </ol>
+        </section>
+    }
+
+    <section class="card mb-6 p-5">
+        <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Questions for the owner</h2>
+        @foreach (var q in _questions)
+        {
+            <div class="mb-3 text-sm">
+                <div><span class="text-xs text-muted">You asked @q.AskedAt.ToString("d MMM")</span> @q.Question</div>
+                @if (q.AnsweredAt is not null) { <div class="mt-1 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-800">@q.Answer</div> }
+                else { <div class="mt-1 text-xs text-muted">Waiting for an answer.</div> }
+            </div>
+        }
+        @if (_questions.Count == 0) { <p class="mb-3 text-sm text-muted">No questions yet.</p> }
+        @if (inv.Status is TenderStatus.Invited or TenderStatus.Quoted)
+        {
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+                <input class="input min-w-64 flex-1" placeholder="Ask about the specification" @bind="_question" />
+                <button @onclick="Ask" disabled="@_busy" class="btn btn-secondary">Ask</button>
             </div>
         }
     </section>
@@ -98,7 +143,10 @@ else
     private YardTenderView? _view;
     private readonly Dictionary<Guid, decimal?> _prices = [];
     private decimal _other;
-    private string _reference = "", _remarks = "";
+    private string _reference = "", _remarks = "", _reason = "", _question = "", _declineReason = "";
+    private bool _declining;
+    private List<YardPortalService.YardQuestion> _questions = [];
+    private List<ProjectTenderRevision> _revisions = [];
     private DateTime? _valid;
     private readonly List<PendingAttachment> _pending = [];
 
@@ -115,6 +163,9 @@ else
     {
         try { _view = await Portal.TenderAsync(_companyId, _yardId, TenderId); }
         catch (InvalidOperationException) { _view = null; return; }
+        _questions = await Portal.QuestionsAsync(_companyId, _yardId, TenderId);
+        _revisions = await Portal.RevisionsAsync(_companyId, _yardId, TenderId);
+        _reason = "";
         _prices.Clear();
         foreach (var (id, amount) in _view.Prices) _prices[id] = amount;
         (_other, _reference, _valid, _remarks) = (_view.Tender.OtherChargesUsd, _view.Tender.YardReference, _view.Tender.ValidUntil, _view.Tender.Remarks);
@@ -132,7 +183,18 @@ else
         finally { _busy = false; }
     }
 
-    private Task Submit() => Run(() => Portal.SubmitQuoteAsync(_companyId, _yardId, TenderId, new TenderQuoteInput(_reference, _valid, _other, _remarks, new Dictionary<Guid, decimal?>(_prices))), "Quote saved");
+    private Task Submit() => Run(() => Portal.SubmitQuoteAsync(_companyId, _yardId, TenderId, new TenderQuoteInput(_reference, _valid, _other, _remarks, new Dictionary<Guid, decimal?>(_prices), _reason)), "Quote saved");
+
+    private async Task Ask()
+    {
+        _busy = true;
+        _error = null;
+        try { await Portal.AskAsync(_companyId, _yardId, TenderId, _question, _actor.Name); _question = ""; _questions = await Portal.QuestionsAsync(_companyId, _yardId, TenderId); await Toasts.Success("Question sent"); }   // only the questions are refreshed, so prices typed but not yet submitted stay
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task Decline() => Run(async () => { await Portal.DeclineAsync(_companyId, _yardId, TenderId, _declineReason); _declining = false; }, "Declined");
 
     private async Task Upload()
     {

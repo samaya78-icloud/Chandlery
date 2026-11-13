@@ -142,3 +142,45 @@ public class ProjectGroupMember
     public Guid GroupId { get; set; }
     public Guid ProjectId { get; set; }
 }
+
+// ---- Projects J12: what a yard asks and revises, and what the office is told about it (all office-only, never synced) ----
+
+/// <summary>A question a yard asks about a tender, and the office's answer. The answer is shown only to the yard that asked.</summary>
+public class ProjectTenderQuestion
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid ProjectId { get; set; }
+    public Guid TenderId { get; set; }
+    public string Question { get; set; } = "";
+    public DateTime AskedAt { get; set; }
+    public string AskedByName { get; set; } = "";
+    public string Answer { get; set; } = "";
+    public DateTime? AnsweredAt { get; set; }
+    public string AnsweredByName { get; set; } = "";
+}
+
+/// <summary>One version of a yard's quote: what the total was, and why the yard changed it (blank for the first).</summary>
+public class ProjectTenderRevision
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid TenderId { get; set; }
+    public int Number { get; set; }
+    public decimal TotalUsd { get; set; }
+    public string Reason { get; set; } = "";
+    public DateTime At { get; set; }
+    public bool ByYard { get; set; }
+}
+
+/// <summary>A line in the office's list of what has happened that it should know about (a yard quoted, declined, asked a question or revised).</summary>
+public class ProjectNotice
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid ProjectId { get; set; }
+    public Guid? TenderId { get; set; }
+    public string Text { get; set; } = "";
+    public DateTime At { get; set; }
+    public DateTime? ReadAt { get; set; }
+}

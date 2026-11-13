@@ -35,7 +35,7 @@ public class NavCatalogService(
             groups.Add(new("Vessel", [new("/crew", "Crew logins", "team")]));
 
         if (user.IsInRole("YardUser"))
-            groups.Add(new("Workspace", [new("/yard", "Tenders", "rfq")]));
+            groups.Add(new("Workspace", [new("/yard", "Tenders", "rfq"), new("/yard/profile", "Contact details", "profile")]));
 
         if (user.IsInRole("SupplierAdmin") || user.IsInRole("SupplierUser"))
             groups.Add(new("Workspace",

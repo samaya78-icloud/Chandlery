@@ -9,7 +9,7 @@ public record YardInput(Guid? Id, string Name, string Location = "", string Cont
 public record TenderView(ProjectTender Tender, string YardName, List<ProjectTenderLine> Lines);
 
 /// <summary>What a yard quoted. Lines map a specification item to its price; an item left out (or null) is one the yard did not price.</summary>
-public record TenderQuoteInput(string YardReference, DateTime? ValidUntil, decimal OtherChargesUsd, string Remarks, IReadOnlyDictionary<Guid, decimal?> Lines);
+public record TenderQuoteInput(string YardReference, DateTime? ValidUntil, decimal OtherChargesUsd, string Remarks, IReadOnlyDictionary<Guid, decimal?> Lines, string Reason = "");
 
 public record PhaseInput(Guid? Id, string Name, DateTime? PlannedStart, DateTime? PlannedEnd, DateTime? ActualStart, DateTime? ActualEnd);
 
@@ -32,7 +32,7 @@ public record ProjectFileView(Guid Id, Guid? TenderId, string FileName, string C
 /// assessments. All of it stays at the office; a vessel installation cannot write any of it. Changing any of it needs the same permission as planning the project,
 /// and a closed project is locked.
 /// </summary>
-public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factory, IFileStore files)
+public partial class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factory, IFileStore files)
 {
     private static DateTime? Day(DateTime? d) => d is { } v ? DateTime.SpecifyKind(v.Date, DateTimeKind.Utc) : null;
 
@@ -140,6 +140,16 @@ public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factor
         var priced = input.Lines.Where(kv => kv.Value is not null).ToList();
         if (priced.Any(kv => !live.Contains(kv.Key))) throw new InvalidOperationException("A price was given for an item that is not on this project.");
         if (priced.Count == 0 && input.OtherChargesUsd == 0) throw new InvalidOperationException("Enter at least one price before saving the quote.");
+        var reason = (input.Reason ?? "").Trim();
+        var revisions = await db.ProjectTenderRevisions.CountAsync(r => r.TenderId == tender.Id);
+        var total = priced.Sum(kv => kv.Value!.Value) + input.OtherChargesUsd;
+        if (byYard && revisions > 0 && reason == "") throw new InvalidOperationException("Say why you are changing your quote.");
+        db.ProjectTenderRevisions.Add(new ProjectTenderRevision { Id = Guid.CreateVersion7(), CompanyId = companyId, TenderId = tender.Id, Number = revisions + 1, TotalUsd = total, Reason = revisions == 0 ? "" : reason, At = DateTime.UtcNow, ByYard = byYard });
+        if (byYard)
+        {
+            var yardName = await db.ProjectYards.Where(y => y.Id == tender.YardId).Select(y => y.Name).FirstAsync();
+            Notify(db, companyId, project.Id, tender.Id, revisions == 0 ? $"{yardName} quoted USD {total:N2} on {project.Title}." : $"{yardName} revised its quote on {project.Title} to USD {total:N2}: {reason}");
+        }
         db.ProjectTenderLines.RemoveRange(await db.ProjectTenderLines.Where(l => l.TenderId == tender.Id).ToListAsync());
         foreach (var kv in priced) db.ProjectTenderLines.Add(new ProjectTenderLine { Id = Guid.CreateVersion7(), CompanyId = companyId, TenderId = tender.Id, ItemId = kv.Key, AmountUsd = kv.Value!.Value });
         (tender.Status, tender.QuotedAt, tender.YardReference, tender.ValidUntil, tender.OtherChargesUsd, tender.Remarks, tender.QuotedByYard) =
