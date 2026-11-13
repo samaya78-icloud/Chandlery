@@ -22,7 +22,7 @@ public class NavCatalogTests : IAsyncLifetime
         var authorization = new ServiceCollection().AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")))
             .AddLogging().BuildServiceProvider().GetRequiredService<IAuthorizationService>();
         _catalog = new NavCatalogService(new ApprovalService(factory), new InvoiceService(factory, new NoFiles()), worklist, pms, new RestHoursService(factory),
-            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), authorization);
+            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), authorization, new ChatService(factory));
     }
 
     public Task DisposeAsync() => _s.DisposeAsync();
@@ -62,6 +62,19 @@ public class NavCatalogTests : IAsyncLifetime
     private static List<string> Titles(List<NavGroup> groups) => groups.Select(g => g.Title).ToList();
 
     private static List<string> Pages(List<NavGroup> groups, string group) => groups.Single(g => g.Title == group).Items.Select(i => i.Label).ToList();
+
+    [Fact]
+    public async Task TheInboxIsOfferedOnlyWhereConversationsAreOn_WithItsUnreadCountAsTheBadge()
+    {
+        var admin = Person("CompanyAdmin");
+        Assert.DoesNotContain("Conversations", Pages(await _catalog.GetAsync(admin, isVessel: false), "Work"));
+
+        await SwitchOnAsync(PolicyModules.Conversations);
+        var work = (await _catalog.GetAsync(admin, isVessel: false)).Single(g => g.Title == "Work");
+        var inbox = work.Items.Single(i => i.Label == "Conversations");
+        Assert.Equal(("/conversations", 0), (inbox.Href, inbox.Badge));
+        Assert.Contains("Conversations", Pages(await _catalog.GetAsync(admin, isVessel: true), "Onboard"));
+    }
 
     [Fact]
     public async Task AModuleThatIsOffHasNoPages_AndOnceSwitchedOnEveryOneOfItsPagesIsOffered()

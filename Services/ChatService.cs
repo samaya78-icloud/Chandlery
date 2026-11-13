@@ -7,6 +7,13 @@ namespace Chandlery.Services;
 /// <summary>What a person writes: the record the conversation belongs to, which vessel that record belongs to (null when it has none), and the text.</summary>
 public sealed record ChatPost(string ModuleType, Guid RecordId, Guid? VesselId, ChatChannel Channel, string Body, string Topic = "", Guid? ReplyToId = null);
 
+/// <summary>One thread in a person's inbox: which record, how new it is, and what was said last.</summary>
+public sealed record ChatInboxRow(string ModuleType, Guid RecordId, string Topic, Guid? VesselId, string VesselName, string Label, string? Href, DateTime LastAt, string LastAuthor,
+    string LastPreview, int Unread, int UnreadMentions, int WaitingForMe, bool Resolved);
+
+/// <summary>The numbers behind the menu badge and the home page card: threads, not messages.</summary>
+public sealed record ChatInboxCounts(int UnreadThreads, int MentionThreads, int WaitingThreads);
+
 /// <summary>
 /// Conversations on records (spec 10). Everything is written as a new message by the side of its author, so the vessel and the office never write the same
 /// row; the rules in <see cref="ChatRules"/> say who may see and do what, and every one of them is checked here whatever the page lets through.
@@ -37,7 +44,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         {
             var crew = await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == actor.UserId && c.VesselId != null && c.IsActive)
                 ?? throw new InvalidOperationException("Conversations onboard are for the crew of the vessel.");
-            return new(new ChatViewer(ChatSide.Vessel, actor.UserId, crew.VesselId), crew.FullName, actor.UserId);
+            return new(new ChatViewer(ChatSide.Vessel, actor.UserId, crew.VesselId, IsMaster: crew.IsMaster), crew.FullName, actor.UserId);
         }
 
         var user = await db.Users.AsNoTracking().IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == actor.UserId && u.IsEnabled)
@@ -216,6 +223,74 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         return await IsEnabledForVesselAsync(db, companyId, vesselId.Value);
+    }
+
+    /// <summary>True when conversations are switched on for at least one vessel: what decides whether the menu offers the inbox.</summary>
+    public async Task<bool> IsEnabledForCompanyAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return (await ModuleGate.EnabledVesselsAsync(db, companyId, PolicyModules.Conversations)).Count > 0;
+    }
+
+    // ---- the inbox ----
+
+    /// <summary>How far back an inbox looks: a thread with no message in this time is left out.</summary>
+    public const int InboxDays = 180;
+
+    /// <summary>
+    /// The person's conversations, newest first. A thread is in the list when it has had a message in the last <see cref="InboxDays"/> days; what the
+    /// person may not see is never counted or quoted.
+    /// </summary>
+    public async Task<List<ChatInboxRow>> InboxAsync(Guid companyId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        var cutoff = DateTime.UtcNow.AddDays(-InboxDays);
+        var recent = db.ChatMessages.Where(m => m.CompanyId == companyId && m.At >= cutoff).Select(m => m.RecordId).Distinct();
+        var visible = (await db.ChatMessages.AsNoTracking().Where(m => m.CompanyId == companyId && recent.Contains(m.RecordId)).ToListAsync()).Where(m => ChatRules.Visible(m, who.Viewer)).ToList();
+        var reads = await db.ChatReads.AsNoTracking().Where(r => r.UserId == who.UserId).ToListAsync();
+        var threads = visible.GroupBy(m => (m.ModuleType, m.RecordId, m.Topic)).ToList();
+
+        var vesselIds = threads.Select(g => g.First().VesselId).Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
+        var vessels = await db.Vessels.AsNoTracking().Where(v => vesselIds.Contains(v.Id)).ToDictionaryAsync(v => v.Id, v => v.Name);
+        var records = await DescribeAsync(db, threads.Select(g => (g.Key.ModuleType, g.Key.RecordId)));
+
+        var rows = new List<ChatInboxRow>();
+        foreach (var g in threads)
+        {
+            var read = reads.FirstOrDefault(r => r.ModuleType == g.Key.ModuleType && r.RecordId == g.Key.RecordId && r.Topic == g.Key.Topic)?.LastReadAt;
+            var s = ChatRules.Summarize(g, who.Viewer, read);
+            if (s.Last is null) continue;
+            var vessel = g.First().VesselId;
+            var info = records.GetValueOrDefault((g.Key.ModuleType, g.Key.RecordId));
+            var label = (info?.Label ?? g.Key.ModuleType) + (g.Key.Topic.Length > 0 ? $" · {g.Key.Topic}" : "");
+            rows.Add(new ChatInboxRow(g.Key.ModuleType, g.Key.RecordId, g.Key.Topic, vessel, vessel is { } v ? vessels.GetValueOrDefault(v, "") : "", label, info?.Href, s.Last.Message.At,
+                s.Last.Message.Kind == ChatKind.System ? "" : s.Last.Message.AuthorName, s.Last.Body, s.Unread, s.UnreadMentions, s.WaitingForMe, s.Resolved));
+        }
+        return rows.OrderByDescending(r => r.LastAt).ToList();
+    }
+
+    /// <summary>What the menu badge and the home page card show. Returns null when the person cannot take part in conversations.</summary>
+    public async Task<ChatInboxCounts?> InboxCountsAsync(Guid companyId, Actor actor)
+    {
+        List<ChatInboxRow> rows;
+        try { rows = await InboxAsync(companyId, actor); }
+        catch (InvalidOperationException) { return null; }
+        return new ChatInboxCounts(rows.Count(r => r.Unread > 0), rows.Count(r => r.UnreadMentions > 0), rows.Count(r => r.WaitingForMe > 0));
+    }
+
+    private sealed record RecordInfo(string Label, string? Href);
+
+    /// <summary>The name and address of each record a conversation belongs to. A module appears here when its pages carry the conversation panel.</summary>
+    private static async Task<Dictionary<(string ModuleType, Guid RecordId), RecordInfo>> DescribeAsync(ChandleryDbContext db, IEnumerable<(string ModuleType, Guid RecordId)> keys)
+    {
+        var result = new Dictionary<(string, Guid), RecordInfo>();
+        var tasks = keys.Where(k => k.ModuleType == ChatModules.Worklist).Select(k => k.RecordId).Distinct().ToList();
+        foreach (var t in await db.WorklistTasks.AsNoTracking().Where(t => tasks.Contains(t.Id)).Select(t => new { t.Id, t.Code, t.Title }).ToListAsync())
+            result[(ChatModules.Worklist, t.Id)] = new RecordInfo($"{t.Code} · {t.Title}", $"/worklist/{t.Id}#conversation");
+        return result;
     }
 
     /// <summary>Who this person is in a conversation (side, vessel, administrator), or null when they cannot take part.</summary>

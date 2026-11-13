@@ -24,7 +24,7 @@ public record AttentionItem(int Count, string Text, string Href, bool Urgent);
 /// <summary>Gathers the per-module numbers for the home page, so the cards and the attention strip read from the same place.</summary>
 public class DashboardModuleService(
     WorklistService worklist, PmsReportService pms, TankTrendService tanks, RiskAssessmentService risk,
-    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents)
+    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, ChatService chat)
 {
     private static string Hot(int n, string tone, string cold = "success") => n > 0 ? tone : cold;
 
@@ -143,6 +143,14 @@ public class DashboardModuleService(
             if (!isVessel) stats.Add(new("Over budget", pc.OverBudget.ToString("N0"), "/projects", Hot(pc.OverBudget, "danger"), "Cost to date above the budget", pc.OverBudget, "projects over budget"));
             modules.Add(new("projects", "Projects", "/projects", stats));
         }
+
+        if (await chat.IsEnabledForCompanyAsync(companyId) && await chat.InboxCountsAsync(companyId, Actor.From(user)) is { } cc)
+            modules.Add(new("conversations", "Conversations", "/conversations",
+            [
+                new("Mentions", cc.MentionThreads.ToString("N0"), "/conversations?show=mentions", Hot(cc.MentionThreads, "warning"), "Conversations where you are named", cc.MentionThreads, "conversations name you"),
+                new("Waiting for a reply", cc.WaitingThreads.ToString("N0"), "/conversations?show=waiting", Hot(cc.WaitingThreads, "warning"), "Marked as needing an answer", cc.WaitingThreads, "conversations wait for a reply"),
+                new("Unread", cc.UnreadThreads.ToString("N0"), "/conversations?show=unread", Hot(cc.UnreadThreads, "info")),
+            ]));
 
         return modules;
     }

@@ -260,6 +260,53 @@ public class ChatRulesTests
         Assert.Equal(["to the supplier", "edited internal"], ChatRules.Replay([shared, inside, edit], Office).Items.Select(i => i.Body));
     }
 
+    // ---- mentions of the viewer and the inbox summary ----
+
+    [Fact]
+    public void AMentionNamesAPersonOrTheGroupTheyBelongTo()
+    {
+        var master = new ChatViewer(ChatSide.Vessel, Chief, Vessel, IsMaster: true);
+        Assert.True(ChatRules.MentionsViewer($"u:{Chief}", Crew));
+        Assert.True(ChatRules.MentionsViewer("r:crew", Crew));
+        Assert.False(ChatRules.MentionsViewer("r:master", Crew));                       // only the Master is "the master"
+        Assert.True(ChatRules.MentionsViewer("r:master", master));
+        Assert.True(ChatRules.MentionsViewer("r:office", Office));
+        Assert.False(ChatRules.MentionsViewer("r:office", Crew));
+        Assert.False(ChatRules.MentionsViewer("r:crew;r:master", Office));
+        Assert.False(ChatRules.MentionsViewer("r:office;r:crew", Supplier));
+        Assert.False(ChatRules.MentionsViewer("", Office));
+    }
+
+    [Fact]
+    public void ASummaryCountsWhatIsNewWhatNamesThePersonAndWhatWaitsForThem()
+    {
+        var named = Msg("@office look at this", Chief, 1, mentions: "r:office");
+        var plain = Msg("and this", Chief, 2);
+        var mine = Msg("on it", Ana, 3, stage: SyncStages.Office);
+        var mark = Msg("", Ben, 4, kind: ChatKind.NeedsReply, target: named.Id, stage: SyncStages.Office);
+        var s = ChatRules.Summarize([named, plain, mine, mark], Office);
+        Assert.Equal((2, 1, 1, false), (s.Unread, s.UnreadMentions, s.WaitingForMe, s.Resolved));
+        Assert.Equal("on it", s.Last!.Body);
+
+        var afterRead = ChatRules.Summarize([named, plain, mine, mark], Office, plain.At);
+        Assert.Equal((0, 0, 1), (afterRead.Unread, afterRead.UnreadMentions, afterRead.WaitingForMe));
+    }
+
+    [Fact]
+    public void ASummaryIgnoresRemovedMessages_AndAResolvedThreadWaitsForNobody()
+    {
+        var named = Msg("@office look", Chief, 1, mentions: "r:office");
+        var gone = Msg("", Chief, 2, kind: ChatKind.Delete, target: named.Id);
+        Assert.Equal((0, 0), (ChatRules.Summarize([named, gone], Office).Unread, ChatRules.Summarize([named, gone], Office).UnreadMentions));
+        Assert.Null(ChatRules.Summarize([named, gone], Office).Last);
+
+        var ask = Msg("question", Chief, 1);
+        var mark = Msg("", Ana, 2, kind: ChatKind.NeedsReply, target: ask.Id, stage: SyncStages.Office);
+        var resolve = Msg("", Ana, 3, kind: ChatKind.Resolve, stage: SyncStages.Office);
+        var resolved = ChatRules.Summarize([ask, mark, resolve], OfficeUser);
+        Assert.Equal((0, true), (resolved.WaitingForMe, resolved.Resolved));
+    }
+
     // ---- unread ----
 
     [Fact]

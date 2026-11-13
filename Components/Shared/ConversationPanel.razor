@@ -67,7 +67,7 @@
                         }
                         else
                         {
-                            <p class="mt-1 whitespace-pre-line text-sm text-ink-2">@item.Body</p>
+                            <p class="mt-1 whitespace-pre-line text-sm text-ink-2">@WithMentions(item.Body)</p>
                             <div class="mt-1 flex flex-wrap gap-x-3 text-xs">
                                 <button class="link" @onclick="() => StartReply(item)">Reply</button>
                                 @if (!item.NeedsReply && _viewer.Side != ChatSide.Supplier) { <button class="link" @onclick="() => NeedsReplyAsync(m.Id)">Needs a reply</button> }
@@ -133,7 +133,7 @@
     private ChatItem? _replyTo;
     private string? _error;
     private Timer? _timer;
-    private bool _disposed;
+    private bool _disposed, _started;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -144,13 +144,18 @@
         if (!_channels.Contains(_channel)) _channel = _channels.FirstOrDefault();
         _view = await Chat.ThreadAsync(CompanyId, Actor, ModuleType, RecordId, Topic);
         _unreadAtOpen = _view.Unread;
-        await RefreshAsync();
+        _unsynced = await Chat.UnsyncedAsync(CompanyId, _view.Items.Where(i => i.Mine).Select(i => i.Message.Id));
     }
 
-    protected override void OnAfterRender(bool firstRender)
+    // Reading is noted only once the page is live: the first pass of a page (the one sent as plain HTML) must not use up what is new.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && _viewer is not null)
-            _timer = new Timer(_ => _ = InvokeAsync(TickAsync), null, TimeSpan.FromSeconds(RefreshSeconds), TimeSpan.FromSeconds(RefreshSeconds));
+        // The first pass can come before the data has loaded, so this waits for the first render that has it, not for the first render.
+        if (_started || _viewer is null || _view is null) return;
+        _started = true;
+        _timer = new Timer(_ => _ = InvokeAsync(TickAsync), null, TimeSpan.FromSeconds(RefreshSeconds), TimeSpan.FromSeconds(RefreshSeconds));
+        try { await Chat.MarkReadAsync(CompanyId, Actor, ModuleType, RecordId, Topic); }
+        catch (InvalidOperationException) { }
     }
 
     private async Task TickAsync()
@@ -193,6 +198,10 @@
     private void StartEdit(ChatItem item) { _editing = item.Message.Id; _editText = item.Body; _error = null; }
 
     private ChatItem? ReplyTarget(ChatItem item) => item.Message.ReplyToId is { } id ? _view!.Items.FirstOrDefault(i => i.Message.Id == id) : null;
+
+    /// <summary>The text with every @word set in bold, so a mention stands out. The text itself is encoded first, so nothing a person types is read as markup.</summary>
+    private static MarkupString WithMentions(string text)
+        => (MarkupString)System.Text.RegularExpressions.Regex.Replace(System.Net.WebUtility.HtmlEncode(text), @"(?<![\p{L}\p{N}])@[\p{L}\p{N}_]+", m => $"<strong class=\"font-semibold text-ink\">{m.Value}</strong>");
 
     private static string Shorten(string text) => text.Length <= 80 ? text : text[..80] + "…";
 

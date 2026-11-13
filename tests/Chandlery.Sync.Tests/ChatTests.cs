@@ -241,6 +241,101 @@ public class ChatTests : IAsyncLifetime
         Assert.True(await _shore.IsEnabledAsync(_s.CompanyId, null));      // a record with no vessel always may
     }
 
+    // ---- the inbox ----
+
+    private async Task<WorklistTask> TaskAsync(string title)
+    {
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = PolicyModules.Worklist, Enabled = true });
+            await db.SaveChangesAsync();
+        }
+        return await new WorklistService(_s.ShoreFactory).CreateTaskAsync(_s.CompanyId, new NewWorklistTask(_s.VesselId, title), _s.User);
+    }
+
+    [Fact]
+    public async Task TheInboxShowsEachThreadWithWhatIsNewWhoIsNamedAndWhereToGo()
+    {
+        var task = await TaskAsync("Replace the galley extractor fan belt");
+        ChatPost OnTask(string body) => new(ChatModules.Worklist, task.Id, _s.VesselId, ChatChannel.Internal, body);
+        await _vessel.PostAsync(_s.CompanyId, As(_chief), OnTask("@office the belt is the wrong size, please advise."));
+        await _s.SettleUntilQuietAsync();
+        await _shore.PostAsync(_s.CompanyId, _s.User, OnTask("Ordering the right one today."));
+        await _s.SettleUntilQuietAsync();
+
+        var office = Assert.Single(await _shore.InboxAsync(_s.CompanyId, _s.User));
+        Assert.StartsWith(task.Code, office.Label);
+        Assert.Equal($"/worklist/{task.Id}#conversation", office.Href);
+        Assert.Equal((1, 1), (office.Unread, office.UnreadMentions));                    // the Chief's message is new and names the office; the office's own is not new to it
+        Assert.Equal("MV Sea Falcon", office.VesselName);
+        Assert.Equal("Ordering the right one today.", office.LastPreview);
+
+        var onboard = Assert.Single(await _vessel.InboxAsync(_s.CompanyId, As(_cook)));
+        Assert.Equal((2, 0), (onboard.Unread, onboard.UnreadMentions));                  // the cook has read neither, and "@office" does not name the crew
+        var chief = Assert.Single(await _vessel.InboxAsync(_s.CompanyId, As(_chief)));
+        Assert.Equal((1, 0), (chief.Unread, chief.UnreadMentions));                      // only the office's reply is new to the one who wrote the first
+
+        await _shore.MarkReadAsync(_s.CompanyId, _s.User, ChatModules.Worklist, task.Id);
+        Assert.Equal((0, 0), ((await _shore.InboxAsync(_s.CompanyId, _s.User)).Single().Unread, (await _shore.InboxAsync(_s.CompanyId, _s.User)).Single().UnreadMentions));
+    }
+
+    [Fact]
+    public async Task TheInboxNeverQuotesOrCountsWhatThePersonMayNotSee()
+    {
+        await _shore.PostAsync(_s.CompanyId, _s.User, Post("Quote looks high, keep this between us.", ChatChannel.OfficeOnly));
+        await _s.SettleUntilQuietAsync();
+        Assert.Single(await _shore.InboxAsync(_s.CompanyId, _s.User));
+        Assert.Empty(await _vessel.InboxAsync(_s.CompanyId, As(_chief)));
+        var counts = await _vessel.InboxCountsAsync(_s.CompanyId, As(_chief));
+        Assert.Equal((0, 0, 0), (counts!.UnreadThreads, counts.MentionThreads, counts.WaitingThreads));
+    }
+
+    [Fact]
+    public async Task AnotherPersonsMarkAsNeedingAReplyWaitsForEveryoneElse_UntilRepliedToOrResolved()
+    {
+        var ask = await _vessel.PostAsync(_s.CompanyId, As(_chief), Post("Can the office send the spare?"));
+        await _s.SettleUntilQuietAsync();
+        await _shore.NeedsReplyAsync(_s.CompanyId, _s.User, ask.Id);
+        await _s.SettleUntilQuietAsync();
+
+        Assert.Equal(1, Assert.Single(await _vessel.InboxAsync(_s.CompanyId, As(_cook))).WaitingForMe);
+        Assert.Equal(0, Assert.Single(await _vessel.InboxAsync(_s.CompanyId, As(_chief))).WaitingForMe);       // the Chief wrote it
+        Assert.Equal(1, (await _vessel.InboxCountsAsync(_s.CompanyId, As(_cook)))!.WaitingThreads);
+
+        await _vessel.SetResolvedAsync(_s.CompanyId, As(_chief), ChatModules.PurchaseOrder, _po, "", true);
+        Assert.Equal(0, Assert.Single(await _vessel.InboxAsync(_s.CompanyId, As(_cook))).WaitingForMe);
+    }
+
+    [Fact]
+    public async Task TheInboxCountsThreadsNotMessages_AndLeavesOutThoseGoneQuiet()
+    {
+        var other = Guid.NewGuid();
+        await _vessel.PostAsync(_s.CompanyId, As(_chief), Post("one"));
+        await _vessel.PostAsync(_s.CompanyId, As(_chief), Post("two"));
+        await _vessel.PostAsync(_s.CompanyId, As(_chief), new ChatPost(ChatModules.Incident, other, _s.VesselId, ChatChannel.Internal, "three"));
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            db.ChatMessages.Add(new ChatMessage
+            {
+                Id = Guid.CreateVersion7(), CompanyId = _s.CompanyId, VesselId = _s.VesselId, ModuleType = ChatModules.Rfq, RecordId = Guid.NewGuid(), Kind = ChatKind.Message, Channel = ChatChannel.Internal,
+                Body = "an old thread", AuthorName = "Old hand", At = DateTime.UtcNow.AddDays(-(ChatService.InboxDays + 20)), OwnerStage = SyncStages.Office,
+            });
+            await db.SaveChangesAsync();
+        }
+        await _s.SettleUntilQuietAsync();
+
+        var counts = await _shore.InboxCountsAsync(_s.CompanyId, _s.User);
+        Assert.Equal(2, counts!.UnreadThreads);                                          // three messages in two threads; the old thread is not in the inbox
+        Assert.DoesNotContain(await _shore.InboxAsync(_s.CompanyId, _s.User), r => r.LastPreview == "an old thread");
+    }
+
+    [Fact]
+    public async Task ASupplierHasNoInbox_AndTheCompanyKnowsWhetherConversationsAreOn()
+    {
+        Assert.True(await _shore.IsEnabledForCompanyAsync(_s.CompanyId));
+        Assert.Null(await _vessel.InboxCountsAsync(_s.CompanyId, Actor.System));
+    }
+
     [Fact]
     public async Task TopicsAreSeparateThreadsOfTheSameRecord()
     {

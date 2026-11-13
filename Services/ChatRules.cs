@@ -6,7 +6,10 @@ namespace Chandlery.Services;
 public enum ChatSide { Office, Vessel, Supplier }
 
 /// <summary>Who is looking at (or writing in) a conversation. <see cref="VesselId"/> is the vessel of a vessel viewer; <see cref="IsAdmin"/> is a company administrator.</summary>
-public sealed record ChatViewer(ChatSide Side, Guid? UserId, Guid? VesselId = null, bool IsAdmin = false);
+public sealed record ChatViewer(ChatSide Side, Guid? UserId, Guid? VesselId = null, bool IsAdmin = false, bool IsMaster = false);
+
+/// <summary>What a thread comes to for one person: how much is new, whether they are named, whether something waits for them, and its newest line (null when it has none they can read).</summary>
+public sealed record ChatThreadSummary(ChatItem? Last, int Unread, int UnreadMentions, int WaitingForMe, bool Resolved);
 
 /// <summary>A person who can be mentioned.</summary>
 public sealed record ChatPerson(Guid UserId, string Name);
@@ -117,6 +120,21 @@ public static class ChatRules
     public static bool MentionsUser(string? mentions, Guid userId) => Tokens(mentions).Contains($"u:{userId}");
     public static bool MentionsRole(string? mentions, string role) => Tokens(mentions).Contains($"r:{role}");
 
+    /// <summary>
+    /// True when a message names this person, by name or through a group they belong to: the office for an office user, the crew for anyone onboard,
+    /// the Master for the Master.
+    /// </summary>
+    public static bool MentionsViewer(string? mentions, ChatViewer viewer)
+    {
+        if (viewer.UserId is { } id && MentionsUser(mentions, id)) return true;
+        return viewer.Side switch
+        {
+            ChatSide.Office => MentionsRole(mentions, "office"),
+            ChatSide.Vessel => MentionsRole(mentions, "crew") || (viewer.IsMaster && MentionsRole(mentions, "master")),
+            _ => false,
+        };
+    }
+
     // ---- how a thread reads ----
 
     /// <summary>
@@ -171,5 +189,17 @@ public static class ChatRules
 
         var unread = content.Count(m => m.Kind == ChatKind.Message && !removed.Contains(m.Id) && (viewer.UserId is null || m.AuthorUserId != viewer.UserId) && (lastReadAt is null || m.At > lastReadAt));
         return new ChatThreadView(items, resolved, resolvedAt, unread, waiting.Count);
+    }
+
+    /// <summary>
+    /// A thread as the inbox shows it. A message counts as new when it is another person's, still there, and after <paramref name="lastReadAt"/>; it is a mention when it
+    /// names the viewer. A message another person has marked as needing a reply waits for the viewer until someone replies or the thread is resolved.
+    /// </summary>
+    public static ChatThreadSummary Summarize(IEnumerable<ChatMessage> thread, ChatViewer viewer, DateTime? lastReadAt = null)
+    {
+        var view = Replay(thread, viewer, lastReadAt);
+        var fresh = view.Items.Where(i => i.Message.Kind == ChatKind.Message && !i.Removed && !i.Mine && (lastReadAt is null || i.Message.At > lastReadAt)).ToList();
+        var last = view.Items.LastOrDefault(i => !i.Removed);
+        return new ChatThreadSummary(last, view.Unread, fresh.Count(i => MentionsViewer(i.Message.Mentions, viewer)), view.Items.Count(i => i.NeedsReply && !i.Mine), view.Resolved);
     }
 }

@@ -1,0 +1,105 @@
+@page "/conversations"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject ChatService Chat
+@inject NavigationManager Nav
+
+<PageTitle>Conversations · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (!_enabled)
+{
+    <EmptyState Title="Conversations are switched off" Message="The office switches conversations on for a vessel group on the vessel policies page." />
+}
+else
+{
+    <PageHeader Eyebrow="Conversations" Title="Your conversations" Subtitle="The records people have written on, newest first. Opening a record marks it read." />
+
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+        <Tabs Items="TabItems" Active="@_show" ActiveChanged="SetShow" />
+        @if (_vessels.Count > 1)
+        {
+            <select class="select w-auto" @bind="_vessel">
+                <option value="">All vessels</option>
+                @foreach (var v in _vessels) { <option value="@v">@v</option> }
+            </select>
+        }
+        <input class="input w-auto" placeholder="Search record or text…" @bind="_search" @bind:event="oninput" />
+    </div>
+
+    @if (Visible.Count == 0)
+    {
+        <EmptyState Title="@(_rows.Count == 0 ? "No conversations yet" : "Nothing here")"
+                    Message="@(_rows.Count == 0 ? "Open a worklist task and write the first message." : "Nothing matches these filters.")" />
+    }
+    else
+    {
+        <ul class="space-y-2">
+            @foreach (var r in Visible)
+            {
+                <li class="card p-4">
+                    <div class="flex flex-wrap items-center gap-2">
+                        @if (r.Href is not null) { <a href="@r.Href" class="link font-semibold">@r.Label</a> }
+                        else { <span class="font-semibold text-ink">@r.Label</span> }
+                        @if (r.Unread > 0) { <StatusChip Label="@($"{r.Unread} new")" Tone="warning" /> }
+                        @if (r.UnreadMentions > 0) { <StatusChip Label="names you" Tone="danger" /> }
+                        @if (r.WaitingForMe > 0) { <StatusChip Label="waiting for a reply" Tone="warning" /> }
+                        @if (r.Resolved) { <StatusChip Label="Resolved" Tone="success" /> }
+                        <span class="ml-auto text-xs text-muted">@(string.IsNullOrEmpty(r.VesselName) ? "" : r.VesselName + " · ")@r.LastAt.ToLocalTime().ToString("dd MMM HH:mm")</span>
+                    </div>
+                    <p class="mt-1 truncate text-sm text-ink-2">@(string.IsNullOrEmpty(r.LastAuthor) ? "" : r.LastAuthor + ": ")@Shorten(r.LastPreview)</p>
+                </li>
+            }
+        </ul>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "show")] public string? ShowQuery { get; set; }
+
+    private bool _loaded, _enabled;
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private List<ChatInboxRow> _rows = [];
+    private string _show = "all", _vessel = "", _search = "";
+    private List<string> _vessels = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _enabled = await Chat.IsEnabledForCompanyAsync(_companyId);
+        if (_enabled)
+        {
+            try { _rows = await Chat.InboxAsync(_companyId, _actor); }
+            catch (InvalidOperationException) { _enabled = false; }
+            _vessels = _rows.Select(r => r.VesselName).Where(n => n.Length > 0).Distinct().Order().ToList();
+        }
+        _show = ShowQuery is "unread" or "mentions" or "waiting" ? ShowQuery : "all";
+        _loaded = true;
+    }
+
+    private IReadOnlyList<(string Key, string Label, int? Count)> TabItems =>
+    [
+        ("all", "All", null),
+        ("unread", "Unread", _rows.Count(r => r.Unread > 0)),
+        ("mentions", "Mentions", _rows.Count(r => r.UnreadMentions > 0)),
+        ("waiting", "Waiting for a reply", _rows.Count(r => r.WaitingForMe > 0)),
+    ];
+
+    private void SetShow(string key) => _show = key;
+
+    private List<ChatInboxRow> Visible => _rows
+        .Where(r => _show switch { "unread" => r.Unread > 0, "mentions" => r.UnreadMentions > 0, "waiting" => r.WaitingForMe > 0, _ => true })
+        .Where(r => _vessel.Length == 0 || r.VesselName == _vessel)
+        .Where(r => _search.Length == 0 || r.Label.Contains(_search, StringComparison.OrdinalIgnoreCase) || r.LastPreview.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private static string Shorten(string text) => text.Length <= 140 ? text : text[..140] + "…";
+}

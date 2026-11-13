@@ -16,7 +16,7 @@ public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
 public class NavCatalogService(
     ApprovalService approvals, InvoiceService invoices, WorklistService worklist, PmsService pms, RestHoursService rest,
     TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
-    IncidentService incidents, IAuthorizationService authorization)
+    IncidentService incidents, IAuthorizationService authorization, ChatService chat)
 {
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
     {
@@ -96,6 +96,13 @@ public class NavCatalogService(
             onboard.Insert(1, new("/worklist", "Worklist", "worklist"));
             work.Insert(2, new("/worklist/fleet", "Fleet worklist", "worklist"));
             admin.Add(new("/company/worklist-lists", "Worklist lists", "worklist"));
+        }
+
+        if (await chat.IsEnabledForCompanyAsync(companyId))
+        {
+            var inbox = new NavEntry("/conversations", "Conversations", "chat", (await chat.InboxCountsAsync(companyId, new Actor(userId, "")))?.UnreadThreads ?? 0);
+            work.Insert(1, inbox);
+            onboard.Insert(1, inbox);
         }
 
         if (await pms.IsEnabledForCompanyAsync(companyId))
