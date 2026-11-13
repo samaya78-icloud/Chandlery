@@ -116,9 +116,8 @@ public class ProjectRefinementsTests : IAsyncLifetime
         Assert.Equal(["Ann"], (await _shore.RequestsOfAsync(_s.CompanyId, plain.Id)).Single().Slots.Select(s => s.ApproverName));
         Assert.Equal(ProjectRequestStatus.Pending, other.Status);
 
-        // Copying one department's rules never drags the category rules along.
-        await _matrix.AddRuleAsync(_s.CompanyId, _s.DepartmentId, null, 1, ann.UserId!.Value);
-        Assert.Equal(1, await _matrix.CopyRulesAsync(_s.CompanyId, _s.DepartmentId, null));
+        // Copying the "All departments" rules to a department never drags the category rule along: one rule is copied, not two.
+        Assert.Equal(1, await _matrix.CopyRulesAsync(_s.CompanyId, null, _s.DepartmentId));
         Assert.Equal(0, await OnVessel(db => db.ProjectApprovalSlots.CountAsync()));
     }
 
@@ -129,6 +128,8 @@ public class ProjectRefinementsTests : IAsyncLifetime
     {
         var project = await PlannedAsync();
         await StartedAsync(project);
+        var technical = await PlannedAsync(type: ProjectType.NonDrydock);                                                                                     // started now, while no rule asks for approval
+        await StartedAsync(technical);
         var (ann, ben) = (await PersonAsync("Ann"), await PersonAsync("Ben"));
         await _matrix.AddRuleAsync(_s.CompanyId, null, 10_000m, 1, ann.UserId!.Value);
         await _matrix.AddRuleAsync(_s.CompanyId, null, null, 1, ann.UserId!.Value);
@@ -150,8 +151,6 @@ public class ProjectRefinementsTests : IAsyncLifetime
         Assert.Contains(await _shore.BudgetAsync(_s.CompanyId, project.Id), l => l.PlannedUsd == 4_000m && l.Category.StartsWith("Extend the stay by 10 days"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.RequestExtensionAsync(_s.CompanyId, project.Id, 0, 0m, "", _s.User));
-        var technical = await PlannedAsync(type: ProjectType.NonDrydock);
-        await StartedAsync(technical);
         Assert.Contains("Only a drydock", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.RequestExtensionAsync(_s.CompanyId, technical.Id, 3, 0m, "", _s.User))).Message);
 
         // With no rules at all it is applied on the spot, as every approval is.
