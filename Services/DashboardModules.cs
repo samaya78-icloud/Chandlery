@@ -24,7 +24,7 @@ public record AttentionItem(int Count, string Text, string Href, bool Urgent);
 /// <summary>Gathers the per-module numbers for the home page, so the cards and the attention strip read from the same place.</summary>
 public class DashboardModuleService(
     WorklistService worklist, PmsReportService pms, TankTrendService tanks, RiskAssessmentService risk,
-    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents)
+    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, DrillFleetService drillFleet)
 {
     private static string Hot(int n, string tone, string cold = "success") => n > 0 ? tone : cold;
 
@@ -128,6 +128,20 @@ public class DashboardModuleService(
                     new("Waiting for the Master", ic.ToReview.ToString("N0"), "/incidents", "info", "Reported, not yet reviewed onboard"),
                 ];
             modules.Add(new("incidents", "Incident reports", isVessel ? "/incidents" : "/incidents/queue", stats));
+        }
+
+        if (await drillFleet.CountsAsync(companyId, Actor.From(user)) is { } dc)
+        {
+            var href = dc.IsOffice ? "/drills/fleet" : "/drills";
+            List<ModuleStat> stats =
+            [
+                new("Overdue", dc.Overdue.ToString("N0"), href, Hot(dc.Overdue, "danger"), dc.IsOffice ? "Drills past their due date, vessel by vessel" : "Drills past their due date", dc.Overdue, "drills overdue"),
+                new("Due soon", dc.DueSoon.ToString("N0"), href, Hot(dc.DueSoon, "warning"), "Due today or within the warning period"),
+                new("Never held", dc.NeverHeld.ToString("N0"), href, Hot(dc.NeverHeld, "info"), dc.IsOffice ? "Drill types with no record on a vessel" : "Drill types with no record yet"),
+                new("Crew without a drill", dc.CrewLate.ToString("N0"), dc.IsOffice ? "/drills/fleet" : "/drills", Hot(dc.CrewLate, "warning"), dc.QuarterVessels > 0 ? $"{dc.QuarterVessels} vessel(s) over the quarter-of-crew rule" : "Past their own due date for a drill everyone attends"),
+                new("Meetings overdue", dc.MeetingsOverdue.ToString("N0"), dc.IsOffice ? "/drills/fleet" : "/meetings", Hot(dc.MeetingsOverdue, "warning"), "Scheduled meetings past their date", dc.MeetingsOverdue, "safety meetings overdue"),
+            ];
+            modules.Add(new("drills", "Drills and meetings", href, stats));
         }
 
         if (await projects.CountsAsync(companyId) is { } pc)

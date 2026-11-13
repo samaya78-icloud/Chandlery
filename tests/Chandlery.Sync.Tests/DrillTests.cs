@@ -330,4 +330,20 @@ public class DrillTests : IAsyncLifetime
         Assert.Contains("4,0", csv[1].Replace("\"", ""));                                                            // four took part, none absent
         Assert.Equal(1 + 4 * 2, DrillReports.ParticipationCsv(await _shore.ParticipationAsync(_s.CompanyId, _s.VesselId, _s.User)).TrimEnd().Split('\n').Length);      // four crew by the two drills everyone attends
     }
+
+    [Fact]
+    public async Task TheHomePageCountsCoverTheFleet_OverdueNeverHeldAndCrewWithoutADrill()
+    {
+        var fleet = new DrillFleetService(_shore, new MeetingService(_s.ShoreFactory, _shoreWorklist));
+        await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input(people: [Present(_officer), Present(_master), Present(_cook), Present(_oldHand)]));
+        await _s.SettleUntilQuietAsync();
+
+        var c = (await fleet.CountsAsync(_s.CompanyId, _s.User))!;
+        Assert.True(c.IsOffice);
+        Assert.Equal(1, c.Overdue);                                                                                  // abandon ship: the old hand has never taken part
+        Assert.Equal(_types.Count - 1, c.NeverHeld);                                                                 // every type but the fire drill has no record on the ship
+        Assert.True(c.CrewLate >= 1);
+        Assert.Equal(0, c.MeetingsOverdue);                                                                          // a meeting never held is not overdue
+        Assert.Null(await new DrillFleetService(_shore, new MeetingService(_s.ShoreFactory, _shoreWorklist)).CountsAsync(Guid.NewGuid(), _s.User));   // a company with the module on nowhere has no card
+    }
 }

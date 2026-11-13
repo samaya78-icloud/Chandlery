@@ -7,6 +7,7 @@
 @inject IncidentService Svc
 @inject RiskLibraryService Library
 @inject PmsService Pms
+@inject DrillService Drills
 @inject NavigationManager Nav
 
 <PageTitle>@(Id is null ? "Report an incident" : "Change report") · Chandlery</PageTitle>
@@ -194,6 +195,7 @@ else
     [Parameter] public Guid? Id { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
     [SupplyParameterFromQuery(Name = "vessel")] private Guid? VesselQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "drill")] private Guid? DrillQuery { get; set; }
 
     private sealed class Form
     {
@@ -264,9 +266,25 @@ else
             if (_vessels.Count == 0) { _blocked = ("Incident reports are switched off", "The Incidents module has not been switched on for any vessel."); _loaded = true; return; }
             _vesselId = VesselQuery is { } wanted && _vessels.Any(v => v.Id == wanted) ? wanted : _vessels[0].Id;
         }
+        if (Id is null && DrillQuery is { } drillId) await PrefillFromDrillAsync(drillId);
         await LoadVesselAsync();
         Rescore();
         _loaded = true;
+    }
+
+    /// <summary>A report started from a drill finding: what the drill found, when and where, kept in the description so the two can be read together. Whatever the drill service refuses to show is simply not filled in.</summary>
+    private async Task PrefillFromDrillAsync(Guid drillId)
+    {
+        DrillDetail? d;
+        try { d = await Drills.GetAsync(_companyId, drillId, _actor); }
+        catch (InvalidOperationException) { return; }
+        if (d is null || (NodeContext.Current.IsVessel && d.Drill.VesselId != _vesselId)) return;
+        var x = d.Drill;
+        if (!NodeContext.Current.IsVessel && _vessels.Any(v => v.Id == x.VesselId)) _vesselId = x.VesselId;
+        var lines = new List<string> { $"Found during {x.TypeName} ({x.Code}) on {x.StartedAt:d MMM yyyy}." };
+        if (x.Findings != "") lines.Add($"Findings: {x.Findings}");
+        if (x.Deficiencies != "") lines.Add($"Deficiencies: {x.Deficiencies}");
+        (_f.Description, _f.OccurredAt, _f.Place, _f.ShipStatus, _f.EquipmentName) = (string.Join("\n", lines), x.StartedAt, x.Place, x.ShipStatus, x.EquipmentTested);
     }
 
     private async Task LoadVesselAsync()

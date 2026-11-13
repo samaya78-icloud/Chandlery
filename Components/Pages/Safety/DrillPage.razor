@@ -31,6 +31,7 @@ else
         @if (dr.IsSigned) { <StatusChip Label="@($"Signed by {dr.SignedByName}, {DrillLook.When(dr.SignedAt!.Value)}")" Tone="success" /> } else { <StatusChip Label="Not signed by the Master" Tone="warning" /> }
         @if (_d.PossibleDuplicate) { <span class="chip" data-tone="warning">possible duplicate: another drill of this kind within the hour</span> }
         @if (dr.Deficiencies != "") { <span class="chip" data-tone="danger">deficiencies found</span> }
+        @if (dr.Findings != "" || dr.Deficiencies != "") { <a class="chip" data-tone="info" href="@IncidentHref(dr)">Report an incident about this</a> }
     </div>
 
     <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -197,6 +198,8 @@ else
         await Svc.AddActionAsync(_companyId, Id, _actor, new NewDrillAction(_actionTitle, _actionText, _actionDue is { } due ? DateTime.SpecifyKind(due, DateTimeKind.Utc) : null, _actionFor));
         (_actionTitle, _actionText, _actionFor, _actionDue) = ("", "", "", null);
     }, "The action is a task in the Worklist.");
+
+    private static string IncidentHref(Drill dr) => $"/incidents/new?drill={dr.Id}" + (NodeContext.Current.IsVessel ? "" : $"&vessel={dr.VesselId}");
 
     private void UseDeficiencies()
     {

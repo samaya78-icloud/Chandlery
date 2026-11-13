@@ -44,6 +44,9 @@ public static class DrillFleet
     }
 }
 
+/// <summary>What the home page card shows. Onboard it is the vessel's own; ashore, the whole fleet.</summary>
+public sealed record DrillCounts(bool IsOffice, int Overdue, int DueSoon, int NeverHeld, int CrewLate, int MeetingsOverdue, int QuarterVessels);
+
 /// <summary>The fleet's drills and meetings for the office: one table across vessels.</summary>
 public class DrillFleetService(DrillService drills, MeetingService meetings)
 {
@@ -58,6 +61,31 @@ public class DrillFleetService(DrillService drills, MeetingService meetings)
         var rows = new List<(Guid, string, IReadOnlyList<MeetingScheduleRow>)>();
         foreach (var v in await meetings.EnabledVesselsAsync(companyId)) rows.Add((v.Id, v.Name, await meetings.ScheduleAsync(companyId, v.Id, actor, day)));
         return DrillFleet.Build(day, schedules, mtypes, rows);
+    }
+
+    /// <summary>The numbers for the home page card, or null when the module is on for no vessel (or the person is not signed on to one).</summary>
+    public async Task<DrillCounts?> CountsAsync(Guid companyId, Actor actor)
+    {
+        var vessels = await drills.EnabledVesselsAsync(companyId);
+        var office = !NodeContext.Current.IsVessel;
+        if (!office)
+        {
+            var mine = (await drills.CrewOfUserAsync(companyId, actor.UserId))?.VesselId;
+            vessels = vessels.Where(v => v.Id == mine).ToList();
+        }
+        if (vessels.Count == 0) return null;
+        int overdue = 0, soon = 0, never = 0, late = 0, meetingsOverdue = 0, quarter = 0;
+        foreach (var v in vessels)
+        {
+            var s = await drills.ScheduleAsync(companyId, v.Id, actor);
+            overdue += s.Rows.Count(r => r.Status == DrillStatus.Overdue);
+            soon += s.Rows.Count(r => r.Status is DrillStatus.Due or DrillStatus.DueSoon);
+            never += s.Rows.Count(r => r.ShipStatus == DrillStatus.NeverHeld);
+            late += s.Rows.Sum(r => r.People.Count(p => p.Status is DrillStatus.Overdue or DrillStatus.NeverHeld));
+            if (s.Quarter.Triggered) quarter++;
+            meetingsOverdue += (await meetings.ScheduleAsync(companyId, v.Id, actor)).Count(m => m.Status == DrillStatus.Overdue);
+        }
+        return new DrillCounts(office, overdue, soon, never, late, meetingsOverdue, quarter);
     }
 
     public async Task<int> OverdueAsync(Guid companyId, Actor actor)
