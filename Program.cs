@@ -473,6 +473,30 @@ app.MapGet("/permits/{permitId:guid}/pdf", async (Guid permitId, HttpContext htt
     return Results.File(PermitPdf.Build(detail, company), "application/pdf", PermitPdf.FileName(detail));
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
+app.MapGet("/permits/reports/{kind}.csv", async (string kind, Guid? vessel, DateTime? from, DateTime? to, HttpContext http, PermitService permits) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var actor = Actor.From(http.User);
+    var start = (from ?? DateTime.UtcNow.Date.AddMonths(-3)).Date;
+    var end = (to ?? DateTime.UtcNow.Date).Date.AddDays(1).AddTicks(-1);
+    string? csv;
+    try
+    {
+        csv = kind switch
+        {
+            "register" => PermitReports.RegisterCsv(await permits.ListAsync(companyId, actor, vessel == Guid.Empty ? null : vessel, false, start, end)),
+            "events" => PermitReports.EventsCsv(await permits.ListAsync(companyId, actor, vessel == Guid.Empty ? null : vessel, false, start, end)),
+            "fleet" => PermitReports.FleetCsv(await permits.FleetAsync(companyId, actor, start, end)),
+            "months" => PermitReports.MonthsCsv(await permits.FleetAsync(companyId, actor, start, end)),
+            _ => null,
+        };
+    }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    if (csv is null) return Results.NotFound();
+    var utf8 = new System.Text.UTF8Encoding(true);
+    return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"permits-{kind}-{DateTime.UtcNow:yyyyMMdd}.csv");
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
 app.MapGet("/meetings/{meetingId:guid}/pdf", async (Guid meetingId, HttpContext http, MeetingService meetings, IDbContextFactory<ChandleryDbContext> factory) =>
 {
     if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();

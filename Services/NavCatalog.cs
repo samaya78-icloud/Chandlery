@@ -140,6 +140,9 @@ public class NavCatalogService(
             const string permitToWork = "Permit to work";
             safety.Add(new("/permits", "Permit board", "permit", Section: permitToWork));
             if (isVessel) safety.Add(new("/permits/new", "New permit", "permit", Section: permitToWork));
+            if (!isVessel) safety.Add(new("/permits/fleet", "Fleet permit activity", "permit", await permits.ExpiredCountAsync(companyId, new Actor(userId, "")), permitToWork));
+            if (!isVessel) safety.Add(new("/permits/audit", "Permit audit", "permit", Section: permitToWork));
+            if (!isVessel) admin.Add(new("/permits/types", "Permit types and checklists", "permit"));
         }
 
         if (await drills.IsEnabledForCompanyAsync(companyId))

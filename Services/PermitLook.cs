@@ -63,4 +63,29 @@ public static class PermitLook
     public static string Window(Permit p, DateTime until) => $"{When(p.ValidFrom)} to {When(until)}";
 
     public static string Close(PermitCloseStatus status) => status switch { PermitCloseStatus.Finished => "Work finished, area safe", PermitCloseStatus.LeftUnsafe => "Left in an unsafe state", _ => "Handed to the next shift" };
+
+    // ---- the checklist as text, one item to a line: "Section|Item", with [optional] and [note] after it ----
+
+    public static string ChecklistText(IEnumerable<PermitChecklistItem> items)
+        => string.Join(Environment.NewLine, items.OrderBy(i => i.Position).Select(i => $"{i.Section}|{i.Text}{(i.Mandatory ? "" : " [optional]")}{(i.NoteRequired ? " [note]" : "")}"));
+
+    public static List<PermitChecklistInput> ParseChecklist(string text)
+    {
+        var items = new List<PermitChecklistInput>();
+        foreach (var raw in (text ?? "").ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            bool mandatory = true, note = false, again = true;
+            while (again)
+            {
+                again = false;
+                if (line.EndsWith("[optional]", StringComparison.OrdinalIgnoreCase)) { mandatory = false; line = line[..^10].TrimEnd(); again = true; }
+                else if (line.EndsWith("[note]", StringComparison.OrdinalIgnoreCase)) { note = true; line = line[..^6].TrimEnd(); again = true; }
+            }
+            if (line.Length == 0) continue;
+            var bar = line.IndexOf('|');
+            items.Add(bar < 0 ? new PermitChecklistInput("", line, mandatory, note) : new PermitChecklistInput(line[..bar].Trim(), line[(bar + 1)..].Trim(), mandatory, note));
+        }
+        return items;
+    }
 }

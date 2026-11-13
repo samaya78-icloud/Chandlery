@@ -1,0 +1,110 @@
+@page "/permits/audit"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject PermitService Svc
+
+<PageTitle>Permit audit · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Permit audit"
+            Subtitle="Every permit in a period with each event, who did it and when, for an audit or a port state inspection. Open a permit to read its checklist and gas readings, print it, or comment on it.">
+    <Actions>
+        <a href="/permits/reports/register.csv?vessel=@_vessel&from=@_from.ToString("yyyy-MM-dd")&to=@_to.ToString("yyyy-MM-dd")" class="btn btn-secondary">Permits CSV</a>
+        <a href="/permits/reports/events.csv?vessel=@_vessel&from=@_from.ToString("yyyy-MM-dd")&to=@_to.ToString("yyyy-MM-dd")" class="btn btn-secondary">Events CSV</a>
+        <a href="/permits/fleet" class="btn btn-secondary">Fleet activity</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Permits are not available" Message="@_blocked" />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        <label>Vessel
+            <select class="select mt-1" @bind="_vessel" @bind:after="LoadAsync">
+                <option value="@Guid.Empty">All vessels</option>
+                @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+            </select>
+        </label>
+        <label>From<input type="date" class="input mt-1" @bind="_from" @bind:after="LoadAsync" /></label>
+        <label>To<input type="date" class="input mt-1" @bind="_to" @bind:after="LoadAsync" /></label>
+        <label>State
+            <select class="select mt-1" @bind="_state" @bind:after="LoadAsync">
+                <option value="">All</option>
+                @foreach (var s in Enum.GetValues<PermitState>()) { <option value="@s">@PermitLook.State(s).Label</option> }
+            </select>
+        </label>
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <EmptyState Title="No permits" Message="No permit matches." />
+    }
+    else
+    {
+        <div class="space-y-3">
+            @foreach (var r in _rows)
+            {
+                var (label, tone) = PermitLook.State(r.State);
+                var outside = r.Permit.Readings.Count(x => !x.WithinLimits);
+                <details class="card p-4 text-sm">
+                    <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+                        <a class="link font-mono font-semibold" href="/permits/@r.Permit.Id">@r.Permit.Code</a>
+                        <span>@r.Permit.TypeName, @r.Permit.Location</span>
+                        <span class="text-muted">@r.VesselName</span>
+                        <span class="text-muted">@PermitLook.Window(r.Permit, r.Until)</span>
+                        @if (outside > 0) { <span class="chip" data-tone="warning">@outside gas reading@(outside == 1 ? "" : "s") outside limits</span> }
+                        <span class="ml-auto"><StatusChip Label="@label" Tone="@tone" /></span>
+                    </summary>
+                    <table class="mt-3 w-full text-left">
+                        <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Time</th><th>Event</th><th>By</th><th>Note</th></tr></thead>
+                        <tbody>
+                            @foreach (var e in r.Permit.Events.OrderBy(x => x.At).ThenBy(x => x.Id))
+                            {
+                                <tr class="border-t border-line/60"><td class="py-1 whitespace-nowrap">@PermitLook.When(e.At)</td><td>@PermitLook.Event(e.Kind)</td><td>@e.ByName</td><td class="text-muted">@e.Note</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </details>
+            }
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] public Guid? VesselQuery { get; set; }
+
+    private Guid _companyId, _vessel;
+    private Actor _actor = default!;
+    private bool _loaded;
+    private string? _blocked;
+    private string _state = "";
+    private DateTime _from = DateTime.UtcNow.Date.AddMonths(-3), _to = DateTime.UtcNow.Date;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<PermitRow> _rows = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Permit to Work module has not been switched on for any vessel."; _loaded = true; return; }
+        if (VesselQuery is { } q && _vessels.Any(v => v.Id == q)) _vessel = q;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        var rows = await Svc.ListAsync(_companyId, _actor, _vessel == Guid.Empty ? null : _vessel, false, _from, _to.AddDays(1).AddTicks(-1));
+        _rows = Enum.TryParse<PermitState>(_state, out var s) ? rows.Where(r => r.State == s).ToList() : rows;
+    }
+}

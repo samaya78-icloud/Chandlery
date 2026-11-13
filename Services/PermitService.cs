@@ -801,6 +801,30 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         return (openOnly ? rows.Where(r => PermitRules.IsOpen(r.State) || r.State == PermitState.Requested) : rows).ToList();
     }
 
+    /// <summary>The fleet's permit activity for a period, for the office: open permits wherever they began, plus every permit that ran in the period.</summary>
+    public async Task<PermitFleetView> FleetAsync(Guid companyId, Actor actor, DateTime from, DateTime to)
+    {
+        await RequireOfficeAsync(companyId, actor);
+        var open = await ListAsync(companyId, actor, null, openOnly: true);
+        var inPeriod = await ListAsync(companyId, actor, null, false, from, to);
+        return PermitFleet.Build(from, to, [.. open, .. inPeriod]);
+    }
+
+    /// <summary>Permits past their window and not closed, across the fleet, for the menu badge. Zero onboard.</summary>
+    public async Task<int> ExpiredCountAsync(Guid companyId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        if (db.Node.IsVessel) return 0;
+        return (await ListAsync(companyId, actor, null, openOnly: true)).Count(r => r.State == PermitState.Expired);
+    }
+
+    private async Task RequireOfficeAsync(Guid companyId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if ((await WhoAsync(db, companyId, actor)).IsOffice == false) throw new InvalidOperationException("This view is the office's.");
+    }
+
     /// <summary>The board: what is open on a vessel now, and which pairs of open permits conflict.</summary>
     public async Task<PermitBoard> BoardAsync(Guid companyId, Actor actor, Guid? vesselId = null, bool includeClosed = false)
     {

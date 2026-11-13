@@ -1,0 +1,118 @@
+@page "/permits/fleet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject PermitService Svc
+
+<PageTitle>Fleet permit activity · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Fleet permit activity"
+            Subtitle="Permits to work across the fleet: what is open now, what expired without being closed, and gas readings outside the limits. The office watches; permits are issued and signed onboard.">
+    <Actions>
+        <a href="/permits/reports/fleet.csv?from=@_from.ToString("yyyy-MM-dd")&to=@_to.ToString("yyyy-MM-dd")" class="btn btn-secondary">CSV</a>
+        <a href="/permits/audit" class="btn btn-secondary">Audit</a>
+        <AuthorizeView Roles="CompanyAdmin"><a href="/permits/types" class="btn btn-secondary">Types and checklists</a></AuthorizeView>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Permits are not available" Message="@_blocked" />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        <label>From<input type="date" class="input mt-1" @bind="_from" @bind:after="LoadAsync" /></label>
+        <label>To<input type="date" class="input mt-1" @bind="_to" @bind:after="LoadAsync" /></label>
+        @if (_view!.Expired == 0) { <StatusChip Label="Nothing expired and open" Tone="success" /> }
+        else { <StatusChip Label="@($"{_view.Expired} expired, not closed")" Tone="danger" /> }
+    </div>
+
+    @if (_view.Vessels.Count == 0)
+    {
+        <EmptyState Title="No permits" Message="No vessel has sent a permit ashore yet." />
+    }
+    else
+    {
+        <div class="card mb-6 overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="px-4 py-3">Vessel</th><th class="px-3 py-3">Active</th><th class="px-3 py-3">Suspended</th><th class="px-3 py-3">Awaiting issue</th><th class="px-3 py-3">Expired, not closed</th><th class="px-3 py-3">Gas outside limits</th><th class="px-3 py-3">Permits in the period</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var v in _view.Vessels)
+                    {
+                        <tr class="border-t border-line/60">
+                            <td class="px-4 py-3"><a class="link font-semibold" href="/permits?vessel=@v.VesselId">@v.Name</a></td>
+                            <td class="px-3 py-3">@v.Active</td>
+                            <td class="px-3 py-3">@v.Suspended</td>
+                            <td class="px-3 py-3">@v.Awaiting</td>
+                            <td class="px-3 py-3">@if (v.Expired > 0) { <StatusChip Label="@v.Expired.ToString()" Tone="danger" /> } else { <span>0</span> }</td>
+                            <td class="px-3 py-3">@if (v.GasExceedances > 0) { <StatusChip Label="@v.GasExceedances.ToString()" Tone="warning" /> } else { <span>0</span> }</td>
+                            <td class="px-3 py-3">@v.InPeriod</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (_view.Attention.Count > 0)
+        {
+            <div class="card mb-6 p-4 text-sm">
+                <h2 class="mb-3 text-base font-semibold text-ink">Needs attention</h2>
+                <ul class="divide-y divide-line/60">
+                    @foreach (var a in _view.Attention)
+                    {
+                        <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                            <a class="link font-mono font-semibold" href="/permits/@a.Row.Permit.Id">@a.Row.Permit.Code</a>
+                            <span>@a.Row.Permit.TypeName, @a.Row.Permit.Location</span>
+                            <span class="text-muted">@a.Row.VesselName</span>
+                            <span class="ml-auto text-rose-700">@a.Why</span>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <div class="card overflow-x-auto p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">Permits by kind and month</h2>
+            @if (_view.ByTypeMonth.Count == 0) { <p class="text-muted">None in this period.</p> }
+            else
+            {
+                <table class="w-full text-left">
+                    <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Month</th><th>Kind</th><th>Permits</th></tr></thead>
+                    <tbody>
+                        @foreach (var m in _view.ByTypeMonth) { <tr class="border-t border-line/60"><td class="py-1">@m.Month</td><td>@m.TypeName</td><td>@m.Count</td></tr> }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = default!;
+    private bool _loaded;
+    private string? _blocked;
+    private DateTime _from = DateTime.UtcNow.Date.AddMonths(-3), _to = DateTime.UtcNow.Date;
+    private PermitFleetView? _view;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        if (!await Svc.IsEnabledForCompanyAsync(_companyId)) { _blocked = "The Permit to Work module has not been switched on for any vessel."; _loaded = true; return; }
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync() => _view = await Svc.FleetAsync(_companyId, _actor, _from, _to.AddDays(1).AddTicks(-1));
+}

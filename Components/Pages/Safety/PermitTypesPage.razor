@@ -1,0 +1,207 @@
+@page "/permits/types"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject PermitService Svc
+
+<PageTitle>Permit types and checklists · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Permit types and checklists"
+            Subtitle="The kinds of permit the company issues, their checklists, gas limits and who signs. Every default is a starting point: replace the checklists with the company's own forms and check the limits against the safety management system. Vessels receive changes for permits requested afterwards.">
+    <Actions>
+        <a href="/permits/fleet" class="btn btn-secondary">Fleet activity</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else
+{
+    <div class="space-y-6">
+        <div class="card p-4 text-sm">
+            <div class="mb-3 flex items-center gap-3">
+                <h2 class="text-base font-semibold text-ink">Permit types</h2>
+                <button class="btn btn-primary btn-sm ml-auto" @onclick="NewType">New permit type</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Name</th><th>Code</th><th>Valid</th><th>Requested by</th><th>Gas</th><th>Attendant</th><th>Master approves</th><th>Checklist</th><th>In use</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var t in _types)
+                        {
+                            var row = t;
+                            <tr class="border-t border-line/60">
+                                <td class="py-1 font-medium">@t.Name</td><td class="font-mono">@t.Code</td><td>@t.MaxValidityHours h</td><td>@PermitLook.Role(t.RequesterRole)</td>
+                                <td>@(t.GasTestRequired ? $"every {t.GasRepeatMinutes} min" : "")</td><td>@(t.AttendantRequired ? "Yes" : "")</td><td>@(t.MasterApprovalRequired ? "Yes" : "")</td>
+                                <td>version @t.ChecklistVersion</td><td>@(t.IsActive ? "Yes" : "Switched off")</td>
+                                <td><button class="btn btn-ghost btn-sm" @onclick="() => EditAsync(row)">Edit</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        @if (_edit is not null)
+        {
+            <div class="card p-4 text-sm">
+                <h2 class="mb-3 text-base font-semibold text-ink">@(_edit.Id == Guid.Empty ? "New permit type" : _edit.Name)</h2>
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <label class="md:col-span-2">Name<input class="input mt-1 w-full" maxlength="120" @bind="_edit.Name" /></label>
+                    <label>Code (in the reference)<input class="input mt-1 w-full font-mono" maxlength="6" @bind="_edit.Code" /></label>
+                    <label>Longest validity, hours<input type="number" class="input mt-1 w-full" @bind="_edit.MaxValidityHours" /></label>
+                    <label>Requested by
+                        <select class="select mt-1 w-full" @bind="_edit.RequesterRole">
+                            @foreach (var r in Enum.GetValues<PermitRole>()) { <option value="@r">@PermitLook.Role(r)</option> }
+                        </select>
+                    </label>
+                    <label class="flex items-end gap-2"><input type="checkbox" @bind="_edit.SameRequesterAndIssuer" /> The requester may also issue</label>
+                    <label class="flex items-end gap-2"><input type="checkbox" @bind="_edit.AttendantRequired" /> Attendant required</label>
+                    <label class="flex items-end gap-2"><input type="checkbox" @bind="_edit.EntryLogRequired" /> Entry log</label>
+                    <label class="flex items-end gap-2"><input type="checkbox" @bind="_edit.RiskAssessmentRequired" /> Signed risk assessment required</label>
+                    <label class="flex items-end gap-2"><input type="checkbox" @bind="_edit.MasterApprovalRequired" /> Master's approval required</label>
+                    <label class="flex items-end gap-2"><input type="checkbox" @bind="_edit.IsActive" /> In use</label>
+                    <label class="flex items-end gap-2"><input type="checkbox" @bind="_edit.GasTestRequired" /> Gas test required</label>
+                </div>
+                @if (_edit.GasTestRequired)
+                {
+                    <div class="mt-4 grid grid-cols-2 gap-4 md:grid-cols-6">
+                        <label>Repeat every, minutes<input type="number" class="input mt-1 w-full" @bind="_edit.GasRepeatMinutes" /></label>
+                        <label>Oxygen at least, %<input type="number" step="0.1" class="input mt-1 w-full" @bind="_edit.OxygenMin" /></label>
+                        <label>Oxygen at most, %<input type="number" step="0.1" class="input mt-1 w-full" @bind="_edit.OxygenMax" /></label>
+                        <label>Flammable, % LEL at most<input type="number" step="0.1" class="input mt-1 w-full" @bind="_edit.FlammableMaxPercentLel" /></label>
+                        <label>H₂S, ppm at most<input type="number" step="0.1" class="input mt-1 w-full" @bind="_edit.H2sMaxPpm" /></label>
+                        <label>CO, ppm at most<input type="number" step="0.1" class="input mt-1 w-full" @bind="_edit.CoMaxPpm" /></label>
+                    </div>
+                }
+                <label class="mt-4 block">What sets these rules (for the record)<input class="input mt-1 w-full" maxlength="300" @bind="_edit.Reference" /></label>
+                <button class="btn btn-primary mt-4" disabled="@_busy" @onclick="SaveTypeAsync">Save the type</button>
+
+                @if (_edit.Id != Guid.Empty)
+                {
+                    <div class="mt-6 border-t border-line pt-4">
+                        <h3 class="mb-1 text-base font-semibold text-ink">Checklist, version @_edit.ChecklistVersion</h3>
+                        <p class="mb-2 text-xs text-muted">One item to a line, as <span class="font-mono">Section|Item</span>. Add <span class="font-mono">[optional]</span> for an item that need not be answered, <span class="font-mono">[note]</span> where the answer needs a note. Saving changes makes a new version; permits already requested keep the version they used.</p>
+                        <textarea class="textarea w-full font-mono" rows="14" @bind="_checklist"></textarea>
+                        <button class="btn btn-secondary mt-2" disabled="@_busy" @onclick="SaveChecklistAsync">Save the checklist</button>
+                    </div>
+                }
+            </div>
+        }
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-1 text-base font-semibold text-ink">Simultaneous operations</h2>
+            <p class="mb-3 text-xs text-muted">Pairs of permits that should not be open together. The issuer sees the warning and must acknowledge it, and the acknowledgement is recorded. The pairs listed are starting points to correct.</p>
+            @if (_pairs.Count == 0) { <p class="text-muted">No pairs.</p> }
+            <ul class="mb-4 divide-y divide-line/60">
+                @foreach (var p in _pairs)
+                {
+                    var pair = p;
+                    <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                        <span class="font-medium">@NameOf(p.PermitTypeAId)</span> with <span class="font-medium">@NameOf(p.PermitTypeBId)</span>
+                        <span class="chip">@(p.SameLocationOnly ? "same place only" : "anywhere on the vessel")</span>
+                        <span class="text-muted">@p.Message</span>
+                        <button class="btn btn-ghost btn-sm ml-auto" disabled="@_busy" @onclick="() => RemovePairAsync(pair)">Remove</button>
+                    </li>
+                }
+            </ul>
+            <div class="flex flex-wrap items-end gap-3">
+                <label>First
+                    <select class="select mt-1" @bind="_pairA"><option value="@Guid.Empty">Choose…</option>@foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }</select>
+                </label>
+                <label>Second
+                    <select class="select mt-1" @bind="_pairB"><option value="@Guid.Empty">Choose…</option>@foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }</select>
+                </label>
+                <label class="flex items-center gap-2"><input type="checkbox" @bind="_pairSame" /> Only at the same place</label>
+                <label class="min-w-64 flex-1">Warning<input class="input mt-1 w-full" maxlength="300" @bind="_pairMessage" /></label>
+                <button class="btn btn-secondary" disabled="@_busy" @onclick="AddPairAsync">Add the pair</button>
+            </div>
+        </div>
+
+        @if (_error is not null) { <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+        @if (_notice is not null) { <div class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_notice</div> }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _pairA, _pairB;
+    private bool _loaded, _busy, _pairSame;
+    private string? _error, _notice;
+    private string _checklist = "", _pairMessage = "";
+    private List<PermitType> _types = [];
+    private List<PermitConflictPair> _pairs = [];
+    private PermitType? _edit;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        await ReloadAsync();
+        _loaded = true;
+    }
+
+    private async Task ReloadAsync()
+    {
+        _types = await Svc.TypesAsync(_companyId, includeInactive: true);
+        _pairs = await Svc.ConflictPairsAsync(_companyId);
+    }
+
+    private string NameOf(Guid id) => _types.FirstOrDefault(t => t.Id == id)?.Name ?? "?";
+
+    private static PermitType Copy(PermitType t) => new()
+    {
+        Id = t.Id, CompanyId = t.CompanyId, Name = t.Name, Code = t.Code, MaxValidityHours = t.MaxValidityHours, RequesterRole = t.RequesterRole, SameRequesterAndIssuer = t.SameRequesterAndIssuer,
+        GasTestRequired = t.GasTestRequired, GasRepeatMinutes = t.GasRepeatMinutes, OxygenMin = t.OxygenMin, OxygenMax = t.OxygenMax, FlammableMaxPercentLel = t.FlammableMaxPercentLel,
+        H2sMaxPpm = t.H2sMaxPpm, CoMaxPpm = t.CoMaxPpm, AttendantRequired = t.AttendantRequired, EntryLogRequired = t.EntryLogRequired, RiskAssessmentRequired = t.RiskAssessmentRequired,
+        MasterApprovalRequired = t.MasterApprovalRequired, ChecklistVersion = t.ChecklistVersion, Reference = t.Reference, SortOrder = t.SortOrder, IsActive = t.IsActive,
+    };
+
+    private void NewType()
+    {
+        _error = _notice = null;
+        _edit = new PermitType { Reference = "Company SMS (to verify)" };
+        _checklist = "";
+    }
+
+    private async Task EditAsync(PermitType t)
+    {
+        _error = _notice = null;
+        _edit = Copy(t);
+        _checklist = PermitLook.ChecklistText(await Svc.ChecklistAsync(_companyId, t.Id));
+    }
+
+    private async Task RunAsync(Func<Task> work, string done)
+    {
+        _error = _notice = null;
+        _busy = true;
+        try { await work(); await ReloadAsync(); _notice = done; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task SaveTypeAsync() => RunAsync(async () =>
+    {
+        var saved = await Svc.SaveTypeAsync(_companyId, _edit!);
+        _edit = Copy(saved);
+    }, "Saved. It applies to permits requested from now on.");
+
+    private Task SaveChecklistAsync() => RunAsync(async () =>
+    {
+        var items = PermitLook.ParseChecklist(_checklist);
+        var version = await Svc.SaveChecklistAsync(_companyId, _edit!.Id, items);
+        _edit.ChecklistVersion = version;
+    }, "The checklist is saved.");
+
+    private Task AddPairAsync() => RunAsync(async () =>
+    {
+        await Svc.SaveConflictPairAsync(_companyId, _pairA, _pairB, _pairSame, _pairMessage);
+        _pairA = _pairB = Guid.Empty;
+        _pairMessage = "";
+    }, "The pair is added.");
+
+    private Task RemovePairAsync(PermitConflictPair pair) => RunAsync(async () => { await Svc.RemoveConflictPairAsync(_companyId, pair.Id); }, "The pair is removed.");
+}
