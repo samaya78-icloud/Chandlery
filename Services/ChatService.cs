@@ -318,6 +318,9 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var rfqs = Of(ChatModules.Rfq);
         foreach (var r in await db.Rfqs.AsNoTracking().Where(r => rfqs.Contains(r.Id)).Select(r => new { r.Id, r.RfqNumber }).ToListAsync())
             result[(ChatModules.Rfq, r.Id)] = new RecordInfo($"RFQ {r.RfqNumber}", Href($"/company/rfqs/{r.Id}#conversation", $"/vessel/rfqs/{r.Id}#conversation"));
+        var jobs = Of(ChatModules.PmsJob);
+        foreach (var j in await db.PlannedJobs.AsNoTracking().Where(j => jobs.Contains(j.Id)).Select(j => new { j.Id, j.Code, j.Title }).ToListAsync())
+            result[(ChatModules.PmsJob, j.Id)] = new RecordInfo($"{j.Code} · {j.Title}", Href($"/pms/jobs/{j.Id}#conversation", $"/pms/jobs/{j.Id}#conversation"));
         return result;
     }
     /// <summary>Who this person is in a conversation (side, vessel, administrator), or null when they cannot take part.</summary>

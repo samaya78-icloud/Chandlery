@@ -1,4 +1,4 @@
-@page "/pms/jobs/{JobId:guid}"
+﻿@page "/pms/jobs/{JobId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -127,6 +127,7 @@ else
             <PmsJobLinks CompanyId="_companyId" Job="job" OnChanged="LoadAsync" />
             <PmsJobDeferrals CompanyId="_companyId" Job="job" OnChanged="LoadAsync" />
             <PmsJobChanges CompanyId="_companyId" Job="job" OnChanged="LoadAsync" />
+            <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.PmsJob" RecordId="job.Id" VesselId="job.VesselId" Title="Conversation" />
 
             <div class="card p-5 text-sm">
                 <h2 class="mb-3 font-display text-base font-extrabold text-ink">The job</h2>
