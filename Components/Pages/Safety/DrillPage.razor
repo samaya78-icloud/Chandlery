@@ -4,6 +4,8 @@
 @rendermode InteractiveServer
 @using Chandlery.Models
 @inject DrillService Svc
+@inject PmsService Pms
+@inject DrillRestService RestOffer
 
 <PageTitle>@(_d?.Drill.Code ?? "Drill") · Chandlery</PageTitle>
 
@@ -83,6 +85,23 @@ else
         </div>
 
         <div class="space-y-5">
+            @if (_offer is { Changes.Count: > 0 })
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-1 text-base font-semibold text-ink">Hours of work</h2>
+                    <p class="mb-3 text-xs text-muted">Their recorded hours show rest while this drill ran. Adding it records the drill as work for them, with the reason below; they still agree it when they sign their hours.</p>
+                    <ul class="mb-3 space-y-1">
+                        @foreach (var c in _offer.Changes)
+                        {
+                            <li><span class="font-medium">@c.Name</span>, @c.Day.ToString("d MMM"): <span class="text-muted">@c.Before</span> becomes <span class="font-mono">@c.After</span></li>
+                        }
+                    </ul>
+                    <p class="mb-3 text-xs text-muted">Reason recorded: @_offer.Reason</p>
+                    <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="AddToHoursAsync">Add the drill to their hours</button>
+                    @foreach (var problem in _restProblems) { <p class="mt-2 text-rose-600">@problem</p> }
+                </div>
+            }
+
             @if (_d.Can.Sign)
             {
                 <div class="card p-4 text-sm">
@@ -108,6 +127,15 @@ else
                         <div class="mt-4 space-y-2 border-t border-line pt-3">
                             <input class="input w-full" maxlength="200" placeholder="New action: what must be done" @bind="_actionTitle" />
                             <textarea class="textarea w-full" rows="2" maxlength="2000" placeholder="Details (optional)" @bind="_actionText"></textarea>
+                            @if (_machinery.Count > 0)
+                            {
+                                <label class="block">Equipment concerned (from the maintenance plan)
+                                    <select class="select mt-1 w-full" @bind="_actionMachine">
+                                        <option value="@Guid.Empty">None</option>
+                                        @foreach (var m in _machinery) { <option value="@m.Id">@m.Name@(m.Code == "" ? "" : $" ({m.Code})")</option> }
+                                    </select>
+                                </label>
+                            }
                             <div class="flex flex-wrap items-end gap-2">
                                 <label>Due<input type="date" class="input mt-1" @bind="_actionDue" /></label>
                                 <label>For<input class="input mt-1" maxlength="120" placeholder="Name or rank" @bind="_actionFor" /></label>
@@ -154,6 +182,10 @@ else
     private string? _error, _notice;
     private string _note = "", _comment = "", _actionTitle = "", _actionText = "", _actionFor = "";
     private DateTime? _actionDue;
+    private Guid _actionMachine;
+    private List<MachineryItem> _machinery = [];
+    private DrillRestOffer? _offer;
+    private List<string> _restProblems = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -168,6 +200,37 @@ else
     {
         try { _d = await Svc.GetAsync(_companyId, Id, _actor); }
         catch (InvalidOperationException) { _d = null; }
+        if (_d is null) return;
+        if (_machinery.Count == 0 && _d.Can.AddAction)
+        {
+            try { _machinery = (await Pms.ListMachineryAsync(_companyId, _d.Drill.VesselId)).OrderBy(m => m.Name).ToList(); }
+            catch (InvalidOperationException) { _machinery = []; }
+        }
+        // Only onboard, and only for the people who may record hours for others (the Master, a crew admin); the service decides, so a refusal just means no panel.
+        try { _offer = NodeContext.Current.IsVessel ? await RestOffer.OfferAsync(_companyId, Id, _actor) : null; }
+        catch (InvalidOperationException) { _offer = null; }
+        if (_offer is not null && !await MayRecordForOthersAsync()) _offer = null;
+    }
+
+    private async Task<bool> MayRecordForOthersAsync()
+    {
+        var me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+        return me is not null && (me.IsMaster || me.IsCrewAdmin);
+    }
+
+    private async Task AddToHoursAsync()
+    {
+        _error = _notice = null;
+        _busy = true;
+        try
+        {
+            var result = await RestOffer.ApplyAsync(_companyId, Id, _actor);
+            _restProblems = [.. result.Problems];
+            await LoadAsync();
+            _notice = $"Added to {result.Applied} day{(result.Applied == 1 ? "" : "s")} of hours.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
     }
 
     private static RenderFragment Block(string title, string text) => string.IsNullOrWhiteSpace(text) ? (builder => { }) : (builder =>
@@ -195,8 +258,8 @@ else
 
     private Task AddActionAsync() => RunAsync(async () =>
     {
-        await Svc.AddActionAsync(_companyId, Id, _actor, new NewDrillAction(_actionTitle, _actionText, _actionDue is { } due ? DateTime.SpecifyKind(due, DateTimeKind.Utc) : null, _actionFor));
-        (_actionTitle, _actionText, _actionFor, _actionDue) = ("", "", "", null);
+        await Svc.AddActionAsync(_companyId, Id, _actor, new NewDrillAction(_actionTitle, _actionText, _actionDue is { } due ? DateTime.SpecifyKind(due, DateTimeKind.Utc) : null, _actionFor, MachineryItemId: _actionMachine == Guid.Empty ? null : _actionMachine));
+        (_actionTitle, _actionText, _actionFor, _actionDue, _actionMachine) = ("", "", "", null, Guid.Empty);
     }, "The action is a task in the Worklist.");
 
     private static string IncidentHref(Drill dr) => $"/incidents/new?drill={dr.Id}" + (NodeContext.Current.IsVessel ? "" : $"&vessel={dr.VesselId}");

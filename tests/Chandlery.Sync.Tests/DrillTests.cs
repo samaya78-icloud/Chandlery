@@ -346,4 +346,80 @@ public class DrillTests : IAsyncLifetime
         Assert.Equal(0, c.MeetingsOverdue);                                                                          // a meeting never held is not overdue
         Assert.Null(await new DrillFleetService(_shore, new MeetingService(_s.ShoreFactory, _shoreWorklist)).CountsAsync(Guid.NewGuid(), _s.User));   // a company with the module on nowhere has no card
     }
+
+    // ---- links to PMS and rest hours (C5b) ----
+
+    [Fact]
+    public async Task ADeficiencyCanNameTheEquipment_FromThisVesselsPlanOnly_AndTheTaskCarriesIt()
+    {
+        await SwitchOnAsync(_s.VesselId, PolicyModules.Pms);
+        var pms = new PmsService(_s.ShoreFactory);
+        var pump = await pms.AddMachineryItemAsync(_s.CompanyId, new NewMachineryItem(_s.VesselId, "Emergency fire pump", "FF-01"), _s.User);
+        var drill = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input(deficiencies: "Fire pump pressure low"));
+        await _s.SettleUntilQuietAsync();
+
+        var task = await _shore.AddActionAsync(_s.CompanyId, drill.Id, _s.User, new NewDrillAction("Repair the pump", "Pressure low at the test.", MachineryItemId: pump.Id));
+        Assert.Contains("Emergency fire pump (FF-01)", task.Description);
+        var entries = (await _shoreWorklist.GetAsync(_s.CompanyId, task.Id))!.Entries;
+        var links = entries.Where(e => e.Type == WorklistEntryType.Link).Select(e => e.Payload).ToList();
+        Assert.Contains(links, l => l.Contains(WorklistLinkTypes.Machinery) && l.Contains(pump.Id.ToString()));
+        Assert.Contains(links, l => l.Contains(WorklistLinkTypes.Drill));
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.AddActionAsync(_s.CompanyId, drill.Id, _s.User, new NewDrillAction("Repair something", "", MachineryItemId: Guid.NewGuid())));
+        Assert.Contains("maintenance plan", refused.Message);
+    }
+
+    private async Task<(DrillRestService Service, RestHoursService Hours, Drill Drill)> DrillOnADayOfWorkAsync(DateTime start, DateTime end, params (CrewMember Who, string Work)[] days)
+    {
+        await SwitchOnAsync(_s.VesselId, PolicyModules.RestHours);
+        var rest = new RestHoursService(_s.VesselFactory);
+        foreach (var (who, work) in days) await rest.RecordDayAsync(_s.CompanyId, _s.VesselId, who.Id, start, work, As(who));
+        var drill = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input(started: start, ended: end, people: [Present(_officer), Present(_master), Present(_cook)]));
+        return (new DrillRestService(_s.VesselFactory, _vessel, rest), rest, drill);
+    }
+
+    [Fact]
+    public async Task ADrillDuringRecordedRestIsOfferedForTheHours_NeverDoneSilently_AndAddingItIsDoneOnce()
+    {
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var (service, rest, drill) = await DrillOnADayOfWorkAsync(day.AddHours(10), day.AddHours(11), (_officer, "06:00-08:00"), (_cook, "08:00-12:00"));   // the master recorded nothing
+
+        var offer = (await service.OfferAsync(_s.CompanyId, drill.Id, As(_master)))!;
+        Assert.Equal([_officer.FullName], offer.Changes.Select(c => c.Name));                                // the cook was already working; the Master has no record
+        Assert.Equal(("06:00-08:00", "06:00-08:00,10:00-11:00"), (offer.Changes[0].Before, offer.Changes[0].After));
+        Assert.Equal("06:00-08:00", (await rest.HistoryAsync(_s.CompanyId, _officer.Id, day, day)).Single().WorkSpans);   // offering changed nothing
+
+        var result = await service.ApplyAsync(_s.CompanyId, drill.Id, As(_master));
+        Assert.Equal((1, 0), (result.Applied, result.Problems.Count));
+        var entries = (await rest.HistoryAsync(_s.CompanyId, _officer.Id, day, day)).OrderBy(e => e.EnteredAt).ToList();
+        Assert.Equal(["06:00-08:00", "06:00-08:00,10:00-11:00"], entries.Select(e => e.WorkSpans));          // both kept: nothing overwritten
+        Assert.Contains(drill.Code, entries[1].Reason);
+        Assert.True(entries[1].OnBehalf);                                                                    // the officer still agrees it when signing
+
+        var again = (await service.OfferAsync(_s.CompanyId, drill.Id, As(_master)))!;
+        Assert.Empty(again.Changes);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ApplyAsync(_s.CompanyId, drill.Id, As(_master)));
+    }
+
+    [Fact]
+    public async Task AnOfficerWhoIsNotTheMasterCannotAddToOthersHours_AndTheRefusalIsReportedNotThrown()
+    {
+        var day = DateTime.UtcNow.Date.AddDays(-1);
+        var (service, rest, drill) = await DrillOnADayOfWorkAsync(day.AddHours(10), day.AddHours(11), (_cook, "06:00-08:00"));
+        var result = await service.ApplyAsync(_s.CompanyId, drill.Id, As(_officer));
+        Assert.Equal(0, result.Applied);
+        Assert.Contains("own hours", Assert.Single(result.Problems));
+        Assert.Single(await rest.HistoryAsync(_s.CompanyId, _cook.Id, day, day));
+    }
+
+    [Fact]
+    public async Task WithoutTheRestModuleOrAnEndTimeThereIsNothingToOffer()
+    {
+        var drill = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input());
+        var service = new DrillRestService(_s.VesselFactory, _vessel, new RestHoursService(_s.VesselFactory));
+        Assert.Null(await service.OfferAsync(_s.CompanyId, drill.Id, As(_master)));                           // rest hours are not switched on
+        await SwitchOnAsync(_s.VesselId, PolicyModules.RestHours);
+        var open = await _vessel.RecordAsync(_s.CompanyId, _s.VesselId, As(_officer), Input(started: DateTime.UtcNow.AddHours(-9)) with { EndedAt = null });
+        Assert.Null(await service.OfferAsync(_s.CompanyId, open.Id, As(_master)));                            // no end time, no duration
+    }
 }

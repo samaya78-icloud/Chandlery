@@ -9,7 +9,7 @@ public sealed record DrillParticipantInput(Guid? CrewMemberId, string Name, stri
 public sealed record DrillInput(Guid DrillTypeId, DateTime StartedAt, DateTime? EndedAt, IncidentShipStatus ShipStatus, string Place, string Scenario, Guid? ConductedByCrewId,
     string EquipmentTested, string Findings, string Deficiencies, string Remarks, IReadOnlyList<DrillParticipantInput> Participants);
 
-public sealed record NewDrillAction(string Title, string Description, DateTime? Target = null, string Assignee = "", WorklistPriority Priority = WorklistPriority.Normal);
+public sealed record NewDrillAction(string Title, string Description, DateTime? Target = null, string Assignee = "", WorklistPriority Priority = WorklistPriority.Normal, Guid? MachineryItemId = null);
 
 /// <summary>What the person looking at a drill may do with it: the rules the service enforces, so a page offers only what will be accepted.</summary>
 public sealed record DrillCan(bool IsOffice, bool Edit, bool Sign, bool Note, bool AddAction, bool Comment);
@@ -302,9 +302,14 @@ public class DrillService(IDbContextFactory<ChandleryDbContext> factory, Worklis
         var source = await db.WorklistListItems.AsNoTracking().Where(i => i.CompanyId == companyId && i.Kind == WorklistListKind.Source && i.IsActive && i.Name == (who.IsOffice ? "Office" : "Vessel")).Select(i => (Guid?)i.Id).FirstOrDefaultAsync();
         var category = await db.WorklistListItems.AsNoTracking().Where(i => i.CompanyId == companyId && i.Kind == WorklistListKind.Category && i.IsActive && i.ParentId == null && i.Name == "Safety").Select(i => (Guid?)i.Id).FirstOrDefaultAsync();
         var acting = new Actor(who.UserId, who.Name);
-        var body = $"{action.Description?.Trim()}\n\nFrom drill {drill.Code} ({drill.TypeName}, {drill.StartedAt:d MMM yyyy}).".TrimStart();
+        var machine = action.MachineryItemId is { } machineId
+            ? await db.MachineryItems.AsNoTracking().FirstOrDefaultAsync(m => m.Id == machineId && m.VesselId == drill.VesselId && m.CompanyId == companyId) ?? throw new InvalidOperationException("That equipment is not on this vessel's maintenance plan.")
+            : null;
+        var equipment = machine is null ? "" : $"Equipment: {machine.Name}{(machine.Code == "" ? "" : $" ({machine.Code})")}.{Environment.NewLine}{Environment.NewLine}";
+        var body = $"{equipment}{action.Description?.Trim()}{Environment.NewLine}{Environment.NewLine}From drill {drill.Code} ({drill.TypeName}, {drill.StartedAt:d MMM yyyy}).".TrimStart();
         var task = await worklist.CreateTaskAsync(companyId, new NewWorklistTask(drill.VesselId, action.Title.Trim(), body, source, CategoryId: category, Priority: action.Priority, Target: action.Target, Assignee: action.Assignee ?? ""), acting);
         await worklist.AddEntryAsync(companyId, task.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Drill, LinkTarget: drill.Id, LinkLabel: $"Drill {drill.Code}"), acting);
+        if (machine is not null) await worklist.AddEntryAsync(companyId, task.Id, new WorklistEntryInput(WorklistEntryType.Link, LinkType: WorklistLinkTypes.Machinery, LinkTarget: machine.Id, LinkLabel: $"Equipment {machine.Name}"), acting);
         return task;
     }
 

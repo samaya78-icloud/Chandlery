@@ -56,6 +56,7 @@ builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<DrillService>();
 builder.Services.AddScoped<MeetingService>();
 builder.Services.AddScoped<DrillFleetService>();
+builder.Services.AddScoped<DrillRestService>();
 builder.Services.AddScoped<RiskAssessmentService>();
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<RiskLibraryService>();
