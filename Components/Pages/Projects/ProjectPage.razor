@@ -52,6 +52,10 @@ else
                 @if (_detail.Status is ProjectStatus.Approved or ProjectStatus.Ongoing)
                 {
                     <button @onclick="() => _variationOpen = !_variationOpen" class="btn btn-secondary btn-sm">Request variation</button>
+                    @if (p.Type == ProjectType.Drydock)
+                    {
+                        <button @onclick="() => _extensionOpen = !_extensionOpen" class="btn btn-secondary btn-sm">Request more days</button>
+                    }
                 }
             }
         </Actions>
@@ -96,12 +100,36 @@ else
             <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Request a variation</h2>
             <p class="mb-3 text-sm text-muted">Extra work found after approval, with the extra money it needs. @(_needsMatrix ? "The approval matrix decides who approves it, by this amount." : "No approval rules apply, so it is added straight away.") Once approved it joins the specification and the budget.</p>
             <div class="flex flex-wrap items-end gap-4">
-                <label class="text-sm">Group <input @bind="_variationGroup" class="input mt-1" placeholder="Variations" /></label>
-                <label class="min-w-[16rem] flex-1 text-sm">The extra work <input @bind="_variationText" class="input mt-1" /></label>
+                <label class="text-sm">Changes an existing job
+                    <select class="select mt-1" @bind="_variationItem">
+                        <option value="@Guid.Empty">No, it is extra work</option>
+                        @foreach (var open in p.Items.Where(i => i.Status == ProjectItemStatus.Open).OrderBy(i => i.SortOrder)) { <option value="@open.Id">@open.Group: @open.Description</option> }
+                    </select>
+                </label>
+                @if (_variationItem == Guid.Empty)
+                {
+                    <label class="text-sm">Group <input @bind="_variationGroup" class="input mt-1" placeholder="Variations" /></label>
+                }
+                <label class="min-w-[16rem] flex-1 text-sm">@(_variationItem == Guid.Empty ? "The extra work" : "The job as it now reads") <input @bind="_variationText" class="input mt-1" /></label>
                 <label class="text-sm">Extra amount (USD) <input type="number" step="0.01" min="0" @bind="_variationAmount" class="input mt-1 w-40 text-right" /></label>
                 <label class="min-w-[16rem] flex-1 text-sm">Why <input @bind="_variationReason" class="input mt-1" /></label>
                 <button @onclick="RequestVariation" disabled="@_busy" class="btn btn-primary">Submit</button>
                 <button @onclick="() => _variationOpen = false" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_extensionOpen && canEdit)
+    {
+        <div class="card mb-6 border-accent-300 p-5">
+            <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Request more days in the yard</h2>
+            <p class="mb-3 text-sm text-muted">The planned end moves by the days asked for once this is approved. @(_needsMatrix ? "The approval matrix decides who approves it, by what it costs; more than " + ProjectService.ExtensionSecondApprovalDays + " days also needs the second step." : "No approval rules apply, so it is applied straight away.")</p>
+            <div class="flex flex-wrap items-end gap-4">
+                <label class="text-sm">Extra days <input type="number" min="1" max="365" @bind="_extensionDays" class="input mt-1 w-28 text-right" /></label>
+                <label class="text-sm">What it costs (USD, if anything) <input type="number" step="0.01" min="0" @bind="_extensionAmount" class="input mt-1 w-40 text-right" /></label>
+                <label class="min-w-[16rem] flex-1 text-sm">Why <input @bind="_extensionReason" class="input mt-1" /></label>
+                <button @onclick="RequestExtension" disabled="@_busy" class="btn btn-primary">Submit</button>
+                <button @onclick="() => _extensionOpen = false" class="btn btn-secondary">Cancel</button>
             </div>
         </div>
     }
@@ -334,7 +362,7 @@ else
             }
             else
             {
-                <table class="w-full max-w-3xl text-sm">
+                <div class="overflow-x-auto"><table class="w-full max-w-3xl text-sm">
                     <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Category</th><th class="p-2 text-right">Planned (USD)</th><th class="p-2 text-right">Contingency %</th><th class="p-2"></th></tr></thead>
                     <tbody class="divide-y divide-line/60">
                         @foreach (var line in _lines)
@@ -347,7 +375,7 @@ else
                             </tr>
                         }
                     </tbody>
-                </table>
+                </table></div>
             }
             @if (_approvals.Count > 0)
             {
@@ -362,11 +390,11 @@ else
                 @foreach (var view in _approvalRequests)
                 {
                     var r = view.Request;
-                    <p class="mt-4 text-sm"><span class="font-medium">@(r.Kind == ProjectRequestKind.Budget ? "Budget" : "Variation: " + r.Description)</span>
+                    <p class="mt-4 text-sm"><span class="font-medium">@(r.Kind switch { ProjectRequestKind.Budget => "Budget", ProjectRequestKind.Extension => "Extension: " + r.Description, _ => "Variation: " + r.Description })</span>
                         <span class="text-muted">· @Money.Format(r.AmountUsd, "USD") · asked by @r.SubmittedByName on @r.SubmittedAt.ToString("d MMM yyyy") ·</span>
                         <StatusChip Label="@r.Status.ToString()" Tone="@(r.Status switch { ProjectRequestStatus.Approved => "success", ProjectRequestStatus.Pending => "warning", ProjectRequestStatus.Rejected => "danger", _ => "neutral" })" /></p>
                     @if (r.Reason != "") { <p class="text-xs text-muted">@r.Reason</p> }
-                    <ApprovalPanel Slots="view.Slots" CanDecide="view.YourTurn" Noun="@(r.Kind == ProjectRequestKind.Budget ? "project budget" : "variation")" TotalText="@Money.Format(r.AmountUsd, "USD")" Busy="_busy" Error="@_error"
+                    <ApprovalPanel Slots="view.Slots" CanDecide="view.YourTurn" Noun="@(r.Kind switch { ProjectRequestKind.Budget => "project budget", ProjectRequestKind.Extension => "extension", _ => "variation" })" TotalText="@Money.Format(r.AmountUsd, "USD")" Busy="_busy" Error="@_error"
                                    OnDecide="args => DecideApproval(r.Id, args)" />
                 }
             </section>
@@ -517,6 +545,11 @@ else
     private bool _needsMatrix, _variationOpen;
     private string _variationGroup = "", _variationText = "", _variationReason = "";
     private decimal _variationAmount;
+    private Guid _variationItem;
+    private bool _extensionOpen;
+    private int _extensionDays = 7;
+    private decimal _extensionAmount;
+    private string _extensionReason = "";
     private ProjectService.ApprovalRequestView? BudgetPending => _approvalRequests.FirstOrDefault(v => v.Request.Kind == ProjectRequestKind.Budget && v.Request.Status == ProjectRequestStatus.Pending);
 
     // adding from the Worklist and maintenance
@@ -659,9 +692,15 @@ else
 
     private Task RequestVariation() => RunAsync(async () =>
     {
-        await Svc.RequestVariationAsync(_companyId, ProjectId, _variationGroup, _variationText, _variationAmount, _variationReason, _actor);
-        (_variationOpen, _variationGroup, _variationText, _variationReason, _variationAmount) = (false, "", "", "", 0m);
+        await Svc.RequestVariationAsync(_companyId, ProjectId, _variationGroup, _variationText, _variationAmount, _variationReason, _actor, _variationItem == Guid.Empty ? null : _variationItem);
+        (_variationOpen, _variationGroup, _variationText, _variationReason, _variationAmount, _variationItem) = (false, "", "", "", 0m, Guid.Empty);
     }, "Variation requested");
+
+    private Task RequestExtension() => RunAsync(async () =>
+    {
+        await Svc.RequestExtensionAsync(_companyId, ProjectId, _extensionDays, _extensionAmount, _extensionReason, _actor);
+        (_extensionOpen, _extensionDays, _extensionAmount, _extensionReason) = (false, 7, 0m, "");
+    }, "Extension requested");
 
     private static ProjectEventKind[] NextSteps(ProjectStatus status) => status switch
     {

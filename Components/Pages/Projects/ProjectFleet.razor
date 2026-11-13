@@ -147,7 +147,7 @@ else
         <section class="card mb-5 p-4">
             <h2 class="mb-1 text-sm font-semibold">Missing documents</h2>
             <p class="mb-3 text-xs text-muted">Projects that are not closed and still wait on a document from their checklist.</p>
-            <table class="w-full text-sm">
+            <div class="overflow-x-auto"><table class="w-full text-sm">
                 <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Project</th><th class="p-2">Vessel</th><th class="p-2">Missing</th><th class="p-2 text-right">Overdue</th></tr></thead>
                 <tbody class="divide-y divide-line/60">
                     @foreach (var m in _missing)
@@ -160,14 +160,14 @@ else
                         </tr>
                     }
                 </tbody>
-            </table>
+            </table></div>
         </section>
     }
 
     <div class="grid gap-5 lg:grid-cols-2">
         <section class="card p-4">
             <h2 class="mb-3 text-sm font-semibold">Spend by vessel</h2>
-            <table class="w-full text-sm">
+            <div class="overflow-x-auto"><table class="w-full text-sm">
                 <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="py-2">Vessel</th><th class="py-2 text-right">Projects</th><th class="py-2 text-right">Budget</th><th class="py-2 text-right">Cost to date</th><th class="py-2 text-right">Over budget</th></tr></thead>
                 <tbody class="divide-y divide-line/60">
                     @foreach (var s in _spendByVessel)
@@ -176,11 +176,11 @@ else
                             <td class="@("py-2 text-right tabular-nums " + (s.Over > 0 ? "font-semibold text-rose-600" : ""))">@Usd(s.Over)</td></tr>
                     }
                 </tbody>
-            </table>
+            </table></div>
         </section>
         <section class="card p-4">
             <h2 class="mb-3 text-sm font-semibold">Spend by year</h2>
-            <table class="w-full text-sm">
+            <div class="overflow-x-auto"><table class="w-full text-sm">
                 <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="py-2">Year</th><th class="py-2 text-right">Projects</th><th class="py-2 text-right">Budget</th><th class="py-2 text-right">Cost to date</th><th class="py-2 text-right">Over budget</th></tr></thead>
                 <tbody class="divide-y divide-line/60">
                     @foreach (var (year, s) in _spendByYear)
@@ -189,7 +189,7 @@ else
                             <td class="@("py-2 text-right tabular-nums " + (s.Over > 0 ? "font-semibold text-rose-600" : ""))">@Usd(s.Over)</td></tr>
                     }
                 </tbody>
-            </table>
+            </table></div>
         </section>
     </div>
     <p class="mt-3 text-xs text-muted">Cost to date is approved orders not yet invoiced, plus finalized invoices (before tax), plus costs entered by hand, in US dollars. Projects are counted in the year they started or are planned to start.</p>

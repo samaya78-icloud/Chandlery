@@ -94,3 +94,48 @@ public class ProjectRiskLink
     public string LinkedByName { get; set; } = "";
     public DateTime At { get; set; }
 }
+
+// ---- Projects J10: files kept with a project, and groups of projects (a drydock for several vessels) ----
+
+/// <summary>
+/// A file kept with a project at the office: a yard's quotation, a survey report. It may belong to one tender (the yard's quotation) or to the project as a whole.
+/// The bytes live in the file store; this row is the record. Never synced, so the vessel never receives a yard's prices.
+/// </summary>
+public class ProjectFile
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid ProjectId { get; set; }
+
+    /// <summary>The tender it is a quotation for; null for a file on the project as a whole.</summary>
+    public Guid? TenderId { get; set; }
+    public string FileName { get; set; } = "";
+    public string ContentType { get; set; } = "";
+    public long SizeBytes { get; set; }
+    public string StoredKey { get; set; } = "";
+    public string UploadedByName { get; set; } = "";
+    public DateTime UploadedAt { get; set; }
+}
+
+/// <summary>
+/// A set of projects run together, such as one drydock for sister ships. Each vessel still has its own project (so each ship receives only its own), and the group
+/// adds up what they come to across the fleet.
+/// </summary>
+public class ProjectGroup
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public string Name { get; set; } = "";
+    public string Note { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public string CreatedByName { get; set; } = "";
+}
+
+/// <summary>A project's membership of a group. A project is in at most one group.</summary>
+public class ProjectGroupMember
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid GroupId { get; set; }
+    public Guid ProjectId { get; set; }
+}

@@ -66,6 +66,9 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
 {
     public const int MaxItems = 300;
 
+    /// <summary>An extension of more than this many days needs a second step of approval, even when the money alone would not.</summary>
+    public const int ExtensionSecondApprovalDays = 7;
+
     private static DateTime Day(DateTime d) => DateTime.SpecifyKind(d.Date, DateTimeKind.Utc);
 
     internal static void RequireOffice(ChandleryDbContext db)
@@ -401,15 +404,38 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
 
     // ---- approval through the matrix (office) ----
 
-    /// <summary>Who must approve an amount: the company's matrix rows without a department (a project belongs to none), at the tier that covers it. Empty when the company has none.</summary>
-    private static async Task<List<ApprovalRule>> ChainAsync(ChandleryDbContext db, Guid companyId, decimal amountUsd)
-        => ApprovalEngine.ResolveChain(await db.ApprovalRules.AsNoTracking().Where(r => r.CompanyId == companyId).ToListAsync(), null, amountUsd);
+    /// <summary>
+    /// Who must approve an amount: the company's matrix rows without a department (a project belongs to none), at the tier that covers it, as the steps for the whole request;
+    /// then, for each budget category the matrix has its own rules for, the tier of those rules that covers what the budget holds in that category, as an extra sign-off.
+    /// A long extension also gets a second step if the money alone would not have. Empty when no rule applies, which means no approval is needed.
+    /// </summary>
+    private static async Task<List<(string Scope, ApprovalRule Rule)>> ChainAsync(ChandleryDbContext db, Guid companyId, decimal amountUsd, IReadOnlyList<(string Category, decimal Amount)>? categories = null, int extraDays = 0)
+    {
+        var all = await db.ApprovalRules.AsNoTracking().Where(r => r.CompanyId == companyId).ToListAsync();
+        var general = ApprovalEngine.ResolveChain(all, null, amountUsd);
+        if (extraDays > ExtensionSecondApprovalDays && general.Count > 0 && general.All(r => r.Level < 2))
+        {
+            var top = ApprovalEngine.Tier(all.Where(r => r.ProjectCategory is null && r.DepartmentId is null).ToList(), decimal.MaxValue);
+            general.AddRange(top.Where(r => r.Level >= 2));
+        }
+        var chain = general.Select(r => (Scope: "", Rule: r)).ToList();
+        foreach (var (category, amount) in categories ?? [])
+        {
+            var rules = all.Where(r => r.ProjectCategory is not null && string.Equals(r.ProjectCategory, category, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (rules.Count > 0) chain.AddRange(ApprovalEngine.Tier(rules, amount).Select(r => (Scope: r.ProjectCategory!, Rule: r)));
+        }
+        return chain.GroupBy(c => (c.Scope, c.Rule.Level, c.Rule.ApproverUserId)).Select(g => g.First()).ToList();
+    }
 
-    private static void OpenRequest(ChandleryDbContext db, ProjectApprovalRequest request, List<ApprovalRule> chain)
+    /// <summary>What the budget holds in each category, with its contingency, for the category rules.</summary>
+    private static List<(string Category, decimal Amount)> CategoryAmounts(IEnumerable<ProjectBudgetLine> lines)
+        => lines.GroupBy(l => l.Category.Trim(), StringComparer.OrdinalIgnoreCase).Select(g => (g.Key, ProjectCostRules.Budget(g) + ProjectCostRules.Contingency(g))).ToList();
+
+    private static void OpenRequest(ChandleryDbContext db, ProjectApprovalRequest request, List<(string Scope, ApprovalRule Rule)> chain)
     {
         db.ProjectApprovalRequests.Add(request);
-        foreach (var rule in chain)
-            db.ProjectApprovalSlots.Add(new ProjectApprovalSlot { Id = Guid.CreateVersion7(), CompanyId = request.CompanyId, RequestId = request.Id, Level = rule.Level, ApproverUserId = rule.ApproverUserId });
+        foreach (var (scope, rule) in chain)
+            db.ProjectApprovalSlots.Add(new ProjectApprovalSlot { Id = Guid.CreateVersion7(), CompanyId = request.CompanyId, RequestId = request.Id, Level = rule.Level, ApproverUserId = rule.ApproverUserId, Category = scope });
     }
 
     /// <summary>
@@ -429,7 +455,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
 
         var lines = await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == projectId).ToListAsync();
         var (total, contingency) = (ProjectCostRules.Budget(lines), ProjectCostRules.Contingency(lines));
-        var chain = await ChainAsync(db, companyId, total + contingency);
+        var chain = await ChainAsync(db, companyId, total + contingency, CategoryAmounts(lines));
         var request = new ProjectApprovalRequest
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Budget, AmountUsd = total + contingency, ContingencyUsd = contingency,
@@ -447,11 +473,12 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
 
     /// <summary>
     /// Asks for extra work and money on an approved project: a variation. The same matrix decides who approves, by the variation's amount. When approved it adds a specification
-    /// item (so the yard and the vessel see the job) and a budget line (so the budget and what is left of it include it).
+    /// item (so the yard and the vessel see the job) and a budget line (so the budget and what is left of it include it). Given an existing job to change, it instead rewrites that
+    /// job's description (a job that turned out bigger than specified) and adds the budget line; a job that is already done or dropped cannot be changed this way.
     /// </summary>
-    public async Task<ProjectApprovalRequest> RequestVariationAsync(Guid companyId, Guid projectId, string group, string description, decimal amountUsd, string reason, Actor actor)
+    public async Task<ProjectApprovalRequest> RequestVariationAsync(Guid companyId, Guid projectId, string group, string description, decimal amountUsd, string reason, Actor actor, Guid? changesItemId = null)
     {
-        if (string.IsNullOrWhiteSpace(description)) throw new InvalidOperationException("Describe the extra work.");
+        if (string.IsNullOrWhiteSpace(description)) throw new InvalidOperationException(changesItemId is null ? "Describe the extra work." : "Describe the job as it now needs to read.");
         if (amountUsd <= 0) throw new InvalidOperationException("Enter the extra amount, above zero.");
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
@@ -459,11 +486,14 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         await RequireManagerAsync(db, companyId, actor);
         var (project, status) = await LoadEditableAsync(db, companyId, projectId);
         if (status is not (ProjectStatus.Approved or ProjectStatus.Ongoing)) throw new InvalidOperationException("A variation changes an approved project that has not yet finished; before that, change the budget.");
+        var target = changesItemId is { } tid ? project.Items.FirstOrDefault(i => i.Id == tid) ?? throw new InvalidOperationException("That job is not on this project.") : null;
+        if (target is { Status: not ProjectItemStatus.Open }) throw new InvalidOperationException("Only a job that is still open can be changed by a variation.");
 
         var chain = await ChainAsync(db, companyId, amountUsd);
         var request = new ProjectApprovalRequest
         {
-            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Variation, AmountUsd = amountUsd, Group = string.IsNullOrWhiteSpace(group) ? "Variations" : group.Trim(),
+            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Variation, AmountUsd = amountUsd,
+            Group = target?.Group ?? (string.IsNullOrWhiteSpace(group) ? "Variations" : group.Trim()), TargetItemId = target?.Id,
             Description = description.Trim(), Reason = (reason ?? "").Trim(), Status = chain.Count == 0 ? ProjectRequestStatus.Approved : ProjectRequestStatus.Pending,
             SubmittedByUserId = actor.UserId, SubmittedByName = actor.Name, SubmittedAt = DateTime.UtcNow,
         };
@@ -475,18 +505,70 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
 
     private static async Task ApplyVariationAsync(ChandleryDbContext db, Project project, ProjectApprovalRequest request)
     {
-        if (project.Items.Count >= MaxItems) throw new InvalidOperationException($"A project can hold at most {MaxItems} specification items.");
-        var item = new ProjectItem
+        ProjectItem item;
+        if (request.TargetItemId is { } targetId)
         {
-            Id = Guid.CreateVersion7(), Group = request.Group, Description = request.Description, Source = ProjectItemSource.Variation, SourceId = request.Id, SourceRef = "Variation",
-            Status = ProjectItemStatus.Open, SortOrder = project.Items.Count == 0 ? 0 : project.Items.Max(i => i.SortOrder) + 1,
-        };
-        project.Items.Add(item);
-        db.Entry(item).State = EntityState.Added;
-        var order = await db.ProjectBudgetLines.Where(l => l.ProjectId == project.Id).Select(l => (int?)l.SortOrder).MaxAsync() ?? -1;
-        var label = "Variation: " + request.Description;
-        db.ProjectBudgetLines.Add(new ProjectBudgetLine { Id = Guid.CreateVersion7(), CompanyId = project.CompanyId, ProjectId = project.Id, Category = label.Length > 100 ? label[..100] : label, PlannedUsd = request.AmountUsd, SortOrder = order + 1 });
+            item = project.Items.FirstOrDefault(i => i.Id == targetId) ?? throw new InvalidOperationException("The job this variation changes is no longer on the project.");
+            if (item.Status != ProjectItemStatus.Open) throw new InvalidOperationException("The job this variation changes is no longer open.");
+            item.Description = request.Description;
+        }
+        else
+        {
+            if (project.Items.Count >= MaxItems) throw new InvalidOperationException($"A project can hold at most {MaxItems} specification items.");
+            item = new ProjectItem
+            {
+                Id = Guid.CreateVersion7(), Group = request.Group, Description = request.Description, Source = ProjectItemSource.Variation, SourceId = request.Id, SourceRef = "Variation",
+                Status = ProjectItemStatus.Open, SortOrder = project.Items.Count == 0 ? 0 : project.Items.Max(i => i.SortOrder) + 1,
+            };
+            project.Items.Add(item);
+            db.Entry(item).State = EntityState.Added;
+        }
+        await AddBudgetLineAsync(db, project, "Variation: " + request.Description, request.AmountUsd);
         request.ItemId = item.Id;
+        request.ClosedAt = DateTime.UtcNow;
+    }
+
+    private static async Task AddBudgetLineAsync(ChandleryDbContext db, Project project, string label, decimal amountUsd)
+    {
+        var order = await db.ProjectBudgetLines.Where(l => l.ProjectId == project.Id).Select(l => (int?)l.SortOrder).MaxAsync() ?? -1;
+        db.ProjectBudgetLines.Add(new ProjectBudgetLine { Id = Guid.CreateVersion7(), CompanyId = project.CompanyId, ProjectId = project.Id, Category = label.Length > 100 ? label[..100] : label, PlannedUsd = amountUsd, SortOrder = order + 1 });
+    }
+
+    /// <summary>
+    /// Asks for more days in the yard on a drydock that has been approved. The matrix decides who approves, by the money the extension costs (nothing is fine: the lowest tier is used),
+    /// and an extension of more than <see cref="ExtensionSecondApprovalDays"/> days also needs the second step. When approved the planned end moves by that many days and any cost joins the budget.
+    /// </summary>
+    public async Task<ProjectApprovalRequest> RequestExtensionAsync(Guid companyId, Guid projectId, int extraDays, decimal amountUsd, string reason, Actor actor)
+    {
+        if (extraDays is < 1 or > 365) throw new InvalidOperationException("Ask for between 1 and 365 more days.");
+        if (amountUsd < 0) throw new InvalidOperationException("The extra cost cannot be negative.");
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        RequireOffice(db);
+        await RequireManagerAsync(db, companyId, actor);
+        var (project, status) = await LoadEditableAsync(db, companyId, projectId);
+        if (project.Type != ProjectType.Drydock) throw new InvalidOperationException("Only a drydock has a stay in the yard to extend; for another project, change the planned end.");
+        if (status is not (ProjectStatus.Approved or ProjectStatus.Ongoing)) throw new InvalidOperationException("An extension changes an approved project that has not yet finished; before that, change the planned dates.");
+        if (await db.ProjectApprovalRequests.AnyAsync(r => r.ProjectId == projectId && r.Kind == ProjectRequestKind.Extension && r.Status == ProjectRequestStatus.Pending))
+            throw new InvalidOperationException("An extension is already with the approvers.");
+
+        var chain = await ChainAsync(db, companyId, amountUsd, extraDays: extraDays);
+        var request = new ProjectApprovalRequest
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Extension, AmountUsd = amountUsd, ExtraDays = extraDays,
+            Description = $"Extend the stay by {extraDays} day{(extraDays == 1 ? "" : "s")}", Reason = (reason ?? "").Trim(), Status = chain.Count == 0 ? ProjectRequestStatus.Approved : ProjectRequestStatus.Pending,
+            SubmittedByUserId = actor.UserId, SubmittedByName = actor.Name, SubmittedAt = DateTime.UtcNow,
+        };
+        OpenRequest(db, request, chain);
+        if (chain.Count == 0) await ApplyExtensionAsync(db, project, request);
+        await db.SaveChangesAsync();
+        return request;
+    }
+
+    private static async Task ApplyExtensionAsync(ChandleryDbContext db, Project project, ProjectApprovalRequest request)
+    {
+        project.PlannedEnd = Day((project.PlannedEnd ?? DateTime.UtcNow).Date.AddDays(request.ExtraDays));
+        if (request.AmountUsd > 0) await AddBudgetLineAsync(db, project, request.Description, request.AmountUsd);
         request.ClosedAt = DateTime.UtcNow;
     }
 
@@ -516,8 +598,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         var request = await db.ProjectApprovalRequests.FirstOrDefaultAsync(r => r.Id == requestId && r.CompanyId == companyId) ?? throw new InvalidOperationException("Request not found.");
         if (request.Status != ProjectRequestStatus.Pending) throw new InvalidOperationException("This request is no longer waiting for approval.");
         var slots = await db.ProjectApprovalSlots.Where(s => s.RequestId == requestId).ToListAsync();
-        var current = ApprovalEngine.CurrentLevel(slots.Select(s => (s.Level, s.Decision))) ?? throw new InvalidOperationException("Nothing is waiting for approval.");
-        var mine = slots.FirstOrDefault(s => s.Level == current && s.ApproverUserId == userId && s.Decision == ApprovalDecision.Pending)
+        var mine = ProjectApprovalScopes.MyTurn(slots, userId)
             ?? throw new InvalidOperationException("It is not your turn to approve this request.");
         mine.Decision = approve ? ApprovalDecision.Approved : ApprovalDecision.Rejected;
         (mine.DecidedByUserId, mine.DecidedAt, mine.Comment) = (userId, DateTime.UtcNow, comment);
@@ -527,13 +608,15 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
             request.Status = ProjectRequestStatus.Rejected;
             request.ClosedAt = mine.DecidedAt;
         }
-        else if (ApprovalEngine.CurrentLevel(slots.Select(s => (s.Level, s.Decision))) is null)
+        else if (ProjectApprovalScopes.IsComplete(slots))
         {
             var (project, _) = await LoadEditableAsync(db, companyId, request.ProjectId);
             request.Status = ProjectRequestStatus.Approved;
             request.ClosedAt = mine.DecidedAt;
             if (request.Kind == ProjectRequestKind.Budget)
                 await RecordCoreAsync(db, companyId, request.ProjectId, ProjectEventKind.Approved, DateTime.UtcNow, "Approved through the approval matrix.", actor, throughMatrix: true);
+            else if (request.Kind == ProjectRequestKind.Extension)
+                await ApplyExtensionAsync(db, project, request);
             else
                 await ApplyVariationAsync(db, project, request);
         }
@@ -547,7 +630,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         db.CurrentCompanyId = companyId;
         if (db.Node.IsVessel) return false;
         var lines = await db.ProjectBudgetLines.AsNoTracking().Where(l => l.ProjectId == projectId).ToListAsync();
-        return (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines))).Count > 0;
+        return (await ChainAsync(db, companyId, ProjectCostRules.Budget(lines) + ProjectCostRules.Contingency(lines), CategoryAmounts(lines))).Count > 0;
     }
 
     public record ApprovalRequestView(ProjectApprovalRequest Request, List<ApprovalSlotView> Slots, bool YourTurn);
@@ -565,9 +648,8 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         var names = await db.Users.AsNoTracking().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.DisplayName);
         var levelNames = await ApprovalLevelNames.LoadAsync(db, companyId);
         return requests.Select(r => new ApprovalRequestView(r, slots[r.Id].Select(s => new ApprovalSlotView(s.Level, levelNames.Name(s.Level), names.GetValueOrDefault(s.ApproverUserId) ?? "?", s.Decision,
-            s.DecidedByUserId is { } d ? names.GetValueOrDefault(d) ?? "?" : "", s.DecidedAt, s.Comment)).ToList(),
-            r.Status == ProjectRequestStatus.Pending && forUserId is { } me && ApprovalEngine.CurrentLevel(slots[r.Id].Select(s => (s.Level, s.Decision))) is { } level
-                && slots[r.Id].Any(s => s.Level == level && s.ApproverUserId == me && s.Decision == ApprovalDecision.Pending))).ToList();
+            s.DecidedByUserId is { } d ? names.GetValueOrDefault(d) ?? "?" : "", s.DecidedAt, s.Comment, s.Category)).ToList(),
+            r.Status == ProjectRequestStatus.Pending && forUserId is { } me && ProjectApprovalScopes.MyTurn(slots[r.Id].ToList(), me) is not null)).ToList();
     }
 
     public record ProjectPendingRow(ProjectApprovalRequest Request, string ProjectCode, string ProjectTitle, int Level, string LevelName);
@@ -587,10 +669,10 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         var rows = new List<ProjectPendingRow>();
         foreach (var r in requests)
         {
-            var level = ApprovalEngine.CurrentLevel(slots[r.Id].Select(s => (s.Level, s.Decision)));
-            if (level is null || !slots[r.Id].Any(s => s.Level == level && s.ApproverUserId == userId && s.Decision == ApprovalDecision.Pending)) continue;
+            var turn = ProjectApprovalScopes.MyTurn(slots[r.Id].ToList(), userId);
+            if (turn is null) continue;
             var p = projects.GetValueOrDefault(r.ProjectId);
-            rows.Add(new ProjectPendingRow(r, p?.Code ?? "", p?.Title ?? "", level.Value, levelNames.Name(level.Value)));
+            rows.Add(new ProjectPendingRow(r, p?.Code ?? "", p?.Title ?? "", turn.Level, (turn.Category == "" ? "" : turn.Category + ": ") + levelNames.Name(turn.Level)));
         }
         return rows;
     }

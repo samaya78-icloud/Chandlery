@@ -116,6 +116,9 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<ProjectPhase> ProjectPhases => Set<ProjectPhase>();
     public DbSet<ProjectDocumentCheck> ProjectDocumentChecks => Set<ProjectDocumentCheck>();
     public DbSet<ProjectRiskLink> ProjectRiskLinks => Set<ProjectRiskLink>();
+    public DbSet<ProjectFile> ProjectFiles => Set<ProjectFile>();
+    public DbSet<ProjectGroup> ProjectGroups => Set<ProjectGroup>();
+    public DbSet<ProjectGroupMember> ProjectGroupMembers => Set<ProjectGroupMember>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<Requisition> Requisitions => Set<Requisition>();
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -375,6 +378,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Department>().WithMany().HasForeignKey(r => r.DepartmentId).OnDelete(DeleteBehavior.Cascade);
             b.HasOne<AppUser>().WithMany().HasForeignKey(r => r.ApproverUserId).OnDelete(DeleteBehavior.Restrict);
             b.Property(r => r.UpToAmount).HasPrecision(18, 2);
+            b.Property(r => r.ProjectCategory).HasMaxLength(100);
             b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
         });
 
@@ -1094,6 +1098,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         modelBuilder.Entity<ProjectApprovalSlot>(b =>
         {
             b.Property(s => s.Comment).HasMaxLength(1000);
+            b.Property(s => s.Category).HasMaxLength(100);
             b.HasOne<Company>().WithMany().HasForeignKey(s => s.CompanyId).OnDelete(DeleteBehavior.Cascade);
             b.HasOne<ProjectApprovalRequest>().WithMany().HasForeignKey(s => s.RequestId).OnDelete(DeleteBehavior.Cascade);
             b.HasIndex(s => s.RequestId);
@@ -1160,6 +1165,36 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Project>().WithMany().HasForeignKey(r => r.ProjectId).OnDelete(DeleteBehavior.Cascade);
             b.HasIndex(r => new { r.ProjectId, r.AssessmentCode }).IsUnique();
             b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        // ---- Projects J10: files and groups (office only) ----
+        modelBuilder.Entity<ProjectFile>(b =>
+        {
+            b.Property(f => f.FileName).HasMaxLength(260);
+            b.Property(f => f.ContentType).HasMaxLength(100);
+            b.Property(f => f.StoredKey).HasMaxLength(200);
+            b.Property(f => f.UploadedByName).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(f => f.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Project>().WithMany().HasForeignKey(f => f.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(f => f.ProjectId);
+            b.HasQueryFilter(f => CurrentCompanyId == null || f.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectGroup>(b =>
+        {
+            b.Property(g => g.Name).HasMaxLength(150);
+            b.Property(g => g.Note).HasMaxLength(1000);
+            b.Property(g => g.CreatedByName).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(g => g.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(g => new { g.CompanyId, g.Name });
+            b.HasQueryFilter(g => CurrentCompanyId == null || g.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ProjectGroupMember>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(m => m.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<ProjectGroup>().WithMany().HasForeignKey(m => m.GroupId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Project>().WithMany().HasForeignKey(m => m.ProjectId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(m => m.ProjectId).IsUnique();
+            b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
         });
 
         modelBuilder.Entity<PoDispatch>(b =>

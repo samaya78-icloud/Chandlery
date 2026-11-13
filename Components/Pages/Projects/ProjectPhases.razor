@@ -59,7 +59,7 @@
             <p class="mb-4 text-xs text-muted">Blue is the plan, orange is work still going and green is work that has ended; the red line is today and “+ d” is how many days a phase has slipped.</p>
         }
 
-        <table class="w-full text-sm">
+        <div class="overflow-x-auto"><table class="w-full text-sm">
             <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Phase</th><th class="p-2">Planned start</th><th class="p-2">Planned end</th><th class="p-2">Actual start</th><th class="p-2">Actual end</th><th class="p-2"></th></tr></thead>
             <tbody class="divide-y divide-line/60">
                 @foreach (var row in _rows)
@@ -74,7 +74,7 @@
                     </tr>
                 }
             </tbody>
-        </table>
+        </table></div>
     }
 </section>
 

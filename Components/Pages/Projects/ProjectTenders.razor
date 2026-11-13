@@ -75,6 +75,25 @@
                         {
                             <tr><td colspan="6" class="px-2 pb-2 text-xs text-muted">@v.YardName declined: @t.Remarks</td></tr>
                         }
+                        @if (t.Status is not (TenderStatus.Declined) && (CanEdit || FilesOf(t.Id).Any()))
+                        {
+                            <tr>
+                                <td colspan="6" class="px-2 pb-3">
+                                    <span class="mr-2 text-xs text-muted">Quotation files:</span>
+                                    @foreach (var f in FilesOf(t.Id))
+                                    {
+                                        <span class="mr-2 inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1 text-xs">
+                                            <a href="/files/project/@f.Id" target="_blank" class="link" title="@(f.UploadedByName + " · " + f.UploadedAt.ToString("d MMM yyyy"))">@f.FileName</a>
+                                            @if (CanEdit) { <button type="button" @onclick="() => DeleteFile(f.Id)" class="text-slate-400 hover:text-rose-500" title="Remove">&#10005;</button> }
+                                        </span>
+                                    }
+                                    @if (CanEdit)
+                                    {
+                                        <FilePicker Files="PendingFor(t.Id)" OnChanged="() => UploadPending(t.Id)" Compact="true" AllowShare="false" />
+                                    }
+                                </td>
+                            </tr>
+                        }
                     }
                 </tbody>
             </table>
@@ -189,6 +208,23 @@
     private decimal _qOther;
     private readonly Dictionary<Guid, decimal?> _qPrices = [];
 
+    private List<ProjectFileView> _files = [];
+    private readonly Dictionary<Guid, List<PendingAttachment>> _pending = [];
+
+    private IEnumerable<ProjectFileView> FilesOf(Guid tenderId) => _files.Where(f => f.TenderId == tenderId);
+
+    private List<PendingAttachment> PendingFor(Guid tenderId) => _pending.TryGetValue(tenderId, out var list) ? list : _pending[tenderId] = [];
+
+    /// <summary>The picker only collects; each file is saved as soon as it is picked and the picker's list is emptied.</summary>
+    private async Task UploadPending(Guid tenderId)
+    {
+        var list = PendingFor(tenderId).ToList();
+        PendingFor(tenderId).Clear();
+        await Run(async () => { foreach (var file in list) await Planning.AddFileAsync(CompanyId, ProjectId, tenderId, file, User); }, list.Count == 0 ? null : "File kept");
+    }
+
+    private Task DeleteFile(Guid id) => Run(() => Planning.DeleteFileAsync(CompanyId, id, User));
+
     private IEnumerable<ProjectItem> LiveItems => Items.Where(i => i.Status != ProjectItemStatus.Dropped).OrderBy(i => i.SortOrder);
 
     protected override async Task OnParametersSetAsync() => await LoadAsync();
@@ -200,6 +236,7 @@
         var invited = _tenders.Select(t => t.Tender.YardId).ToHashSet();
         _openYards = _allYards.Where(y => y.IsActive && !invited.Contains(y.Id)).ToList();
         _comparison = await Planning.CompareAsync(CompanyId, ProjectId);
+        _files = await Planning.FilesAsync(CompanyId, ProjectId);
     }
 
     private async Task Run(Func<Task> action, string? success = null)
