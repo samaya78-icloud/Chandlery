@@ -249,6 +249,9 @@ public class ProjectApprovalRequest
 
     /// <summary>For an extension: the days asked for. The planned end moves by this many days when it is approved.</summary>
     public int ExtraDays { get; set; }
+
+    /// <summary>For a variation or extension: the budget category its money belongs to, so the matrix rules for that category apply and the budget line lands in it. Empty for none.</summary>
+    public string Category { get; set; } = "";
 }
 
 /// <summary>One approver's slot on a project request, the same shape as on a purchase order.</summary>

@@ -5,7 +5,8 @@ public enum UserRole
     CompanyAdmin,
     CompanyUser,
     SupplierAdmin,
-    SupplierUser
+    SupplierUser,
+    YardUser
 }
 
 public class AppUser
@@ -22,6 +23,9 @@ public class AppUser
 
     /// <summary>Set for Supplier* roles — links them to their (platform-shared) Supplier record.</summary>
     public Guid? SupplierId { get; set; }
+
+    /// <summary>Set for the Yard role: the shipyard this login quotes for. A yard login has no company claim, so it can never reach the company's own pages or files.</summary>
+    public Guid? YardId { get; set; }
 
     /// <summary>Sign-in name for people without an email (crew onboard sign in with their crew code). Null for everyone else.</summary>
     public string? LoginName { get; set; }
@@ -40,4 +44,5 @@ public class AppUser
 
     public bool IsCompanyRole => Role is UserRole.CompanyAdmin or UserRole.CompanyUser;
     public bool IsSupplierRole => Role is UserRole.SupplierAdmin or UserRole.SupplierUser;
+    public bool IsYardRole => Role == UserRole.YardUser;
 }

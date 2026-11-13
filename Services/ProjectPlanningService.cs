@@ -123,17 +123,27 @@ public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factor
         if (input.OtherChargesUsd < 0 || input.Lines.Values.Any(v => v < 0)) throw new InvalidOperationException("A price cannot be negative.");
         await using var db = await OfficeAsync(companyId, actor);
         var (tender, project) = await LoadTenderAsync(db, companyId, tenderId);
+        await ApplyQuoteAsync(db, companyId, tender, project, input, byYard: false);
+        await db.SaveChangesAsync();
+        return tender;
+    }
+
+    /// <summary>
+    /// The one place a quote is written, for the office typing it in and for a yard entering its own: the same checks (a yard still being considered, prices only for live jobs on this project,
+    /// something priced), the lines replaced, and the tender marked quoted. The caller has already checked who may do it and saves.
+    /// </summary>
+    internal static async Task ApplyQuoteAsync(ChandleryDbContext db, Guid companyId, ProjectTender tender, Project project, TenderQuoteInput input, bool byYard)
+    {
+        if (input.OtherChargesUsd < 0 || input.Lines.Values.Any(v => v < 0)) throw new InvalidOperationException("A price cannot be negative.");
         if (tender.Status is not (TenderStatus.Invited or TenderStatus.Quoted)) throw new InvalidOperationException("Only a yard that is still being considered can have its quote changed.");
         var live = project.Items.Where(i => i.Status != ProjectItemStatus.Dropped).Select(i => i.Id).ToHashSet();
         var priced = input.Lines.Where(kv => kv.Value is not null).ToList();
         if (priced.Any(kv => !live.Contains(kv.Key))) throw new InvalidOperationException("A price was given for an item that is not on this project.");
         if (priced.Count == 0 && input.OtherChargesUsd == 0) throw new InvalidOperationException("Enter at least one price before saving the quote.");
-        db.ProjectTenderLines.RemoveRange(await db.ProjectTenderLines.Where(l => l.TenderId == tenderId).ToListAsync());
-        foreach (var kv in priced) db.ProjectTenderLines.Add(new ProjectTenderLine { Id = Guid.CreateVersion7(), CompanyId = companyId, TenderId = tenderId, ItemId = kv.Key, AmountUsd = kv.Value!.Value });
-        (tender.Status, tender.QuotedAt, tender.YardReference, tender.ValidUntil, tender.OtherChargesUsd, tender.Remarks) =
-            (TenderStatus.Quoted, DateTime.UtcNow, input.YardReference.Trim(), Day(input.ValidUntil), input.OtherChargesUsd, input.Remarks.Trim());
-        await db.SaveChangesAsync();
-        return tender;
+        db.ProjectTenderLines.RemoveRange(await db.ProjectTenderLines.Where(l => l.TenderId == tender.Id).ToListAsync());
+        foreach (var kv in priced) db.ProjectTenderLines.Add(new ProjectTenderLine { Id = Guid.CreateVersion7(), CompanyId = companyId, TenderId = tender.Id, ItemId = kv.Key, AmountUsd = kv.Value!.Value });
+        (tender.Status, tender.QuotedAt, tender.YardReference, tender.ValidUntil, tender.OtherChargesUsd, tender.Remarks, tender.QuotedByYard) =
+            (TenderStatus.Quoted, DateTime.UtcNow, (input.YardReference ?? "").Trim(), Day(input.ValidUntil), input.OtherChargesUsd, (input.Remarks ?? "").Trim(), byYard);
     }
 
     /// <summary>The yard will not quote.</summary>
@@ -169,7 +179,7 @@ public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factor
         if (lines.Count == 0 && tender.OtherChargesUsd == 0) throw new InvalidOperationException("This yard has not priced anything.");
         var yard = await db.ProjectYards.FirstAsync(y => y.Id == tender.YardId);
 
-        foreach (var other in await db.ProjectTenders.Where(t => t.ProjectId == tender.ProjectId && t.Id != tenderId && (t.Status == TenderStatus.Quoted || t.Status == TenderStatus.Awarded)).ToListAsync())
+        foreach (var other in await db.ProjectTenders.Where(t => t.ProjectId == tender.ProjectId && t.Id != tenderId && (t.Status == TenderStatus.Invited || t.Status == TenderStatus.Quoted || t.Status == TenderStatus.Awarded)).ToListAsync())
             (other.Status, other.AwardedAt, other.AwardedByName) = (TenderStatus.NotAwarded, null, "");
         (tender.Status, tender.AwardedAt, tender.AwardedByName) = (TenderStatus.Awarded, DateTime.UtcNow, actor.Name);
         project.Yard = yard.Name;
@@ -351,6 +361,13 @@ public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factor
         await using var db = await OfficeAsync(companyId, actor);
         await ProjectService.LoadEditableAsync(db, companyId, projectId);
         if (tenderId is { } tid && !await db.ProjectTenders.AnyAsync(t => t.Id == tid && t.ProjectId == projectId)) throw new InvalidOperationException("That tender is not on this project.");
+        return await StoreFileAsync(db, files, companyId, projectId, tenderId, file, actor.Name);
+    }
+
+    /// <summary>Saves the bytes and the record, for the office and for a yard alike. The caller has checked who may add to this place; this checks the type, size and the limit for it.</summary>
+    internal static async Task<ProjectFile> StoreFileAsync(ChandleryDbContext db, IFileStore files, Guid companyId, Guid projectId, Guid? tenderId, PendingAttachment file, string uploadedBy)
+    {
+        AttachmentRules.Validate(file);
         if (await db.ProjectFiles.CountAsync(f => f.ProjectId == projectId && f.TenderId == tenderId) >= AttachmentRules.MaxPerTarget)
             throw new InvalidOperationException($"You can keep up to {AttachmentRules.MaxPerTarget} files here.");
         var name = Path.GetFileName(file.FileName);
@@ -359,7 +376,7 @@ public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factor
         var row = new ProjectFile
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, TenderId = tenderId, FileName = name, ContentType = AttachmentRules.ContentTypeFor(name),
-            SizeBytes = file.Data.LongLength, StoredKey = key, UploadedByName = actor.Name, UploadedAt = DateTime.UtcNow,
+            SizeBytes = file.Data.LongLength, StoredKey = key, UploadedByName = uploadedBy, UploadedAt = DateTime.UtcNow,
         };
         db.ProjectFiles.Add(row);
         await db.SaveChangesAsync();
@@ -451,6 +468,117 @@ public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factor
         var member = await db.ProjectGroupMembers.FirstOrDefaultAsync(m => m.ProjectId == projectId && m.CompanyId == companyId);
         if (member is null) return;
         db.ProjectGroupMembers.Remove(member);
+        await db.SaveChangesAsync();
+    }
+
+    // ---- tendering a whole group ----
+
+    private static async Task<List<Guid>> MemberIdsAsync(ChandleryDbContext db, Guid companyId, Guid groupId)
+    {
+        if (!await db.ProjectGroups.AnyAsync(g => g.Id == groupId && g.CompanyId == companyId)) throw new InvalidOperationException("Group not found.");
+        return await db.ProjectGroupMembers.Where(m => m.GroupId == groupId).Select(m => m.ProjectId).ToListAsync();
+    }
+
+    /// <summary>Each yard's quotes added up across the group's projects.</summary>
+    public async Task<List<GroupYardColumn>> GroupYardsAsync(Guid companyId, Guid groupId)
+    {
+        List<Guid> members;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = companyId;
+            members = await MemberIdsAsync(db, companyId, groupId);
+        }
+        var comparisons = new List<TenderComparison>();
+        foreach (var id in members) comparisons.Add(await CompareAsync(companyId, id));
+        return comparisons.Count == 0 ? [] : ProjectGroupTenderRules.CompareYards(comparisons);
+    }
+
+    /// <summary>Invites a yard to quote for every member project that is still being planned or run, once. Members the yard was already invited to, or that are complete or closed, are skipped and named.</summary>
+    public async Task<(int Invited, List<string> Skipped)> InviteGroupAsync(Guid companyId, Guid groupId, Guid yardId, Actor actor)
+    {
+        List<(Guid Id, string Code)> members;
+        await using (var db = await OfficeAsync(companyId, actor))
+        {
+            var ids = await MemberIdsAsync(db, companyId, groupId);
+            members = (await db.Projects.AsNoTracking().Where(p => ids.Contains(p.Id)).ToListAsync()).Select(p => (p.Id, p.Code)).OrderBy(p => p.Code).ToList();
+        }
+        if (members.Count == 0) throw new InvalidOperationException("Add projects to the group before inviting yards.");
+        var invited = 0;
+        var skipped = new List<string>();
+        foreach (var (id, code) in members)
+        {
+            try { await InviteAsync(companyId, id, yardId, actor); invited++; }
+            catch (InvalidOperationException ex) { skipped.Add($"{code}: {ex.Message}"); }
+        }
+        if (invited == 0) throw new InvalidOperationException(string.Join(" ", skipped));
+        return (invited, skipped);
+    }
+
+    /// <summary>Awards every member project to one yard. Every member must have a quote from it; if one does not, nothing is awarded and the project is named.</summary>
+    public async Task<int> AwardGroupAsync(Guid companyId, Guid groupId, Guid yardId, Actor actor)
+    {
+        List<ProjectTender> tenders;
+        await using (var db = await OfficeAsync(companyId, actor))
+        {
+            var ids = await MemberIdsAsync(db, companyId, groupId);
+            if (ids.Count == 0) throw new InvalidOperationException("The group has no projects.");
+            var projects = await db.Projects.AsNoTracking().Where(p => ids.Contains(p.Id)).ToDictionaryAsync(p => p.Id, p => p.Code);
+            var found = await db.ProjectTenders.AsNoTracking().Where(t => ids.Contains(t.ProjectId) && t.YardId == yardId).ToListAsync();
+            foreach (var id in ids)
+            {
+                var t = found.FirstOrDefault(x => x.ProjectId == id);
+                if (t is null || t.Status is not (TenderStatus.Quoted or TenderStatus.NotAwarded or TenderStatus.Awarded)) throw new InvalidOperationException($"{projects.GetValueOrDefault(id)} has no quote from this yard, so the group cannot be awarded to it.");
+            }
+            tenders = found;
+        }
+        foreach (var t in tenders) await AwardAsync(companyId, t.Id, actor);
+        return tenders.Count;
+    }
+
+    // ---- yard logins (the yard enters its own quotes through the yard portal) ----
+
+    private static readonly Microsoft.AspNetCore.Identity.PasswordHasher<AppUser> Hasher = new();
+
+    public record YardLogin(Guid UserId, string Email, string DisplayName, bool IsEnabled);
+
+    public async Task<List<YardLogin>> YardLoginsAsync(Guid companyId, Guid yardId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return (await db.Users.AsNoTracking().Where(u => u.CompanyId == companyId && u.YardId == yardId).OrderBy(u => u.Email).ToListAsync())
+            .Select(u => new YardLogin(u.Id, u.Email, u.DisplayName, u.IsEnabled)).ToList();
+    }
+
+    /// <summary>
+    /// Gives a yard a login. The person must choose their own password at first sign-in. A yard login has the Yard role and no company claim: it sees only the tenders its yard
+    /// was invited to, and what it enters, and nothing else of the company's.
+    /// </summary>
+    public async Task<YardLogin> CreateYardLoginAsync(Guid companyId, Guid yardId, string email, string displayName, string temporaryPassword, Actor actor)
+    {
+        email = (email ?? "").Trim();
+        displayName = (displayName ?? "").Trim();
+        if (!email.Contains('@') || email.Length < 5) throw new InvalidOperationException("Enter the person's email address.");
+        if (displayName == "") throw new InvalidOperationException("Enter the person's name.");
+        if ((temporaryPassword ?? "").Length < 8) throw new InvalidOperationException("The temporary password needs at least 8 characters.");
+        await using var db = await OfficeAsync(companyId, actor);
+        if (!await db.ProjectYards.AnyAsync(y => y.Id == yardId && y.CompanyId == companyId && y.IsActive)) throw new InvalidOperationException("Choose a yard from the list.");
+        if (await db.Users.IgnoreQueryFilters().AnyAsync(u => u.Email.ToLower() == email.ToLower())) throw new InvalidOperationException("Someone already signs in with that email address.");
+        var user = new AppUser
+        {
+            Id = Guid.CreateVersion7(), Email = email, DisplayName = displayName, Role = UserRole.YardUser, CompanyId = companyId, YardId = yardId,
+            CreatedAt = DateTime.UtcNow, MustChangePassword = true, IsEnabled = true,
+        };
+        user.PasswordHash = Hasher.HashPassword(user, temporaryPassword!);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        return new YardLogin(user.Id, user.Email, user.DisplayName, true);
+    }
+
+    public async Task SetYardLoginEnabledAsync(Guid companyId, Guid userId, bool enabled, Actor actor)
+    {
+        await using var db = await OfficeAsync(companyId, actor);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId && u.CompanyId == companyId && u.Role == UserRole.YardUser) ?? throw new InvalidOperationException("Login not found.");
+        user.IsEnabled = enabled;
         await db.SaveChangesAsync();
     }
 }

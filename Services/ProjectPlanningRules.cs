@@ -115,3 +115,26 @@ public static class ProjectGroupRules
             rows.Sum(r => r.Row.ItemsDone), rows.Sum(r => r.Row.ItemsDone + r.Row.ItemsOpen), spans.Count == 0 ? null : spans.Min(s => s.Start), spans.Count == 0 ? null : spans.Max(s => s.End), overall);
     }
 }
+
+/// <summary>One yard across the whole group: how many member projects it has quoted, what those quotes add up to, and whether it can be compared and awarded as a whole.</summary>
+public record GroupYardColumn(Guid YardId, string YardName, int Members, int Quoted, decimal Total, bool Complete, bool IsLowest, bool Awarded);
+
+public static class ProjectGroupTenderRules
+{
+    /// <summary>
+    /// Adds each yard's quotes up across the group's projects. A yard is complete only when it has quoted every member and priced every job of each; the lowest total
+    /// is picked among complete yards only, as for one project. A yard is awarded when it holds the award on every member.
+    /// </summary>
+    public static List<GroupYardColumn> CompareYards(IReadOnlyList<TenderComparison> members)
+    {
+        var yards = members.SelectMany(m => m.Columns).GroupBy(c => c.YardId).ToList();
+        var columns = yards.Select(g =>
+        {
+            var cols = g.ToList();
+            var complete = cols.Count == members.Count && cols.All(c => c.Unpriced == 0);
+            return new GroupYardColumn(g.Key, cols[0].YardName, members.Count, cols.Count, cols.Sum(c => c.Total), complete, false, cols.Count == members.Count && cols.All(c => c.Status == TenderStatus.Awarded));
+        }).ToList();
+        var lowest = columns.Where(c => c.Complete).Select(c => (decimal?)c.Total).DefaultIfEmpty().Min();
+        return columns.Select(c => c with { IsLowest = lowest is { } l && c.Complete && c.Total == l }).OrderBy(c => c.YardName, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+}

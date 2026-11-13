@@ -39,6 +39,9 @@ public class ProjectTender
     public string Remarks { get; set; } = "";
     public DateTime? AwardedAt { get; set; }
     public string AwardedByName { get; set; } = "";
+
+    /// <summary>True when the yard entered this quote itself through its own login, rather than the office typing it in.</summary>
+    public bool QuotedByYard { get; set; }
 }
 
 /// <summary>What a yard quoted for one specification item.</summary>

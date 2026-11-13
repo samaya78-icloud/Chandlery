@@ -87,12 +87,17 @@ namespace Chandlery.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(1);
 
+                    b.Property<Guid?>("YardId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Email")
                         .IsUnique();
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("YardId");
 
                     b.HasIndex("CompanyId", "LoginName")
                         .IsUnique()
@@ -3077,6 +3082,11 @@ namespace Chandlery.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<DateTime?>("ClosedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -4268,6 +4278,9 @@ namespace Chandlery.Migrations
 
                     b.Property<DateTime?>("QuotedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("QuotedByYard")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Remarks")
                         .IsRequired()
@@ -7743,6 +7756,11 @@ namespace Chandlery.Migrations
                     b.HasOne("Chandlery.Models.Supplier", null)
                         .WithMany()
                         .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Chandlery.Models.ProjectYard", null)
+                        .WithMany()
+                        .HasForeignKey("YardId")
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 

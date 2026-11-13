@@ -476,7 +476,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
     /// item (so the yard and the vessel see the job) and a budget line (so the budget and what is left of it include it). Given an existing job to change, it instead rewrites that
     /// job's description (a job that turned out bigger than specified) and adds the budget line; a job that is already done or dropped cannot be changed this way.
     /// </summary>
-    public async Task<ProjectApprovalRequest> RequestVariationAsync(Guid companyId, Guid projectId, string group, string description, decimal amountUsd, string reason, Actor actor, Guid? changesItemId = null)
+    public async Task<ProjectApprovalRequest> RequestVariationAsync(Guid companyId, Guid projectId, string group, string description, decimal amountUsd, string reason, Actor actor, Guid? changesItemId = null, string category = "")
     {
         if (string.IsNullOrWhiteSpace(description)) throw new InvalidOperationException(changesItemId is null ? "Describe the extra work." : "Describe the job as it now needs to read.");
         if (amountUsd <= 0) throw new InvalidOperationException("Enter the extra amount, above zero.");
@@ -489,11 +489,12 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         var target = changesItemId is { } tid ? project.Items.FirstOrDefault(i => i.Id == tid) ?? throw new InvalidOperationException("That job is not on this project.") : null;
         if (target is { Status: not ProjectItemStatus.Open }) throw new InvalidOperationException("Only a job that is still open can be changed by a variation.");
 
-        var chain = await ChainAsync(db, companyId, amountUsd);
+        category = (category ?? "").Trim();
+        var chain = await ChainAsync(db, companyId, amountUsd, category == "" ? null : new List<(string Category, decimal Amount)> { (category, amountUsd) });
         var request = new ProjectApprovalRequest
         {
             Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Variation, AmountUsd = amountUsd,
-            Group = target?.Group ?? (string.IsNullOrWhiteSpace(group) ? "Variations" : group.Trim()), TargetItemId = target?.Id,
+            Group = target?.Group ?? (string.IsNullOrWhiteSpace(group) ? "Variations" : group.Trim()), TargetItemId = target?.Id, Category = category,
             Description = description.Trim(), Reason = (reason ?? "").Trim(), Status = chain.Count == 0 ? ProjectRequestStatus.Approved : ProjectRequestStatus.Pending,
             SubmittedByUserId = actor.UserId, SubmittedByName = actor.Name, SubmittedAt = DateTime.UtcNow,
         };
@@ -523,7 +524,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
             project.Items.Add(item);
             db.Entry(item).State = EntityState.Added;
         }
-        await AddBudgetLineAsync(db, project, "Variation: " + request.Description, request.AmountUsd);
+        await AddBudgetLineAsync(db, project, request.Category != "" ? request.Category : "Variation: " + request.Description, request.AmountUsd);
         request.ItemId = item.Id;
         request.ClosedAt = DateTime.UtcNow;
     }
@@ -538,7 +539,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
     /// Asks for more days in the yard on a drydock that has been approved. The matrix decides who approves, by the money the extension costs (nothing is fine: the lowest tier is used),
     /// and an extension of more than <see cref="ExtensionSecondApprovalDays"/> days also needs the second step. When approved the planned end moves by that many days and any cost joins the budget.
     /// </summary>
-    public async Task<ProjectApprovalRequest> RequestExtensionAsync(Guid companyId, Guid projectId, int extraDays, decimal amountUsd, string reason, Actor actor)
+    public async Task<ProjectApprovalRequest> RequestExtensionAsync(Guid companyId, Guid projectId, int extraDays, decimal amountUsd, string reason, Actor actor, string category = "")
     {
         if (extraDays is < 1 or > 365) throw new InvalidOperationException("Ask for between 1 and 365 more days.");
         if (amountUsd < 0) throw new InvalidOperationException("The extra cost cannot be negative.");
@@ -552,10 +553,11 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         if (await db.ProjectApprovalRequests.AnyAsync(r => r.ProjectId == projectId && r.Kind == ProjectRequestKind.Extension && r.Status == ProjectRequestStatus.Pending))
             throw new InvalidOperationException("An extension is already with the approvers.");
 
-        var chain = await ChainAsync(db, companyId, amountUsd, extraDays: extraDays);
+        category = (category ?? "").Trim();
+        var chain = await ChainAsync(db, companyId, amountUsd, amountUsd > 0 && category != "" ? new List<(string Category, decimal Amount)> { (category, amountUsd) } : null, extraDays);
         var request = new ProjectApprovalRequest
         {
-            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Extension, AmountUsd = amountUsd, ExtraDays = extraDays,
+            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, Kind = ProjectRequestKind.Extension, AmountUsd = amountUsd, ExtraDays = extraDays, Category = category,
             Description = $"Extend the stay by {extraDays} day{(extraDays == 1 ? "" : "s")}", Reason = (reason ?? "").Trim(), Status = chain.Count == 0 ? ProjectRequestStatus.Approved : ProjectRequestStatus.Pending,
             SubmittedByUserId = actor.UserId, SubmittedByName = actor.Name, SubmittedAt = DateTime.UtcNow,
         };
@@ -568,7 +570,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
     private static async Task ApplyExtensionAsync(ChandleryDbContext db, Project project, ProjectApprovalRequest request)
     {
         project.PlannedEnd = Day((project.PlannedEnd ?? DateTime.UtcNow).Date.AddDays(request.ExtraDays));
-        if (request.AmountUsd > 0) await AddBudgetLineAsync(db, project, request.Description, request.AmountUsd);
+        if (request.AmountUsd > 0) await AddBudgetLineAsync(db, project, request.Category != "" ? request.Category : request.Description, request.AmountUsd);
         request.ClosedAt = DateTime.UtcNow;
     }
 

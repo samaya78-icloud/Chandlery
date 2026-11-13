@@ -56,6 +56,7 @@ builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<RiskAssessmentService>();
 builder.Services.AddScoped<ProjectService>();
 builder.Services.AddScoped<ProjectPlanningService>();
+builder.Services.AddScoped<YardPortalService>();
 builder.Services.AddScoped<RiskLibraryService>();
 builder.Services.AddScoped<TankTrendService>();
 builder.Services.AddSingleton<SyncStatusService>();
@@ -161,8 +162,13 @@ static List<Claim> BuildClaims(AppUser user, bool crewAdmin = false)
         new(ClaimTypes.Email, user.Email),
         new(ClaimTypes.Role, user.Role.ToString()),
     };
-    if (user.CompanyId.HasValue)
+    if (user.CompanyId.HasValue && !user.IsYardRole)
         claims.Add(new Claim("CompanyId", user.CompanyId.Value.ToString()));
+    if (user.IsYardRole && user.YardId.HasValue && user.CompanyId.HasValue)
+    {
+        claims.Add(new Claim("YardId", user.YardId.Value.ToString()));
+        claims.Add(new Claim("YardCompanyId", user.CompanyId.Value.ToString()));
+    }
     if (user.SupplierId.HasValue)
         claims.Add(new Claim("SupplierId", user.SupplierId.Value.ToString()));
     if (user.LoginName is not null) claims.Add(new Claim("Crew", "true"));
@@ -171,7 +177,7 @@ static List<Claim> BuildClaims(AppUser user, bool crewAdmin = false)
     return claims;
 }
 
-static string DefaultHomeFor(UserRole role) => "/";
+static string DefaultHomeFor(UserRole role) => role == UserRole.YardUser ? "/yard" : "/";
 
 app.MapPost("/account/login", async (HttpContext http, ProcurementService procurement, CrewService crew, IAntiforgery antiforgery, LoginThrottle throttle) =>
 {
@@ -229,7 +235,12 @@ app.MapPost("/account/change-password", async (HttpContext http, CrewService cre
     if (next != form["confirm"].ToString()) return Results.Redirect("/change-password?error=match");
     try
     {
-        if (!await crew.ChangeOwnPasswordAsync(userId, form["current"].ToString(), next)) return Results.Redirect("/change-password?error=current");
+        // Crew accounts keep their own record to update (and sync); every other account (a yard's login, for one) changes its password directly.
+        var account = await procurement.FindUserByIdAsync(userId);
+        var changed = account?.LoginName is not null
+            ? await crew.ChangeOwnPasswordAsync(userId, form["current"].ToString(), next)
+            : await procurement.ChangeOwnPasswordAsync(userId, form["current"].ToString(), next);
+        if (!changed) return Results.Redirect("/change-password?error=current");
     }
     catch (InvalidOperationException) { return Results.Redirect("/change-password?error=short"); }
 
@@ -238,7 +249,7 @@ app.MapPost("/account/change-password", async (HttpContext http, CrewService cre
     if (user is null) return Results.Redirect("/login");
     var identity = new ClaimsIdentity(BuildClaims(user, await crew.IsCrewAdminAsync(user.Id)), CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
-    return Results.Redirect("/");
+    return Results.Redirect(DefaultHomeFor(user.Role));
 }).RequireAuthorization();
 
 app.MapPost("/account/register", async (HttpContext http, ProcurementService procurement, IAntiforgery antiforgery) =>
@@ -548,6 +559,19 @@ app.MapGet("/files/project/{fileId:guid}", async (Guid fileId, bool? download, H
         ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
         : Results.File(found.Value.Content, found.Value.File.ContentType);
 }).RequireAuthorization();
+
+// A yard's own quotation files: only a yard login, only the files on its own tenders. A yard login has no company claim, so it can reach no other file endpoint.
+app.MapGet("/yard/files/{fileId:guid}", async (Guid fileId, bool? download, HttpContext http, YardPortalService portal) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("YardId")?.Value, out var yardId) || !Guid.TryParse(http.User.FindFirst("YardCompanyId")?.Value, out var companyId)) return Results.NotFound();
+    var found = await portal.OpenFileAsync(companyId, yardId, fileId);
+    if (found is null) return Results.NotFound();
+    http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    if (found.Value.File.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
+    return download == true
+        ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
+        : Results.File(found.Value.Content, found.Value.File.ContentType);
+}).RequireAuthorization(policy => policy.RequireRole("YardUser"));
 
 // This installation's permanent node id (shore by default, set Platform:Profile=Vessel onboard). Records are stamped with it.
 static async Task EnsureNodeAsync(ChandleryDbContext db, IConfiguration config)

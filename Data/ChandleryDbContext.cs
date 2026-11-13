@@ -184,6 +184,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasIndex(u => new { u.CompanyId, u.LoginName }).IsUnique().HasFilter("\"LoginName\" IS NOT NULL");
             b.HasOne<Company>().WithMany().HasForeignKey(u => u.CompanyId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Supplier>().WithMany().HasForeignKey(u => u.SupplierId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<ProjectYard>().WithMany().HasForeignKey(u => u.YardId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(u => u.YardId);
         });
 
         modelBuilder.Entity<CompanySupplier>(b =>
@@ -1062,6 +1064,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         {
             b.Property(r => r.AmountUsd).HasPrecision(18, 2);
             b.Property(r => r.ContingencyUsd).HasPrecision(18, 2);
+            b.Property(r => r.Category).HasMaxLength(100);
             b.Property(r => r.Group).HasMaxLength(100);
             b.Property(r => r.Description).HasMaxLength(1000);
             b.Property(r => r.Reason).HasMaxLength(1000);
