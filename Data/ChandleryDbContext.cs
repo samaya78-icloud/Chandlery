@@ -75,6 +75,16 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<MeetingNote> MeetingNotes => Set<MeetingNote>();
     public DbSet<MeetingComment> MeetingComments => Set<MeetingComment>();
     public DbSet<MeetingType> MeetingTypes => Set<MeetingType>();
+    public DbSet<PermitType> PermitTypes => Set<PermitType>();
+    public DbSet<PermitChecklistItem> PermitChecklistItems => Set<PermitChecklistItem>();
+    public DbSet<PermitConflictPair> PermitConflictPairs => Set<PermitConflictPair>();
+    public DbSet<Permit> Permits => Set<Permit>();
+    public DbSet<PermitAnswer> PermitAnswers => Set<PermitAnswer>();
+    public DbSet<PermitPerson> PermitPersons => Set<PermitPerson>();
+    public DbSet<PermitGasReading> PermitGasReadings => Set<PermitGasReading>();
+    public DbSet<PermitEntry> PermitEntries => Set<PermitEntry>();
+    public DbSet<PermitEvent> PermitEvents => Set<PermitEvent>();
+    public DbSet<PermitComment> PermitComments => Set<PermitComment>();
     public DbSet<Drill> Drills => Set<Drill>();
     public DbSet<DrillParticipant> DrillParticipants => Set<DrillParticipant>();
     public DbSet<DrillNote> DrillNotes => Set<DrillNote>();
@@ -716,6 +726,111 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
             b.HasOne<Meeting>().WithMany().HasForeignKey(c => c.MeetingId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(c => new { c.MeetingId, c.At });
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+
+        // ---- permit to work (spec 14): a permit is one document with its answers, persons, readings, entries and events ----
+        modelBuilder.Entity<PermitType>(b =>
+        {
+            b.Property(t => t.Name).HasMaxLength(120);
+            b.Property(t => t.Code).HasMaxLength(12);
+            b.Property(t => t.Reference).HasMaxLength(300);
+            b.Property(t => t.OxygenMin).HasPrecision(5, 2);
+            b.Property(t => t.OxygenMax).HasPrecision(5, 2);
+            b.Property(t => t.FlammableMaxPercentLel).HasPrecision(6, 2);
+            b.Property(t => t.H2sMaxPpm).HasPrecision(8, 2);
+            b.Property(t => t.CoMaxPpm).HasPrecision(8, 2);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(t => new { t.CompanyId, t.Name }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitChecklistItem>(b =>
+        {
+            b.Property(i => i.Section).HasMaxLength(120);
+            b.Property(i => i.Text).HasMaxLength(500);
+            b.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(i => i.PermitTypeId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(i => new { i.PermitTypeId, i.Version, i.Position });
+            b.HasQueryFilter(i => CurrentCompanyId == null || i.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitConflictPair>(b =>
+        {
+            b.Property(p => p.Message).HasMaxLength(300);
+            b.HasOne<Company>().WithMany().HasForeignKey(p => p.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(p => p.PermitTypeAId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(p => p.PermitTypeBId).OnDelete(DeleteBehavior.Restrict);
+            b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<Permit>(b =>
+        {
+            b.Property(p => p.Code).HasMaxLength(40);
+            b.Property(p => p.TypeName).HasMaxLength(120);
+            b.Property(p => p.Terms).HasMaxLength(1000);
+            b.Property(p => p.Location).HasMaxLength(200);
+            b.Property(p => p.Description).HasMaxLength(2000);
+            b.Property(p => p.Isolation).HasMaxLength(1000);
+            b.Property(p => p.Conditions).HasMaxLength(2000);
+            b.Property(p => p.RequesterName).HasMaxLength(120);
+            b.Property(p => p.IssuerName).HasMaxLength(120);
+            b.Property(p => p.AttendantName).HasMaxLength(120);
+            b.Property(p => p.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(p => p.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(p => p.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(p => p.Answers).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Persons).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Readings).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Entries).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Events).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(p => new { p.VesselId, p.ValidFrom });
+            b.HasIndex(p => new { p.CompanyId, p.Code });
+            b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitAnswer>(b =>
+        {
+            b.Property(a => a.Section).HasMaxLength(120);
+            b.Property(a => a.Text).HasMaxLength(500);
+            b.Property(a => a.Note).HasMaxLength(1000);
+            b.Property(a => a.ByName).HasMaxLength(120);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitPerson>(b =>
+        {
+            b.Property(a => a.Name).HasMaxLength(120);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitGasReading>(b =>
+        {
+            b.Property(a => a.Instrument).HasMaxLength(120);
+            b.Property(a => a.Location).HasMaxLength(200);
+            b.Property(a => a.Failures).HasMaxLength(1000);
+            b.Property(a => a.ByName).HasMaxLength(120);
+            b.Property(a => a.Oxygen).HasPrecision(5, 2);
+            b.Property(a => a.FlammablePercentLel).HasPrecision(6, 2);
+            b.Property(a => a.H2sPpm).HasPrecision(8, 2);
+            b.Property(a => a.CoPpm).HasPrecision(8, 2);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitEntry>(b =>
+        {
+            b.Property(a => a.PersonName).HasMaxLength(120);
+            b.Property(a => a.AttendantName).HasMaxLength(120);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitEvent>(b =>
+        {
+            b.Property(a => a.ByName).HasMaxLength(120);
+            b.Property(a => a.Note).HasMaxLength(1000);
+            b.HasIndex(a => new { a.PermitId, a.At });
+        });
+        modelBuilder.Entity<PermitComment>(b =>
+        {
+            b.Property(c => c.Text).HasMaxLength(2000);
+            b.Property(c => c.ByName).HasMaxLength(120);
+            b.Property(c => c.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Permit>().WithMany().HasForeignKey(c => c.PermitId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => new { c.PermitId, c.At });
             b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
         });
 
@@ -1427,7 +1542,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement ? IncidentOf(entry) : entry.Entity is DrillParticipant or DrillNote ? DrillOf(entry) : entry.Entity is MeetingAttendee or MeetingItem or MeetingNote ? MeetingOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement ? IncidentOf(entry) : entry.Entity is DrillParticipant or DrillNote ? DrillOf(entry) : entry.Entity is MeetingAttendee or MeetingItem or MeetingNote ? MeetingOf(entry) : entry.Entity is PermitAnswer or PermitPerson or PermitGasReading or PermitEntry or PermitEvent ? PermitOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -1522,6 +1637,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<RiskAssessment>().FirstOrDefault(e => e.Entity.Id == assessmentId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A part of a risk assessment was changed without loading the assessment; load it with its team, activities and hazards.");
+        return parent;
+    }
+
+    /// <summary>An answer, a person, a reading, an entry or an event of a permit is its own table but part of the permit: changing one moves the permit's version, so the change travels.</summary>
+    private EntityEntry? PermitOf(EntityEntry child)
+    {
+        var property = child.Property("PermitId");
+        var permitId = (Guid)(child.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Permit>().FirstOrDefault(e => e.Entity.Id == permitId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of a permit was changed without loading the permit; load it with its answers, persons, readings, entries and events.");
         return parent;
     }
 

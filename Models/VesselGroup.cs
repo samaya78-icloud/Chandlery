@@ -116,6 +116,7 @@ public static class PolicyModules
     public const string RestHours = "Rest Hours";
     public const string Incidents = "Incidents";
     public const string Drills = "Drills and Meetings";
+    public const string PermitToWork = "Permit to Work";
 
-    public static readonly string[] All = [Procurement, Worklist, Pms, RiskAssessment, TankInspection, Projects, RestHours, Incidents, Drills];
+    public static readonly string[] All = [Procurement, Worklist, Pms, RiskAssessment, TankInspection, Projects, RestHours, Incidents, Drills, PermitToWork];
 }

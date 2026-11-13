@@ -84,12 +84,16 @@ public static class CrewAuthority
     /// <summary>May record a drill, and a safety meeting, that they conduct. The Master always may; the Master signs.</summary>
     public const string ConductDrills = "ConductDrills";
 
+    /// <summary>May issue permits to work (the kinds the type allows), and approve extensions. The Master always may.</summary>
+    public const string IssuePermits = "IssuePermits";
+
     public sealed record Info(string Name, string Label, string Help);
 
     public static readonly IReadOnlyList<Info> Available =
     [
         new(SignHoursAsDeputy, "Deputy for the Master on hours of rest", "May sign a seafarer's hours as Master and acknowledge breaches, but not their own hours, and not declare exceptions."),
         new(ConductDrills, "Conducts drills and records meetings", "May record a drill or a safety meeting they conduct. The Master signs it."),
+        new(IssuePermits, "Issues permits to work", "May issue a permit to work, check its gas readings and close it. Never for a permit they requested, unless the permit type allows it."),
     ];
 
     public static IReadOnlySet<string> Parse(string? list)

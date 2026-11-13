@@ -31,7 +31,7 @@ public static class MasterData
         Of<Company>(), Of<Supplier>(), Of<CompanySupplier>(), Of<Port>(), Of<Currency>(), Of<CompanyCurrency>(), Of<ExchangeRate>(), Of<VesselGroup>(), Of<Vessel>(), Of<CrewMember>(),
         Of<Department>(), Of<Category>(), Of<WorklistListItem>(), Of<MachineryClass>(), Of<JobTemplate>(), Of<TankChecklistTemplate>(), Of<TankCriterion>(), Of<RaCategory>(), Of<RaMatrixLabel>(), Of<RaMatrixBand>(), Of<RaTemplate>(), Of<RaTemplateActivity>(), Of<RaTemplateHazard>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
         Of<VesselPolicy>(), Of<VesselModuleSwitch>(),
-        Of<RestRuleSet>(), Of<IncidentCause>(), Of<IncidentSettings>(), Of<DrillType>(), Of<DrillOverride>(), Of<MeetingType>(),
+        Of<RestRuleSet>(), Of<IncidentCause>(), Of<IncidentSettings>(), Of<DrillType>(), Of<DrillOverride>(), Of<MeetingType>(), Of<PermitType>(), Of<PermitChecklistItem>(), Of<PermitConflictPair>(),
     ];
 
     private static readonly Dictionary<string, MasterType> ByName = Types.ToDictionary(t => t.DocType);
