@@ -159,6 +159,7 @@ public class NavCatalogService(
         if (await projects.IsEnabledForCompanyAsync(companyId))
         {
             projectItems.Add(new("/projects", "Projects", "project"));
+            if (!isVessel) projectItems.Add(new("/projects/fleet", "Fleet view", "project"));
             if (!isVessel && await projects.MayManageAsync(companyId, userId)) projectItems.Add(new("/projects/new", "New project", "project"));
         }
 
