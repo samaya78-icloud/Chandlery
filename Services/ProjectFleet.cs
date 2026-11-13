@@ -8,6 +8,9 @@ public record FleetSpan(ProjectListRow Row, DateTime Start, DateTime End, bool A
 /// <summary>One month of workload: how many projects were running in it, how many drydocks among them, and how many project days fell in it.</summary>
 public record FleetMonth(DateTime Month, int Projects, int Drydocks, int Days);
 
+/// <summary>One superintendent's load: projects in the window, total project days, and the days in each month of the window.</summary>
+public record SuperintendentLoad(string Name, int Projects, int Days, int[] DaysByMonth);
+
 /// <summary>What a vessel's projects add up to: how many, the budget set, and the cost to date. Over is the cost in excess of the budget for projects that have one.</summary>
 public record FleetSpend(string Vessel, int Projects, decimal Budget, decimal Cost, decimal Over);
 
@@ -76,6 +79,26 @@ public static class ProjectFleetRules
         }
         return result;
     }
+
+    /// <summary>The days of a span that fall inside one month.</summary>
+    private static int DaysIn(FleetSpan s, DateTime first)
+    {
+        var last = first.AddMonths(1).AddDays(-1);
+        return s.Start <= last && s.End >= first ? (Min(s.End, last) - Max(s.Start, first)).Days + 1 : 0;
+    }
+
+    /// <summary>
+    /// How much of each superintendent's time the projects take: for each, the projects they have in the window and the project days in each month. Projects with no
+    /// superintendent are grouped as "Not assigned" so they are not lost. Busiest first.
+    /// </summary>
+    public static List<SuperintendentLoad> WorkloadBySuperintendent(IReadOnlyCollection<FleetSpan> spans, DateTime from, int months)
+        => spans.GroupBy(s => s.Row.Row.Project.SuperintendentName.Trim() is { Length: > 0 } n ? n : "Not assigned")
+            .Select(g =>
+            {
+                var byMonth = Enumerable.Range(0, months).Select(i => g.Sum(s => DaysIn(s, from.AddMonths(i)))).ToArray();
+                return new SuperintendentLoad(g.Key, g.Count(s => Enumerable.Range(0, months).Any(i => DaysIn(s, from.AddMonths(i)) > 0)), byMonth.Sum(), byMonth);
+            })
+            .Where(l => l.Projects > 0).OrderByDescending(l => l.Days).ThenBy(l => l.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>Spend by vessel, most expensive first. Closed and live projects both count: it is what each ship has cost.</summary>
     public static List<FleetSpend> SpendByVessel(IEnumerable<ProjectListRow> rows)

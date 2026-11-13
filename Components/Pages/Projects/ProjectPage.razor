@@ -440,6 +440,11 @@ else
             }
         </section>
 
+        @* ---- J9: the office's planning tools. None of it leaves the office. ---- *@
+        <ProjectTenders CompanyId="_companyId" ProjectId="ProjectId" User="_actor" Items="p.Items" CanEdit="@(canEdit && _detail.Status is ProjectStatus.Planning or ProjectStatus.Approved or ProjectStatus.Ongoing)" OnAwarded="ReloadAsync" />
+        <ProjectPhases CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
+        <ProjectDocuments CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
+        <ProjectRisks CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
     }
 
     @* ---- notes ---- *@

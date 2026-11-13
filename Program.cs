@@ -55,6 +55,7 @@ builder.Services.AddScoped<RestCapacityService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<RiskAssessmentService>();
 builder.Services.AddScoped<ProjectService>();
+builder.Services.AddScoped<ProjectPlanningService>();
 builder.Services.AddScoped<RiskLibraryService>();
 builder.Services.AddScoped<TankTrendService>();
 builder.Services.AddSingleton<SyncStatusService>();

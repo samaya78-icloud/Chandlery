@@ -1,0 +1,133 @@
+@inject ProjectPlanningService Planning
+@inject ToastService Toasts
+
+<section class="card mb-6 p-5">
+    <div class="mb-3 flex flex-wrap items-center gap-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Phases of the stay</h2>
+        @if (CanEdit)
+        {
+            @if (_rows.Count == 0) { <button @onclick="AddStandard" disabled="@_busy" class="btn btn-secondary btn-sm ml-auto">Add the standard phases</button> }
+            else
+            {
+                <button @onclick="AddRow" class="btn btn-secondary btn-sm ml-auto">+ Add phase</button>
+                <button @onclick="Save" disabled="@_busy" class="btn btn-primary btn-sm">Save phases</button>
+            }
+        }
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+
+    @if (_rows.Count == 0)
+    {
+        <p class="text-sm text-muted">No phases yet.@(CanEdit ? " The standard phases for this kind of project can be added in one go and then dated." : "")</p>
+    }
+    else
+    {
+        @if (_range is { } range)
+        {
+            var total = Math.Max((range.End - range.Start).TotalDays + 1, 1);
+            <div class="mb-4 overflow-x-auto">
+                <div class="min-w-[560px]">
+                    <div class="flex text-xs text-muted"><div class="w-44 shrink-0"></div><div class="flex flex-1 justify-between"><span>@range.Start.ToString("d MMM yyyy")</span><span>@range.End.ToString("d MMM yyyy")</span></div></div>
+                    @foreach (var phase in _saved)
+                    {
+                        var delay = ProjectPlanningRules.DelayDays(phase, _today);
+                        <div class="flex items-center border-t border-line/60 py-1">
+                            <div class="w-44 shrink-0 pr-2 text-sm">@phase.Name@if (delay is > 0) { <span class="ml-1 text-xs text-rose-600">+@delay d</span> }</div>
+                            <div class="relative h-9 flex-1">
+                                @if (phase.PlannedStart is { } ps && phase.PlannedEnd is { } pe)
+                                {
+                                    <div class="absolute top-0.5 h-3.5 rounded bg-sky-500/50" style="@Bar(ps, pe, range.Start, total)" title="@("Planned " + ps.ToString("d MMM") + " to " + pe.ToString("d MMM"))"></div>
+                                }
+                                @if (phase.ActualStart is { } asd)
+                                {
+                                    var aed = phase.ActualEnd ?? _today;
+                                    <div class="@("absolute bottom-0.5 h-3.5 rounded " + (phase.ActualEnd is null ? "bg-amber-600" : "bg-emerald-600"))" style="@Bar(asd, aed < asd ? asd : aed, range.Start, total)" title="@("Actual " + asd.ToString("d MMM") + (phase.ActualEnd is { } ae ? " to " + ae.ToString("d MMM") : ", still going"))"></div>
+                                }
+                                @if (_today >= range.Start && _today <= range.End)
+                                {
+                                    <div class="pointer-events-none absolute inset-y-0 w-px bg-rose-500" style="@("left:" + Pct((_today - range.Start).TotalDays / total))"></div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+            <p class="mb-4 text-xs text-muted">Blue is the plan, orange is work still going and green is work that has ended; the red line is today and “+ d” is how many days a phase has slipped.</p>
+        }
+
+        <table class="w-full text-sm">
+            <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Phase</th><th class="p-2">Planned start</th><th class="p-2">Planned end</th><th class="p-2">Actual start</th><th class="p-2">Actual end</th><th class="p-2"></th></tr></thead>
+            <tbody class="divide-y divide-line/60">
+                @foreach (var row in _rows)
+                {
+                    <tr>
+                        <td class="p-2">@if (CanEdit) { <input class="input" @bind="row.Name" /> } else { @row.Name }</td>
+                        <td class="p-2">@if (CanEdit) { <input type="date" class="input" @bind="row.PlannedStart" /> } else { @Show(row.PlannedStart) }</td>
+                        <td class="p-2">@if (CanEdit) { <input type="date" class="input" @bind="row.PlannedEnd" /> } else { @Show(row.PlannedEnd) }</td>
+                        <td class="p-2">@if (CanEdit) { <input type="date" class="input" @bind="row.ActualStart" /> } else { @Show(row.ActualStart) }</td>
+                        <td class="p-2">@if (CanEdit) { <input type="date" class="input" @bind="row.ActualEnd" /> } else { @Show(row.ActualEnd) }</td>
+                        <td class="p-2 text-right">@if (CanEdit) { <button @onclick="() => _rows.Remove(row)" class="text-xs text-rose-600 hover:underline">Remove</button> }</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+    [Parameter, EditorRequired] public Actor User { get; set; } = Actor.System;
+    [Parameter] public bool CanEdit { get; set; }
+
+    private sealed class Row
+    {
+        public string Name { get; set; } = "";
+        public DateTime? PlannedStart { get; set; }
+        public DateTime? PlannedEnd { get; set; }
+        public DateTime? ActualStart { get; set; }
+        public DateTime? ActualEnd { get; set; }
+    }
+
+    private readonly DateTime _today = DateTime.UtcNow.Date;
+    private List<ProjectPhase> _saved = [];
+    private List<Row> _rows = [];
+    private (DateTime Start, DateTime End)? _range;
+    private string? _error;
+    private bool _busy;
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _saved = await Planning.PhasesAsync(CompanyId, ProjectId);
+        _rows = _saved.Select(p => new Row { Name = p.Name, PlannedStart = p.PlannedStart, PlannedEnd = p.PlannedEnd, ActualStart = p.ActualStart, ActualEnd = p.ActualEnd }).ToList();
+        _range = ProjectPlanningRules.Range(_saved, _today);
+    }
+
+    private async Task Run(Func<Task> action, string success)
+    {
+        _busy = true;
+        _error = null;
+        try { await action(); await LoadAsync(); await Toasts.Success(success); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task AddStandard() => Run(() => Planning.AddStandardPhasesAsync(CompanyId, ProjectId, User), "Phases added");
+
+    private void AddRow() => _rows.Add(new Row());
+
+    private Task Save() => Run(() => Planning.SavePhasesAsync(CompanyId, ProjectId, _rows.Select(r => new PhaseInput(null, r.Name, r.PlannedStart, r.PlannedEnd, r.ActualStart, r.ActualEnd)).ToList(), User), "Phases saved");
+
+    private static string Show(DateTime? d) => d is { } v ? v.ToString("d MMM yyyy") : "—";
+
+    private static string Pct(double fraction) => (Math.Clamp(fraction, 0, 1) * 100).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private static string Bar(DateTime from, DateTime to, DateTime start, double total)
+        => "left:" + Pct((from.Date - start).TotalDays / total) + ";width:" + Pct(Math.Max(((to.Date - from.Date).TotalDays + 1) / total, 0.01));
+}

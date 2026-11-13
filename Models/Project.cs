@@ -40,7 +40,7 @@ public class Project
     public DateTime? PlannedStart { get; set; }
     public DateTime? PlannedEnd { get; set; }
 
-    /// <summary>The yard, as typed; a yard list comes with tenders.</summary>
+    /// <summary>The yard: awarding a tender sets it, and it can still be typed.</summary>
     public string Yard { get; set; } = "";
 
     /// <summary>Underwater inspection in lieu of drydock.</summary>

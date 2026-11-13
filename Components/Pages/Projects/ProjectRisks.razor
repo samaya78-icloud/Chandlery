@@ -1,0 +1,83 @@
+@inject ProjectPlanningService Planning
+@inject ToastService Toasts
+
+<section class="card mb-6 p-5">
+    <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Risk assessments</h2>
+
+    @if (_error is not null)
+    {
+        <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+
+    @if (_links.Count == 0)
+    {
+        <p class="text-sm text-muted">No risk assessments linked.@(CanEdit ? " Link the assessments that cover this project's work." : "")</p>
+    }
+    else
+    {
+        <ul class="divide-y divide-line/60 text-sm">
+            @foreach (var l in _links)
+            {
+                <li class="flex flex-wrap items-center gap-2 py-2">
+                    @if (l.AssessmentId is { } id) { <a href="/risk/@id" class="link font-mono text-xs font-semibold">@l.Link.AssessmentCode</a> }
+                    else { <span class="font-mono text-xs font-semibold">@l.Link.AssessmentCode</span> }
+                    <span>@l.Title</span>
+                    @if (l.Version > 0) { <span class="text-xs text-muted">v@l.Version</span> }
+                    @if (l.ResidualBand != "") { <span class="text-xs text-muted">· highest residual risk: @l.ResidualBand</span> }
+                    @if (CanEdit) { <button @onclick="() => Unlink(l.Link.Id)" disabled="@_busy" class="ml-auto text-xs text-rose-600 hover:underline">Unlink</button> }
+                </li>
+            }
+        </ul>
+    }
+
+    @if (CanEdit && _candidates.Count > 0)
+    {
+        <div class="mt-3 flex flex-wrap items-end gap-2 text-sm">
+            <label>Link an assessment
+                <select class="select mt-1" @bind="_pick">
+                    <option value="">Choose…</option>
+                    @foreach (var c in _candidates) { <option value="@c.Code">@c.Code · @c.Title</option> }
+                </select>
+            </label>
+            <button @onclick="Link" disabled="@(_busy || _pick == "")" class="btn btn-secondary btn-sm">Link</button>
+        </div>
+    }
+    else if (CanEdit)
+    {
+        <p class="mt-3 text-xs text-muted">The vessel has no other submitted assessments to link.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+    [Parameter, EditorRequired] public Actor User { get; set; } = Actor.System;
+    [Parameter] public bool CanEdit { get; set; }
+
+    private List<RiskLinkView> _links = [];
+    private List<RiskCandidate> _candidates = [];
+    private string _pick = "";
+    private string? _error;
+    private bool _busy;
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _links = await Planning.RiskLinksAsync(CompanyId, ProjectId);
+        _candidates = CanEdit ? await Planning.RiskCandidatesAsync(CompanyId, ProjectId) : [];
+    }
+
+    private async Task Run(Func<Task> action, string success)
+    {
+        _busy = true;
+        _error = null;
+        try { await action(); await LoadAsync(); await Toasts.Success(success); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task Link() => Run(async () => { await Planning.LinkRiskAsync(CompanyId, ProjectId, _pick, User); _pick = ""; }, "Assessment linked");
+
+    private Task Unlink(Guid id) => Run(() => Planning.UnlinkRiskAsync(CompanyId, id, User), "Unlinked");
+}

@@ -68,17 +68,17 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
 
     private static DateTime Day(DateTime d) => DateTime.SpecifyKind(d.Date, DateTimeKind.Utc);
 
-    private static void RequireOffice(ChandleryDbContext db)
+    internal static void RequireOffice(ChandleryDbContext db)
     {
         if (db.Node.IsVessel) throw new InvalidOperationException("Projects are planned and run by the office; onboard you can read them and add notes.");
     }
 
     /// <summary>A company admin, or an office user the admin has named a project manager. Everyone else can read projects and add notes and links.</summary>
-    private static async Task<bool> MayManageAsync(ChandleryDbContext db, Guid companyId, Guid? userId)
+    internal static async Task<bool> MayManageAsync(ChandleryDbContext db, Guid companyId, Guid? userId)
         => userId is { } uid && await db.Users.AsNoTracking().AnyAsync(u => u.Id == uid && u.CompanyId == companyId && u.IsEnabled
             && (u.Role == UserRole.CompanyAdmin || (u.Role == UserRole.CompanyUser && u.IsProjectManager)));
 
-    private static async Task RequireManagerAsync(ChandleryDbContext db, Guid companyId, Actor actor)
+    internal static async Task RequireManagerAsync(ChandleryDbContext db, Guid companyId, Actor actor)
     {
         if (!await MayManageAsync(db, companyId, actor.UserId)) throw new InvalidOperationException("Only a company admin or a project manager can do this.");
     }
@@ -126,7 +126,7 @@ public class ProjectService(IDbContextFactory<ChandleryDbContext> factory, Workl
         => ProjectStatusRules.Of(await db.ProjectStatusEvents.AsNoTracking().Where(e => e.ProjectId == projectId).ToListAsync());
 
     /// <summary>Loads a project with its items for changing, refusing when it is closed.</summary>
-    private static async Task<(Project Project, ProjectStatus Status)> LoadEditableAsync(ChandleryDbContext db, Guid companyId, Guid id)
+    internal static async Task<(Project Project, ProjectStatus Status)> LoadEditableAsync(ChandleryDbContext db, Guid companyId, Guid id)
     {
         var project = await db.Projects.Include(p => p.Items).FirstOrDefaultAsync(p => p.Id == id && p.CompanyId == companyId) ?? throw new InvalidOperationException("Project not found.");
         var status = await StatusOfAsync(db, id);

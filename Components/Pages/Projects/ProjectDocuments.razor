@@ -1,0 +1,110 @@
+@inject ProjectPlanningService Planning
+@inject ToastService Toasts
+
+<section class="card mb-6 p-5">
+    <div class="mb-3 flex flex-wrap items-center gap-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Documents checklist</h2>
+        @if (_rows.Count > 0)
+        {
+            var missing = _rows.Count(r => r.Status == DocumentCheckStatus.Required);
+            <span class="@("text-xs " + (missing > 0 ? "text-amber-600" : "text-emerald-600"))">@(missing == 0 ? "Nothing missing" : missing + " missing")</span>
+        }
+        @if (CanEdit)
+        {
+            <button @onclick="AddStandard" disabled="@_busy" class="btn btn-secondary btn-sm ml-auto">Add the standard documents</button>
+            <button @onclick="AddRow" class="btn btn-secondary btn-sm">+ Add document</button>
+            <button @onclick="Save" disabled="@_busy" class="btn btn-primary btn-sm">Save checklist</button>
+        }
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+
+    @if (_rows.Count == 0)
+    {
+        <p class="text-sm text-muted">No documents listed yet.@(CanEdit ? " Add the standard list for this kind of project and tick them off as they arrive." : "")</p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Document</th><th class="p-2">Status</th><th class="p-2">Due</th><th class="p-2">Received</th><th class="p-2">Where it is</th><th class="p-2"></th></tr></thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var row in _rows)
+                    {
+                        var overdue = row.Status == DocumentCheckStatus.Required && row.DueDate is { } due && due.Date < DateTime.UtcNow.Date;
+                        <tr>
+                            <td class="p-2">@if (CanEdit) { <input class="input" @bind="row.Name" /> } else { @row.Name }</td>
+                            <td class="p-2">
+                                @if (CanEdit)
+                                {
+                                    <select class="select" @bind="row.Status">
+                                        <option value="@DocumentCheckStatus.Required">Required</option>
+                                        <option value="@DocumentCheckStatus.Received">Received</option>
+                                        <option value="@DocumentCheckStatus.NotNeeded">Not needed</option>
+                                    </select>
+                                }
+                                else { @row.Status }
+                                @if (overdue) { <span class="ml-1 text-xs text-rose-600">overdue</span> }
+                            </td>
+                            <td class="p-2">@if (CanEdit) { <input type="date" class="input" @bind="row.DueDate" /> } else { @(row.DueDate is { } d ? d.ToString("d MMM yyyy") : "—") }</td>
+                            <td class="p-2">@if (CanEdit && row.Status == DocumentCheckStatus.Received) { <input type="date" class="input" @bind="row.ReceivedOn" /> } else { @(row.ReceivedOn is { } r ? r.ToString("d MMM yyyy") : "—") }</td>
+                            <td class="p-2">@if (CanEdit) { <input class="input" @bind="row.Reference" /> } else { @row.Reference }</td>
+                            <td class="p-2 text-right">@if (CanEdit) { <button @onclick="() => _rows.Remove(row)" class="text-xs text-rose-600 hover:underline">Remove</button> }</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+    [Parameter, EditorRequired] public Actor User { get; set; } = Actor.System;
+    [Parameter] public bool CanEdit { get; set; }
+
+    private sealed class Row
+    {
+        public string Name { get; set; } = "";
+        public DocumentCheckStatus Status { get; set; }
+        public DateTime? DueDate { get; set; }
+        public DateTime? ReceivedOn { get; set; }
+        public string Reference { get; set; } = "";
+        public string Note { get; set; } = "";
+    }
+
+    private List<Row> _rows = [];
+    private string? _error;
+    private bool _busy;
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+        => _rows = (await Planning.DocumentsAsync(CompanyId, ProjectId)).Select(d => new Row { Name = d.Name, Status = d.Status, DueDate = d.DueDate, ReceivedOn = d.ReceivedOn, Reference = d.Reference, Note = d.Note }).ToList();
+
+    private async Task Run(Func<Task> action, string success)
+    {
+        _busy = true;
+        _error = null;
+        try { await action(); await LoadAsync(); await Toasts.Success(success); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void AddRow() => _rows.Add(new Row());
+
+    /// <summary>Saves what is on screen first, so adding the standard documents never throws away edits in progress.</summary>
+    private Task AddStandard() => Run(async () =>
+    {
+        await Planning.SaveDocumentsAsync(CompanyId, ProjectId, Inputs(), User);
+        await Planning.AddStandardDocumentsAsync(CompanyId, ProjectId, User);
+    }, "Documents added");
+
+    private Task Save() => Run(() => Planning.SaveDocumentsAsync(CompanyId, ProjectId, Inputs(), User), "Checklist saved");
+
+    private List<DocumentInput> Inputs() => _rows.Select(r => new DocumentInput(null, r.Name, r.Status, r.DueDate, r.ReceivedOn, r.Reference, r.Note)).ToList();
+}
