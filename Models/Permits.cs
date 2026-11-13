@@ -11,7 +11,7 @@ public enum PermitAnswerKind { Unanswered, Yes, No, NotApplicable }
 public enum PermitEventKind
 {
     Requested, ChecklistCompleted, GasTested, Issued, MasterApproved, Started, PersonEntered, PersonLeft, Suspended, Resumed,
-    Extended, HandedOver, ConflictAcknowledged, Completed, Cancelled, Expired, Withdrawn
+    Extended, HandedOver, ConflictAcknowledged, WorkFinished, Completed, Cancelled, Expired, Withdrawn
 }
 
 /// <summary>

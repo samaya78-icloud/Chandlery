@@ -36,6 +36,7 @@ public static class WorklistLinkTypes
     public const string Meeting = "meeting";
     public const string Project = "project";
     public const string Machinery = "machinery";
+    public const string Permit = "permit";
 
     /// <summary>Where the link opens, on the office or on a vessel.</summary>
     public static string Href(string type, Guid target, bool onVessel) => type switch
@@ -52,6 +53,7 @@ public static class WorklistLinkTypes
         Meeting => $"/meetings/{target}",
         Project => $"/projects/{target}",
         Machinery => "/pms/machinery",
+        Permit => $"/permits/{target}",
         _ => "#",
     };
 }
