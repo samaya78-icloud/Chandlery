@@ -164,6 +164,7 @@ public class PermitTests : IAsyncLifetime
         Assert.Contains("completed", await RefusedAsync(() => _vessel.SuspendAsync(_s.CompanyId, permit.Id, As(_master), "Late")));
         Assert.Contains("completed", await RefusedAsync(() => _vessel.CancelAsync(_s.CompanyId, permit.Id, As(_master), "Too late")));
 
+        await _s.SettleUntilQuietAsync();                                                                                          // the office needs the permit before it can comment on it
         await _shore.CommentAsync(_s.CompanyId, permit.Id, _s.User, "Please send the calibration certificate for GD-1.");
         Assert.Contains("office", await RefusedAsync(() => _vessel.CommentAsync(_s.CompanyId, permit.Id, As(_master), "Onboard does not comment")));
         Assert.Contains("onboard", await RefusedAsync(() => _shore.IssueAsync(_s.CompanyId, permit.Id, _s.User)));
