@@ -61,6 +61,21 @@ public class PermitFleetTests
     }
 
     [Fact]
+    public void APermitClosedWithTheWorkLeftUnsafeNeedsAttention_ButOnlyWhenItWasClosedInThePeriod()
+    {
+        var unsafeClosed = Row(VesselA, "Alpha", "Hot work", PermitState.Completed, At(11, 5), At(11, 5, 16));
+        unsafeClosed.Permit.Events.Add(new PermitEvent { Kind = PermitEventKind.Completed, At = At(11, 5, 17), Note = "LeftUnsafe: weld not finished" });
+        var cleanClosed = Row(VesselA, "Alpha", "Hot work", PermitState.Completed, At(11, 6), At(11, 6, 16));
+        cleanClosed.Permit.Events.Add(new PermitEvent { Kind = PermitEventKind.Completed, At = At(11, 6, 17), Note = "Finished" });
+        var earlier = Row(VesselA, "Alpha", "Hot work", PermitState.Completed, At(8, 5), At(8, 5, 16));
+        earlier.Permit.Events.Add(new PermitEvent { Kind = PermitEventKind.Completed, At = At(8, 5, 17), Note = "LeftUnsafe: before the period" });
+        var view = PermitFleet.Build(From, To, [unsafeClosed, cleanClosed, earlier]);
+        var only = Assert.Single(view.Attention);
+        Assert.Equal(unsafeClosed.Permit.Code, only.Row.Permit.Code);
+        Assert.Contains("unsafe", only.Why);
+    }
+
+    [Fact]
     public void ThePermitsAreCountedOnceWhenTheyAreInBothTheOpenAndThePeriodLists()
     {
         var one = Row(VesselA, "Alpha", "Hot work", PermitState.Active, At(11, 10), At(11, 10, 16));

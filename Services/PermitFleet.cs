@@ -44,7 +44,7 @@ public static class PermitFleet
             if (r.State == PermitState.Expired) attention.Add(new(r, $"Expired {PermitLook.When(r.Until)} and not closed"));
             else if (r.State == PermitState.Active && !r.Valid) attention.Add(new(r, $"Active but not valid: {r.Reason.ToLowerInvariant()}"));
             else if (r.State == PermitState.Suspended) attention.Add(new(r, "Suspended"));
-            else if (r.State == PermitState.Completed && r.Permit.Readings.Count(x => !x.WithinLimits && InPeriod(x.At)) > 0 && r.Permit.Events.Any(e => e.Kind == PermitEventKind.Completed && e.Note.StartsWith("LeftUnsafe")))
+            else if (r.State == PermitState.Completed && r.Permit.Events.Any(e => e.Kind == PermitEventKind.Completed && e.Note.StartsWith("LeftUnsafe") && InPeriod(e.At)))
                 attention.Add(new(r, "Closed with the work left unsafe"));
         }
         return new(from, to, vessels, byMonth, attention);
