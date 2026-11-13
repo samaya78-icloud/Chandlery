@@ -1,0 +1,204 @@
+@implements IDisposable
+@inject ChatService Chat
+
+@* The conversation on one record (spec 10). Messages from the vessel and the office appear in send order; the panel looks for new ones every few seconds.
+   Shown only where Conversations is switched on for the record's vessel. *@
+@if (_enabled && _viewer is not null && _view is not null)
+{
+    <div class="card p-5" id="conversation">
+        <div class="mb-3 flex flex-wrap items-center gap-2">
+            <h2 class="font-display text-lg font-extrabold text-ink">@Title</h2>
+            @if (_unreadAtOpen > 0) { <StatusChip Label="@($"{_unreadAtOpen} new")" Tone="warning" /> }
+            @if (_view.NeedingReply > 0) { <StatusChip Label="@($"{_view.NeedingReply} waiting for a reply")" Tone="warning" /> }
+            @if (_view.Resolved) { <StatusChip Label="Resolved" Tone="success" /> }
+            @if (_view.Items.Count > 0 && _viewer.Side != ChatSide.Supplier)
+            {
+                <button class="btn btn-sm btn-ghost ml-auto" @onclick="ToggleResolvedAsync">@(_view.Resolved ? "Reopen" : "Mark resolved")</button>
+            }
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="mb-3 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div>
+        }
+
+        @if (_view.Items.Count == 0)
+        {
+            <p class="mb-4 text-sm text-muted">No messages yet.</p>
+        }
+        else
+        {
+            <ol class="mb-4 space-y-3">
+                @foreach (var item in _view.Items)
+                {
+                    var m = item.Message;
+                    if (m.Kind == ChatKind.System)
+                    {
+                        <li class="text-center text-xs text-muted">@item.Body · @m.At.ToLocalTime().ToString("dd MMM HH:mm")</li>
+                        continue;
+                    }
+                    <li class="border-l-2 border-line pl-4">
+                        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted">
+                            <span class="font-semibold text-ink">@m.AuthorName</span>
+                            <span>@m.At.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
+                            <span class="chip chip-plain" data-tone="neutral">@(m.OwnerStage == SyncStages.Vessel ? "vessel" : "office")</span>
+                            @if (m.Channel != ChatChannel.Internal) { <span class="chip chip-plain" data-tone="warning">@(m.Channel == ChatChannel.OfficeOnly ? "office only" : "shared")</span> }
+                            @if (item.Edited && !item.Removed) { <span>edited</span> }
+                            @if (item.NeedsReply) { <span class="chip chip-plain" data-tone="warning">needs a reply</span> }
+                            @if (item.Mine && _unsynced.Contains(m.Id)) { <span class="chip chip-plain" data-tone="neutral" title="Saved here; it reaches the other side at the next sync">not yet synced</span> }
+                        </div>
+
+                        @if (ReplyTarget(item) is { } quoted)
+                        {
+                            <p class="mt-1 truncate border-l-2 border-line pl-2 text-xs text-muted">@quoted.Message.AuthorName: @(quoted.Removed ? "message removed" : Shorten(quoted.Body))</p>
+                        }
+
+                        @if (item.Removed)
+                        {
+                            <p class="mt-1 text-sm italic text-muted">@(item.RemovedByAdmin ? "Message removed by an administrator" : "Message removed")@(item.RemovedByAdmin && _viewer.Side == ChatSide.Office ? $" ({item.RedactReason})" : "")</p>
+                        }
+                        else if (_editing == m.Id)
+                        {
+                            <textarea class="textarea mt-1" rows="3" @bind="_editText"></textarea>
+                            <div class="mt-2 flex gap-2">
+                                <button class="btn btn-sm btn-primary" @onclick="() => SaveEditAsync(m.Id)">Save</button>
+                                <button class="btn btn-sm btn-ghost" @onclick="() => _editing = null">Cancel</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <p class="mt-1 whitespace-pre-line text-sm text-ink-2">@item.Body</p>
+                            <div class="mt-1 flex flex-wrap gap-x-3 text-xs">
+                                <button class="link" @onclick="() => StartReply(item)">Reply</button>
+                                @if (!item.NeedsReply && _viewer.Side != ChatSide.Supplier) { <button class="link" @onclick="() => NeedsReplyAsync(m.Id)">Needs a reply</button> }
+                                @if (item.Mine && ChatRules.CanEdit(m, _viewer.UserId, DateTime.UtcNow)) { <button class="link" @onclick="() => StartEdit(item)">Edit</button> }
+                                @if (item.Mine) { <button class="link" @onclick="() => DeleteAsync(m.Id)">Remove</button> }
+                                @if (!item.Mine && ChatRules.CanRedact(m, _viewer)) { <button class="link" @onclick="() => StartRedact(m.Id)">Remove as administrator</button> }
+                            </div>
+                            @if (_redacting == m.Id)
+                            {
+                                <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                                    <input class="input" placeholder="Reason (kept in the record)" @bind="_reason" />
+                                    <button class="btn btn-sm btn-primary" @onclick="() => RedactAsync(m.Id)">Remove</button>
+                                    <button class="btn btn-sm btn-ghost" @onclick="() => _redacting = null">Cancel</button>
+                                </div>
+                            }
+                        }
+                    </li>
+                }
+            </ol>
+        }
+
+        <div class="space-y-2 border-t border-line pt-4 text-sm">
+            @if (_replyTo is { } replying)
+            {
+                <p class="flex items-center gap-2 text-xs text-muted">Replying to @replying.Message.AuthorName <button class="link" @onclick="() => _replyTo = null">cancel</button></p>
+            }
+            <textarea class="textarea" rows="3" placeholder="Write a message. Use @@office, @@master, @@crew or @@name to mention someone." @bind="_text" @bind:event="oninput"></textarea>
+            <div class="flex flex-wrap items-center gap-2">
+                @if (_channels.Count > 1)
+                {
+                    <select class="select w-auto" @bind="_channel">
+                        @foreach (var c in _channels) { <option value="@c">@ChatRules.ChannelLabel(c)</option> }
+                    </select>
+                }
+                <button class="btn btn-primary" disabled="@(string.IsNullOrWhiteSpace(_text))" @onclick="SendAsync">Send</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Actor Actor { get; set; } = Actor.System;
+    [Parameter, EditorRequired] public string ModuleType { get; set; } = "";
+    [Parameter, EditorRequired] public Guid RecordId { get; set; }
+
+    /// <summary>The vessel the record belongs to; null for a record with no vessel.</summary>
+    [Parameter] public Guid? VesselId { get; set; }
+    [Parameter] public string Title { get; set; } = "Conversation";
+    [Parameter] public string Topic { get; set; } = "";
+
+    private const int RefreshSeconds = 15;
+
+    private bool _enabled;
+    private ChatViewer? _viewer;
+    private ChatThreadView? _view;
+    private HashSet<Guid> _unsynced = [];
+    private IReadOnlyList<ChatChannel> _channels = [];
+    private ChatChannel _channel = ChatChannel.Internal;
+    private int _unreadAtOpen;
+    private string _text = "", _editText = "", _reason = "";
+    private Guid? _editing, _redacting;
+    private ChatItem? _replyTo;
+    private string? _error;
+    private Timer? _timer;
+    private bool _disposed;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _enabled = await Chat.IsEnabledAsync(CompanyId, VesselId);
+        _viewer = _enabled ? await Chat.ViewerAsync(CompanyId, Actor) : null;
+        if (_viewer is null) return;
+        _channels = ChatRules.ChannelsFor(_viewer.Side);
+        if (!_channels.Contains(_channel)) _channel = _channels.FirstOrDefault();
+        _view = await Chat.ThreadAsync(CompanyId, Actor, ModuleType, RecordId, Topic);
+        _unreadAtOpen = _view.Unread;
+        await RefreshAsync();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && _viewer is not null)
+            _timer = new Timer(_ => _ = InvokeAsync(TickAsync), null, TimeSpan.FromSeconds(RefreshSeconds), TimeSpan.FromSeconds(RefreshSeconds));
+    }
+
+    private async Task TickAsync()
+    {
+        if (_disposed) return;
+        try { await RefreshAsync(); StateHasChanged(); }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
+    }
+
+    /// <summary>Reads the thread again, notes how far it has been read, and finds which of the person's own messages have not left yet.</summary>
+    private async Task RefreshAsync()
+    {
+        _view = await Chat.ThreadAsync(CompanyId, Actor, ModuleType, RecordId, Topic);
+        _unsynced = await Chat.UnsyncedAsync(CompanyId, _view.Items.Where(i => i.Mine).Select(i => i.Message.Id));
+        await Chat.MarkReadAsync(CompanyId, Actor, ModuleType, RecordId, Topic);
+    }
+
+    private async Task Run(Func<Task> action)
+    {
+        _error = null;
+        try { await action(); await RefreshAsync(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private Task SendAsync() => Run(async () =>
+    {
+        await Chat.PostAsync(CompanyId, Actor, new ChatPost(ModuleType, RecordId, VesselId, _channel, _text, Topic, _replyTo?.Message.Id));
+        _text = "";
+        _replyTo = null;
+    });
+
+    private Task SaveEditAsync(Guid id) => Run(async () => { await Chat.EditAsync(CompanyId, Actor, id, _editText); _editing = null; });
+    private Task DeleteAsync(Guid id) => Run(() => Chat.DeleteAsync(CompanyId, Actor, id));
+    private Task RedactAsync(Guid id) => Run(async () => { await Chat.RedactAsync(CompanyId, Actor, id, _reason); _redacting = null; });
+    private Task NeedsReplyAsync(Guid id) => Run(() => Chat.NeedsReplyAsync(CompanyId, Actor, id));
+    private Task ToggleResolvedAsync() => Run(() => Chat.SetResolvedAsync(CompanyId, Actor, ModuleType, RecordId, Topic, !_view!.Resolved));
+
+    private void StartReply(ChatItem item) { _replyTo = item; _error = null; }
+    private void StartRedact(Guid id) { _redacting = id; _reason = ""; _error = null; }
+    private void StartEdit(ChatItem item) { _editing = item.Message.Id; _editText = item.Body; _error = null; }
+
+    private ChatItem? ReplyTarget(ChatItem item) => item.Message.ReplyToId is { } id ? _view!.Items.FirstOrDefault(i => i.Message.Id == id) : null;
+
+    private static string Shorten(string text) => text.Length <= 80 ? text : text[..80] + "…";
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _timer?.Dispose();
+    }
+}

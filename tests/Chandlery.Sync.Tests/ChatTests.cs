@@ -217,6 +217,31 @@ public class ChatTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AMessageShowsAsNotYetSynced_UntilItHasLeft()
+    {
+        var sent = await _vessel.PostAsync(_s.CompanyId, As(_chief), Post("waiting for the link"));
+        Assert.Contains(sent.Id, await _vessel.UnsyncedAsync(_s.CompanyId, [sent.Id]));
+        await _s.SettleUntilQuietAsync();
+        Assert.Empty(await _vessel.UnsyncedAsync(_s.CompanyId, [sent.Id]));
+        Assert.Empty(await _vessel.UnsyncedAsync(_s.CompanyId, []));
+    }
+
+    [Fact]
+    public async Task ThePanelKnowsWhoIsLooking_AndWhetherTheModuleIsOn()
+    {
+        var office = await _shore.ViewerAsync(_s.CompanyId, _s.User);
+        Assert.Equal(ChatSide.Office, office!.Side);
+        var crew = await _vessel.ViewerAsync(_s.CompanyId, As(_chief));
+        Assert.Equal((ChatSide.Vessel, _s.VesselId), (crew!.Side, crew.VesselId));
+        Assert.Null(await _vessel.ViewerAsync(_s.CompanyId, new Actor(Guid.NewGuid(), "Nobody")));
+        Assert.Null(await _vessel.ViewerAsync(_s.CompanyId, Actor.System));
+
+        Assert.True(await _shore.IsEnabledAsync(_s.CompanyId, _s.VesselId));
+        Assert.False(await _shore.IsEnabledAsync(_s.CompanyId, _s.OtherVesselId));
+        Assert.True(await _shore.IsEnabledAsync(_s.CompanyId, null));      // a record with no vessel always may
+    }
+
+    [Fact]
     public async Task TopicsAreSeparateThreadsOfTheSameRecord()
     {
         await _vessel.PostAsync(_s.CompanyId, As(_chief), Post("main thread"));

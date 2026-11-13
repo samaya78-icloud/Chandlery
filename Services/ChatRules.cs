@@ -50,6 +50,18 @@ public static class ChatRules
         _ => false,
     };
 
+    /// <summary>The channels a side may write on, in the order a composer offers them.</summary>
+    public static IReadOnlyList<ChatChannel> ChannelsFor(ChatSide side)
+        => Enum.GetValues<ChatChannel>().Where(c => CanPost(side, c)).ToList();
+
+    public static string ChannelLabel(ChatChannel channel) => channel switch
+    {
+        ChatChannel.Internal => "Internal (company only)",
+        ChatChannel.Shared => "Shared with the supplier",
+        ChatChannel.OfficeOnly => "Office only (hidden from the vessel)",
+        _ => channel.ToString(),
+    };
+
     public static string StageOf(ChatSide side) => side == ChatSide.Vessel ? SyncStages.Vessel : SyncStages.Office;
 
     /// <summary>The vessel a message is sent to: none for a message that must stay ashore (office only, or a record without a vessel).</summary>
@@ -150,9 +162,9 @@ public static class ChatRules
             }
         }
 
-        // A marked message is answered by a later reply to it, and is no longer waiting once it is removed.
+        // A marked message is answered by a later reply to it, and is no longer waiting once it is removed or the thread is resolved.
         foreach (var id in waiting.ToList())
-            if (removed.Contains(id) || content.Any(m => m.Kind == ChatKind.Message && m.ReplyToId == id && !removed.Contains(m.Id))) waiting.Remove(id);
+            if (resolved || removed.Contains(id) || content.Any(m => m.Kind == ChatKind.Message && m.ReplyToId == id && !removed.Contains(m.Id))) waiting.Remove(id);
 
         var items = content.Select(m => new ChatItem(m, removed.Contains(m.Id) ? "" : body[m.Id], history[m.Id].Count > 0, removed.Contains(m.Id), redacted.ContainsKey(m.Id),
             redacted.GetValueOrDefault(m.Id, ""), waiting.Contains(m.Id), viewer.UserId is not null && m.AuthorUserId == viewer.UserId, history[m.Id])).ToList();

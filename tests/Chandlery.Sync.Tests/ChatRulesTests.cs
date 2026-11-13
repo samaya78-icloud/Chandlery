@@ -62,6 +62,15 @@ public class ChatRulesTests
     public void WhoMayWriteOnWhichChannel(ChatSide side, ChatChannel channel, bool allowed) => Assert.Equal(allowed, ChatRules.CanPost(side, channel));
 
     [Fact]
+    public void AComposerOffersOnlyTheChannelsASideMayUse()
+    {
+        Assert.Equal([ChatChannel.Internal, ChatChannel.Shared, ChatChannel.OfficeOnly], ChatRules.ChannelsFor(ChatSide.Office));
+        Assert.Equal([ChatChannel.Internal], ChatRules.ChannelsFor(ChatSide.Vessel));
+        Assert.Equal([ChatChannel.Shared], ChatRules.ChannelsFor(ChatSide.Supplier));
+        Assert.All(Enum.GetValues<ChatChannel>(), c => Assert.False(string.IsNullOrEmpty(ChatRules.ChannelLabel(c))));
+    }
+
+    [Fact]
     public void OfficeOnlyMessagesAndRecordsWithoutAVesselNeverGoToAVessel()
     {
         Assert.Null(ChatRules.SyncVessel(Vessel, ChatChannel.OfficeOnly));
@@ -218,6 +227,16 @@ public class ChatRulesTests
         var answered = ChatRules.Replay([ask, mark, Msg("Friday", Chief, 5, replyTo: ask.Id)], Office);
         Assert.Equal(0, answered.NeedingReply);
         Assert.False(answered.Items[0].NeedsReply);
+    }
+
+    [Fact]
+    public void ResolvingAThreadEndsTheWaiting_AndReopeningBringsItBack()
+    {
+        var ask = Msg("when can you deliver?", Ana, 0, stage: SyncStages.Office);
+        var mark = Msg("", Ana, 1, kind: ChatKind.NeedsReply, target: ask.Id, stage: SyncStages.Office);
+        var resolve = Msg("", Ana, 2, kind: ChatKind.Resolve, stage: SyncStages.Office);
+        Assert.Equal(0, ChatRules.Replay([ask, mark, resolve], Office).NeedingReply);
+        Assert.Equal(1, ChatRules.Replay([ask, mark, resolve, Msg("", Ana, 3, kind: ChatKind.Reopen, stage: SyncStages.Office)], Office).NeedingReply);
     }
 
     [Fact]

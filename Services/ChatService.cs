@@ -207,6 +207,36 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         return message;
     }
 
+    // ---- what a screen needs to know ----
+
+    /// <summary>True when a vessel's conversations are switched on (a record with no vessel always may).</summary>
+    public async Task<bool> IsEnabledAsync(Guid companyId, Guid? vesselId)
+    {
+        if (vesselId is null) return true;
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await IsEnabledForVesselAsync(db, companyId, vesselId.Value);
+    }
+
+    /// <summary>Who this person is in a conversation (side, vessel, administrator), or null when they cannot take part.</summary>
+    public async Task<ChatViewer?> ViewerAsync(Guid companyId, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        try { return (await WhoAsync(db, companyId, actor)).Viewer; }
+        catch (InvalidOperationException) { return null; }
+    }
+
+    /// <summary>Which of these messages are still waiting to be sent to the other side (shown as "not yet synced").</summary>
+    public async Task<HashSet<Guid>> UnsyncedAsync(Guid companyId, IEnumerable<Guid> messageIds)
+    {
+        var ids = messageIds.ToList();
+        if (ids.Count == 0) return [];
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return (await db.SyncDirties.AsNoTracking().Where(d => d.DocType == nameof(ChatMessage) && ids.Contains(d.DocId)).Select(d => d.DocId).ToListAsync()).ToHashSet();
+    }
+
     // ---- reading ----
 
     private static async Task<List<ChatMessage>> LoadAsync(ChandleryDbContext db, Guid companyId, string moduleType, Guid recordId, ChatViewer viewer)
