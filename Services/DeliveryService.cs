@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -124,6 +124,8 @@ public class DeliveryService(IDbContextFactory<ChandleryDbContext> factory)
             $"RECORDED {delivery.DoNumber}: {delivery.Lines.Count} line(s)" +
             (delivery.Place == "" ? "" : $" at {delivery.Place}") +
             (oldStatus == po.DeliveryStatus ? "" : $"; delivery now {po.DeliveryStatus}"));
+        await ChatService.NoteAsync(db, companyId, ChatModules.PurchaseOrder, poId, po.VesselId,
+            $"Delivery {delivery.DoNumber} recorded by {actor.Name}: {delivery.Lines.Count} line(s)" + (oldStatus == po.DeliveryStatus ? "" : $"; delivery now {po.DeliveryStatus}"));
         await db.SaveChangesAsync();
         return delivery;
     }

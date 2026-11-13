@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -214,6 +214,18 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         return message;
     }
 
+    /// <summary>
+    /// Adds a system line ("approved", "delivery recorded") to a conversation inside the caller's own save, so the line and the event it records stand or fall together.
+    /// Does nothing where conversations are off for the vessel. The caller saves.
+    /// </summary>
+    public static async Task NoteAsync(ChandleryDbContext db, Guid companyId, string moduleType, Guid recordId, Guid? vesselId, string text, ChatChannel channel = ChatChannel.Internal)
+    {
+        if (!ChatModules.All.Contains(moduleType) || string.IsNullOrWhiteSpace(text)) return;
+        if (vesselId is { } vessel) { if (!await IsEnabledForVesselAsync(db, companyId, vessel)) return; }
+        else if (db.Node.IsVessel) return;
+        db.ChatMessages.Add(New(db, companyId, null, moduleType, recordId, vesselId, "", ChatKind.System, channel, text.Trim(), null, null, ""));
+    }
+
     // ---- what a screen needs to know ----
 
     /// <summary>True when a vessel's conversations are switched on (a record with no vessel always may).</summary>
@@ -255,7 +267,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
 
         var vesselIds = threads.Select(g => g.First().VesselId).Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
         var vessels = await db.Vessels.AsNoTracking().Where(v => vesselIds.Contains(v.Id)).ToDictionaryAsync(v => v.Id, v => v.Name);
-        var records = await DescribeAsync(db, threads.Select(g => (g.Key.ModuleType, g.Key.RecordId)));
+        var records = await DescribeAsync(db, who.Side, threads.Select(g => (g.Key.ModuleType, g.Key.RecordId)));
 
         var rows = new List<ChatInboxRow>();
         foreach (var g in threads)
@@ -283,16 +295,31 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
 
     private sealed record RecordInfo(string Label, string? Href);
 
-    /// <summary>The name and address of each record a conversation belongs to. A module appears here when its pages carry the conversation panel.</summary>
-    private static async Task<Dictionary<(string ModuleType, Guid RecordId), RecordInfo>> DescribeAsync(ChandleryDbContext db, IEnumerable<(string ModuleType, Guid RecordId)> keys)
+    /// <summary>The name and address of each record a conversation belongs to, as the viewer's side opens it. A module appears here when its pages carry the conversation panel.</summary>
+    private static async Task<Dictionary<(string ModuleType, Guid RecordId), RecordInfo>> DescribeAsync(ChandleryDbContext db, ChatSide side, IEnumerable<(string ModuleType, Guid RecordId)> keys)
     {
         var result = new Dictionary<(string, Guid), RecordInfo>();
-        var tasks = keys.Where(k => k.ModuleType == ChatModules.Worklist).Select(k => k.RecordId).Distinct().ToList();
+        var wanted = keys.ToList();
+        List<Guid> Of(string module) => wanted.Where(k => k.ModuleType == module).Select(k => k.RecordId).Distinct().ToList();
+        string? Href(string? office, string? vessel) => side switch { ChatSide.Office => office, ChatSide.Vessel => vessel, _ => null };
+
+        var tasks = Of(ChatModules.Worklist);
         foreach (var t in await db.WorklistTasks.AsNoTracking().Where(t => tasks.Contains(t.Id)).Select(t => new { t.Id, t.Code, t.Title }).ToListAsync())
             result[(ChatModules.Worklist, t.Id)] = new RecordInfo($"{t.Code} · {t.Title}", $"/worklist/{t.Id}#conversation");
+
+        var orders = Of(ChatModules.PurchaseOrder);
+        foreach (var o in await db.PurchaseOrders.AsNoTracking().Where(o => orders.Contains(o.Id)).Select(o => new { o.Id, o.PoNumber }).ToListAsync())
+            result[(ChatModules.PurchaseOrder, o.Id)] = new RecordInfo($"Order {o.PoNumber}", Href($"/company/purchase-orders/{o.Id}#conversation", $"/vessel/orders/{o.Id}#conversation"));
+
+        var requisitions = Of(ChatModules.Requisition);
+        foreach (var r in await db.Requisitions.AsNoTracking().Where(r => requisitions.Contains(r.Id)).Select(r => new { r.Id, r.ReqnNumber }).ToListAsync())
+            result[(ChatModules.Requisition, r.Id)] = new RecordInfo($"Requisition {r.ReqnNumber}", Href($"/company/requisitions/{r.Id}#conversation", null));
+
+        var rfqs = Of(ChatModules.Rfq);
+        foreach (var r in await db.Rfqs.AsNoTracking().Where(r => rfqs.Contains(r.Id)).Select(r => new { r.Id, r.RfqNumber }).ToListAsync())
+            result[(ChatModules.Rfq, r.Id)] = new RecordInfo($"RFQ {r.RfqNumber}", Href($"/company/rfqs/{r.Id}#conversation", $"/vessel/rfqs/{r.Id}#conversation"));
         return result;
     }
-
     /// <summary>Who this person is in a conversation (side, vessel, administrator), or null when they cannot take part.</summary>
     public async Task<ChatViewer?> ViewerAsync(Guid companyId, Actor actor)
     {

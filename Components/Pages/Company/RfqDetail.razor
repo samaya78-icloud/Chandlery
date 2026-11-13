@@ -1,4 +1,4 @@
-@page "/company/rfqs/{RfqId:guid}"
+﻿@page "/company/rfqs/{RfqId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -387,6 +387,10 @@ else
             </button>
         </div>
     }
+
+    <div class="mt-8 print:hidden">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.Rfq" RecordId="_rfq.Id" VesselId="_rfq.VesselId" Title="Conversation" />
+    </div>
 
     <div class="mt-8">
         <AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.Rfq" EntityId="_rfq.Id" Version="_auditVersion" />

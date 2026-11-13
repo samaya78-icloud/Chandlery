@@ -1,4 +1,4 @@
-@page "/vessel/rfqs/{RfqId:guid}"
+﻿@page "/vessel/rfqs/{RfqId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -150,6 +150,10 @@ else
             </div>
         }
     }
+
+    <div class="mt-6">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.Rfq" RecordId="rfq.Id" VesselId="rfq.VesselId" Title="Conversation" />
+    </div>
 }
 
 @code {

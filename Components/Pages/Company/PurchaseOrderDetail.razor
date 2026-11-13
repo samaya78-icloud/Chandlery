@@ -1,4 +1,4 @@
-@page "/company/purchase-orders/{PoId:guid}"
+﻿@page "/company/purchase-orders/{PoId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -279,6 +279,10 @@ else
     @* Approval *@
     <ApprovalPanel Slots="_approvals.Select(a => ApprovalSlotView.From(a, _levelNames)).ToList()" CanDecide="_canDecide" Noun="purchase order"
                    TotalText="@Money.Format(_po.Total, _po.Currency)" Busy="_busy" Error="@_error" OnDecide="Decide" />
+
+    <div class="mt-6 print:hidden">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.PurchaseOrder" RecordId="_po.Id" VesselId="_po.VesselId" Title="Conversation" />
+    </div>
 
     <div class="mt-6 flex gap-3 print:hidden">
         <button onclick="window.print()" class="btn btn-secondary">Print</button>

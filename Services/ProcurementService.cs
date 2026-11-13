@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -1627,6 +1627,8 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
             await ApprovalRouting.RouteAsync(db, po, actor, emergencyJustification);
             AuditLog.Add(db, companyId, AuditEntityTypes.Rfq, rfq.Id, actor,
                 $"RAISED {po.PoNumber} for {supplierName} ({po.Lines.Count} lines)");
+            await ChatService.NoteAsync(db, companyId, ChatModules.Rfq, rfq.Id, rfq.VesselId, $"Order {po.PoNumber} raised for {supplierName} ({po.Lines.Count} lines)");
+            await ChatService.NoteAsync(db, companyId, ChatModules.PurchaseOrder, po.Id, po.VesselId, $"Order {po.PoNumber} raised from {rfq.RfqNumber} for {supplierName}: total {Money.Format(po.Total, po.Currency)}");
         }
 
         // Onboard the requisition may already be with the office, which owns it, so it is left to the office to mark it ordered.
