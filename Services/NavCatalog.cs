@@ -16,7 +16,7 @@ public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
 public class NavCatalogService(
     ApprovalService approvals, InvoiceService invoices, WorklistService worklist, PmsService pms, RestHoursService rest,
     TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
-    IncidentService incidents, DrillService drills, DrillFleetService drillFleet, IAuthorizationService authorization)
+    IncidentService incidents, DrillService drills, DrillFleetService drillFleet, PermitService permits, IAuthorizationService authorization)
 {
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
     {
@@ -133,6 +133,13 @@ public class NavCatalogService(
             if (!isVessel) safety.Add(new("/incidents/statistics", "Statistics", "incident", Section: incidentReports));
             safety.Add(new("/incidents/lessons", "Lessons learned", "incident", Section: incidentReports));
             if (!isVessel) admin.Add(new("/incidents/settings", "Incident settings", "incident"));
+        }
+
+        if (await permits.IsEnabledForCompanyAsync(companyId))
+        {
+            const string permitToWork = "Permit to work";
+            safety.Add(new("/permits", "Permit board", "permit", Section: permitToWork));
+            if (isVessel) safety.Add(new("/permits/new", "New permit", "permit", Section: permitToWork));
         }
 
         if (await drills.IsEnabledForCompanyAsync(companyId))

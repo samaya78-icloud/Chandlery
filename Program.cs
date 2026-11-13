@@ -461,6 +461,18 @@ app.MapGet("/drills/{drillId:guid}/pdf", async (Guid drillId, HttpContext http, 
     return Results.File(DrillPdf.Build(detail, company), "application/pdf", DrillPdf.FileName(detail));
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
+app.MapGet("/permits/{permitId:guid}/pdf", async (Guid permitId, HttpContext http, PermitService permits, IDbContextFactory<ChandleryDbContext> factory) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    PermitDetail? detail;
+    try { detail = await permits.GetAsync(companyId, permitId, Actor.From(http.User)); }
+    catch (InvalidOperationException) { return Results.Forbid(); }
+    if (detail is null) return Results.NotFound();
+    await using var db = await factory.CreateDbContextAsync();
+    var company = await db.Companies.IgnoreQueryFilters().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+    return Results.File(PermitPdf.Build(detail, company), "application/pdf", PermitPdf.FileName(detail));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
 app.MapGet("/meetings/{meetingId:guid}/pdf", async (Guid meetingId, HttpContext http, MeetingService meetings, IDbContextFactory<ChandleryDbContext> factory) =>
 {
     if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();

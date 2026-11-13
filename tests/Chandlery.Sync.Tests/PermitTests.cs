@@ -97,7 +97,7 @@ public class PermitTests : IAsyncLifetime
         // Everything that stops it is listed: the checklist, the reading, the Master. The issuer must be authorised and not the requester.
         var check = await _vessel.CheckIssueAsync(_s.CompanyId, permit.Id, As(_chief));
         Assert.Equal(["Not answered: ", "A gas reading is needed", "The Master has not approved it"], check.Missing.Select(m => m.StartsWith("Not answered") ? "Not answered: " : m).Distinct());
-        Assert.Contains("not authorised", (await _vessel.CheckIssueAsync(_s.CompanyId, permit.Id, As(_second))).Missing);
+        Assert.Contains((await _vessel.CheckIssueAsync(_s.CompanyId, permit.Id, As(_second))).Missing, m => m.Contains("not authorised"));
         Assert.Contains("cannot be issued yet", await RefusedAsync(() => _vessel.IssueAsync(_s.CompanyId, permit.Id, As(_chief))));
 
         await AnswerAllAsync(permit, _second);
@@ -239,7 +239,7 @@ public class PermitTests : IAsyncLifetime
         var old = (await _vessel.GetAsync(_s.CompanyId, first.Id, As(_second)))!;
         Assert.Equal((1, firstCount, 60), (old.Permit.ChecklistVersion, old.Permit.Answers.Count, old.Terms.GasRepeatMinutes));       // the permit keeps the terms it was requested under
         Assert.Equal(15, (await _vessel.GetAsync(_s.CompanyId, second.Id, As(_second)))!.Terms.GasRepeatMinutes);
-        Assert.Equal(2, (await _vessel.ChecklistAsync(_s.CompanyId, Cold.Id)).Count(i => i.Text == "The area is lit" || i.Text.StartsWith("The area has been")));
+        Assert.Equal(3, (await _vessel.ChecklistAsync(_s.CompanyId, Cold.Id)).Count(i => i.Text == "The area is lit" || i.Text.StartsWith("The area has been")));
     }
 
     [Fact]
@@ -311,7 +311,7 @@ public class PermitTests : IAsyncLifetime
         Assert.Contains("Choose", await Refused(Input(Enclosed) with { PermitTypeId = Guid.NewGuid() }));
 
         var kept = await _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Enclosed));
-        Assert.Contains("requested by", await RefusedAsync(() => _vessel.WithdrawAsync(_s.CompanyId, kept.Id, As(_ab1), "Not mine")));
+        Assert.Contains("withdraws", await RefusedAsync(() => _vessel.WithdrawAsync(_s.CompanyId, kept.Id, As(_ab1), "Not mine")));
         await _vessel.WithdrawAsync(_s.CompanyId, kept.Id, As(_second), "Raised for the wrong hold.");
         Assert.Contains("withdrawn", await RefusedAsync(() => _vessel.WithdrawAsync(_s.CompanyId, kept.Id, As(_second), "Again")));
         await _s.SettleUntilQuietAsync();

@@ -1,0 +1,396 @@
+@page "/permits/{Id:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject PermitService Svc
+
+<PageTitle>@(_d?.Permit.Code ?? "Permit") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else if (_d is null)
+{
+    <EmptyState Title="Permit not found" Message="It does not exist, or it belongs to another vessel." />
+}
+else
+{
+    var p = _d.Permit;
+    var (stateLabel, stateTone) = PermitLook.State(_d.State);
+    <PageHeader Eyebrow="@_d.VesselName" Title="@p.Code" Subtitle="@($"{p.TypeName}, {p.Location}")">
+        <Actions>
+            @if (_d.Terms.EntryLogRequired && PermitRules.IsOpen(_d.State)) { <a href="/permits/@p.Id/log" class="btn btn-primary">Entry log</a> }
+            <a href="/permits/@p.Id/pdf" target="_blank" class="btn btn-secondary">Print</a>
+            <a href="/permits" class="btn btn-secondary">Permit board</a>
+        </Actions>
+    </PageHeader>
+
+    <div class="mb-3 flex flex-wrap items-center gap-2">
+        <StatusChip Label="@stateLabel" Tone="@stateTone" />
+        @if (_d.State == PermitState.Active) { <StatusChip Label="@(_d.Validity.Valid ? "Valid now" : "Not valid: " + _d.Validity.Reason)" Tone="@(_d.Validity.Valid ? "success" : "danger")" /> }
+        @if (_d.Terms.GasTestRequired) { var (gl, gt) = PermitLook.Gas(_d.Gas); <StatusChip Label="@gl" Tone="@gt" /> }
+        <span class="chip">Checklist version @p.ChecklistVersion</span>
+        <span class="chip">@PermitLook.Window(p, _d.Until)</span>
+        @if (_d.Inside.Count > 0) { <span class="chip" data-tone="warning">@_d.Inside.Count inside: @string.Join(", ", _d.Inside.Select(e => e.PersonName))</span> }
+    </div>
+
+    <ol class="mb-5 flex flex-wrap gap-2 text-xs">
+        @foreach (var (n, label, done) in Steps())
+        {
+            <li class="chip" data-tone="@(done ? "success" : "neutral")">@n. @label@(done ? " ✓" : "")</li>
+        }
+    </ol>
+
+    @if (_d.State == PermitState.Expired)
+    {
+        <div class="mb-5 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">The window ended and the permit was not closed. Nobody should be working under it. The issuer closes it with the status of the work.</div>
+    }
+
+    <div class="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <div class="space-y-5 lg:col-span-2">
+            <div class="card p-4 text-sm">
+                <h2 class="mb-3 text-base font-semibold text-ink">The permit</h2>
+                <dl class="grid grid-cols-1 gap-x-6 gap-y-2 md:grid-cols-2">
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Person in charge</dt><dd>@p.RequesterName</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Issued by</dt><dd>@(p.IssuerName == "" ? "–" : p.IssuerName)</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Attendant</dt><dd>@(p.AttendantName == "" ? "–" : p.AttendantName)</dd></div>
+                    <div><dt class="text-xs uppercase tracking-wide text-muted">Doing the work</dt><dd>@(p.Persons.Count == 0 ? "–" : string.Join(", ", p.Persons.Select(x => x.Name)))</dd></div>
+                </dl>
+                @Block("The work", p.Description)
+                @Block("Isolation points and equipment", p.Isolation)
+                @Block("Conditions", p.Conditions)
+            </div>
+
+            <div class="card p-4 text-sm">
+                <h2 class="mb-1 text-base font-semibold text-ink">1. Checklist</h2>
+                @if (!_d.Can.Answer) { <p class="mb-3 text-xs text-muted">@(_d.State == PermitState.Requested ? "Only the person in charge, an issuer or the Master answers the checklist." : "The checklist is as it was when the permit was issued.")</p> }
+                @foreach (var group in p.Answers.OrderBy(a => a.Position).GroupBy(a => a.Section))
+                {
+                    <h3 class="mt-3 text-xs font-bold uppercase tracking-wider text-muted">@group.Key</h3>
+                    <ul class="divide-y divide-line/60">
+                        @foreach (var a in group)
+                        {
+                            <li class="py-2">
+                                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                    <span class="min-w-0 flex-1">@a.Text@(a.Mandatory ? "" : " (optional)")</span>
+                                    @if (_d.Can.Answer)
+                                    {
+                                        <span class="flex gap-3 whitespace-nowrap">
+                                            @foreach (var kind in Kinds)
+                                            {
+                                                <label class="flex items-center gap-1"><input type="radio" name="a@(a.Id)" checked="@(Kind(a) == kind)" @onchange="() => SetKind(a.Id, kind)" /> @PermitLook.Answer(kind)</label>
+                                            }
+                                        </span>
+                                    }
+                                    else { <span class="font-medium">@PermitLook.Answer(a.Answer)</span> }
+                                </div>
+                                @if (_d.Can.Answer && (a.NoteRequired || Kind(a) != PermitAnswerKind.Unanswered))
+                                {
+                                    <input class="input mt-1 w-full" maxlength="1000" placeholder="@(a.NoteRequired ? "Note (needed)" : "Note (optional)")" value="@Note(a)" @onchange="e => SetNote(a.Id, e.Value?.ToString() ?? string.Empty)" />
+                                }
+                                else if (a.Note != "") { <p class="text-xs text-muted">@a.Note</p> }
+                                @if (a.ByName != "") { <p class="text-xs text-muted">@a.ByName, @(a.At is { } at ? PermitLook.When(at) : "")</p> }
+                            </li>
+                        }
+                    </ul>
+                }
+                @if (_d.Can.Answer) { <button class="btn btn-secondary btn-sm mt-3" disabled="@_busy" @onclick="SaveAnswersAsync">Save the answers</button> }
+            </div>
+
+            @if (_d.Terms.GasTestRequired)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-1 text-base font-semibold text-ink">2. Gas test</h2>
+                    <p class="mb-3 text-xs text-muted">
+                        Limits: oxygen @_d.Terms.OxygenMin.ToString("0.0") to @_d.Terms.OxygenMax.ToString("0.0")%, flammable gas not above @_d.Terms.FlammableMaxPercentLel.ToString("0.#")% LEL, hydrogen sulphide not above @_d.Terms.H2sMaxPpm.ToString("0.#") ppm, carbon monoxide not above @_d.Terms.CoMaxPpm.ToString("0.#") ppm.
+                        Repeat every @_d.Terms.GasRepeatMinutes minutes@(_d.NextGasDue is { } due && PermitRules.IsOpen(_d.State) ? $"; the next reading is due by {PermitLook.When(due)}." : ".")
+                    </p>
+                    @if (p.Readings.Count > 0)
+                    {
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left">
+                                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Time</th><th>O₂ %</th><th>LEL %</th><th>H₂S ppm</th><th>CO ppm</th><th>Instrument</th><th>By</th><th>Result</th></tr></thead>
+                                <tbody>
+                                    @foreach (var r in p.Readings.OrderBy(x => x.At))
+                                    {
+                                        <tr class="border-t border-line/60">
+                                            <td class="py-1 whitespace-nowrap">@PermitLook.When(r.At)</td><td>@r.Oxygen</td><td>@r.FlammablePercentLel</td><td>@(r.H2sPpm?.ToString() ?? "–")</td><td>@(r.CoPpm?.ToString() ?? "–")</td>
+                                            <td>@r.Instrument@(r.CalibrationDate is { } cal ? $" (cal. {cal:d MMM yyyy})" : "")</td><td>@r.ByName</td>
+                                            <td>@if (r.WithinLimits) { <StatusChip Label="In limits" Tone="success" /> } else { <StatusChip Label="@r.Failures" Tone="danger" /> }</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    @if (_d.Can.Gas)
+                    {
+                        <div class="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-3 md:grid-cols-4">
+                            <label class="col-span-2">Gas detector<input class="input mt-1 w-full" maxlength="120" placeholder="Name or serial number" @bind="_instrument" /></label>
+                            <label>Calibrated on<input type="date" class="input mt-1 w-full" @bind="_calibration" /></label>
+                            <label>Where taken<input class="input mt-1 w-full" maxlength="200" @bind="_gasWhere" /></label>
+                            <label>Oxygen %<input type="number" step="0.1" class="input mt-1 w-full" @bind="_o2" /></label>
+                            <label>Flammable % LEL<input type="number" step="0.1" class="input mt-1 w-full" @bind="_lel" /></label>
+                            <label>H₂S ppm<input type="number" step="0.1" class="input mt-1 w-full" @bind="_h2s" /></label>
+                            <label>CO ppm<input type="number" step="0.1" class="input mt-1 w-full" @bind="_co" /></label>
+                        </div>
+                        <button class="btn btn-secondary btn-sm mt-3" disabled="@_busy" @onclick="GasAsync">Record the reading</button>
+                    }
+                </div>
+            }
+
+            @if (_d.State == PermitState.Requested && !_d.Can.IsOffice)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-1 text-base font-semibold text-ink">3. Approval and issue</h2>
+                    @if (_d.Check.Missing.Count == 0) { <p class="mb-3 text-emerald-700">Nothing is missing: the permit can be issued by an authorised issuer.</p> }
+                    else
+                    {
+                        <p class="mb-2 text-xs text-muted">What still stops this permit being issued@(_d.Can.Issue ? "" : " (an issuer will see this list too)"):</p>
+                        <ul class="mb-3 list-disc space-y-1 pl-5 text-rose-700">
+                            @foreach (var m in _d.Check.Missing) { <li>@m</li> }
+                        </ul>
+                    }
+                    @foreach (var c in _d.Check.Conflicts)
+                    {
+                        <div class="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-800">Conflicts with <a class="link font-mono" href="/permits/@c.PermitId">@c.Code</a>: @c.Message.</div>
+                    }
+                    @if (_d.Can.Approve) { <button class="btn btn-secondary btn-sm mr-2" disabled="@_busy" @onclick="ApproveAsync">Approve as Master</button> }
+                    @if (_d.Can.Issue)
+                    {
+                        <label class="mt-2 block">Conditions written on the permit (optional)<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="_conditions"></textarea></label>
+                        @if (_d.Check.Conflicts.Count > 0) { <label class="mt-2 flex items-center gap-2"><input type="checkbox" @bind="_ack" /> I have read the warning and issue the permit anyway</label> }
+                        <button class="btn btn-primary mt-3" disabled="@(_busy || !_d.Check.CanIssue)" @onclick="IssueAsync">Issue the permit</button>
+                    }
+                </div>
+            }
+
+            @if (_d.State is PermitState.Issued or PermitState.Active or PermitState.Suspended or PermitState.Expired)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-3 text-base font-semibold text-ink">@(_d.State == PermitState.Issued ? "4. Start the work" : "4. While the work goes on")</h2>
+                    <div class="flex flex-wrap items-end gap-3">
+                        @if (_d.Can.Start) { <button class="btn btn-primary" disabled="@_busy" @onclick="StartAsync">Start the work</button> }
+                        @if (_d.Can.Resume) { <button class="btn btn-primary" disabled="@_busy" @onclick="ResumeAsync">Resume the work</button> }
+                    </div>
+                    @if (_d.Can.Suspend)
+                    {
+                        <div class="mt-3 flex flex-wrap items-end gap-2">
+                            <input class="input" maxlength="300" placeholder="Why the work stops" @bind="_reason" />
+                            <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="SuspendAsync">Suspend</button>
+                        </div>
+                    }
+                    @if (_d.Can.Extend)
+                    {
+                        <div class="mt-3 flex flex-wrap items-end gap-2">
+                            <label>New end of the permit<input type="datetime-local" class="input mt-1" @bind="_extendUntil" /></label>
+                            <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="ExtendAsync">Extend</button>
+                            <span class="text-xs text-muted">@(_d.Terms.GasTestRequired ? "Needs a fresh gas reading within limits." : "")</span>
+                        </div>
+                    }
+                    @if (_d.Can.HandOver)
+                    {
+                        <div class="mt-3 flex flex-wrap items-end gap-2">
+                            <label>Hand over to
+                                <select class="select mt-1" @bind="_handTo">
+                                    <option value="@Guid.Empty">Choose…</option>
+                                    @foreach (var c in _crew.Where(c => c.Id != p.RequesterCrewId)) { <option value="@c.Id">@c.FullName, @c.Rank</option> }
+                                </select>
+                            </label>
+                            <input class="input" maxlength="300" placeholder="State of the work" @bind="_handState" />
+                            <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="HandOverAsync">Hand over</button>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (_d.Can.FinishWork || _d.Can.Complete || _d.Can.Cancel || _d.Can.Withdraw)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-1 text-base font-semibold text-ink">5. Closing</h2>
+                    <p class="mb-3 text-xs text-muted">The person in charge signs that the work is finished, the area is safe and everyone is out. Then the issuer inspects and closes. A closed permit cannot be changed.</p>
+                    @if (_d.Can.FinishWork)
+                    {
+                        <div class="flex flex-wrap items-end gap-2">
+                            <input class="input w-80" maxlength="300" placeholder="Work finished, area safe, equipment restored" @bind="_finishNote" />
+                            <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="FinishAsync">Sign: work finished</button>
+                        </div>
+                    }
+                    @if (_d.Can.Complete)
+                    {
+                        <div class="mt-3 flex flex-wrap items-end gap-2">
+                            <label>Status of the work
+                                <select class="select mt-1" @bind="_closeStatus">
+                                    @foreach (var s in Enum.GetValues<PermitCloseStatus>()) { <option value="@s">@PermitLook.Close(s)</option> }
+                                </select>
+                            </label>
+                            <input class="input w-80" maxlength="300" placeholder="@(_d.State == PermitState.Expired || _closeStatus != PermitCloseStatus.Finished ? "What state it was left in (needed)" : "Note (optional)")" @bind="_closeNote" />
+                            <button class="btn btn-primary btn-sm" disabled="@_busy" @onclick="CompleteAsync">Inspect and close</button>
+                        </div>
+                    }
+                    @if (_d.Can.Cancel || _d.Can.Withdraw)
+                    {
+                        <div class="mt-3 flex flex-wrap items-end gap-2 border-t border-line pt-3">
+                            <input class="input w-80" maxlength="300" placeholder="Reason" @bind="_cancelReason" />
+                            @if (_d.Can.Withdraw) { <button class="btn btn-ghost btn-sm" disabled="@_busy" @onclick="WithdrawAsync">Withdraw (raised in error)</button> }
+                            @if (_d.Can.Cancel) { <button class="btn btn-ghost btn-sm" disabled="@_busy" @onclick="CancelAsync">Cancel the permit</button> }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="space-y-5">
+            <div class="card p-4 text-sm">
+                <h2 class="mb-3 text-base font-semibold text-ink">What happened</h2>
+                <ol class="space-y-2">
+                    @foreach (var e in p.Events.OrderBy(x => x.At).ThenBy(x => x.Id))
+                    {
+                        <li>
+                            <div class="font-medium">@PermitLook.Event(e.Kind) <span class="font-normal text-muted">@PermitLook.When(e.At)</span></div>
+                            <div class="text-xs text-muted">@e.ByName@(e.Note != "" ? $": {e.Note}" : "")</div>
+                        </li>
+                    }
+                </ol>
+            </div>
+
+            @if (_d.Actions.Count > 0)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-3 text-base font-semibold text-ink">Tasks</h2>
+                    <ul class="space-y-1">
+                        @foreach (var t in _d.Actions)
+                        {
+                            <li class="flex flex-wrap items-center gap-2"><a href="/worklist/@t.Id" class="link font-mono font-semibold">@t.Code</a><span>@t.Title</span><StatusChip Value="@t.Status" /></li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            @if (_d.Comments.Count > 0)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-3 text-base font-semibold text-ink">The office's comments</h2>
+                    <ul class="space-y-3">
+                        @foreach (var c in _d.Comments) { <li><p class="whitespace-pre-line">@c.Text</p><p class="text-xs text-muted">@c.ByName, @PermitLook.When(c.At)</p></li> }
+                    </ul>
+                </div>
+            }
+
+            @if (_d.Can.Comment)
+            {
+                <div class="card p-4 text-sm">
+                    <h2 class="mb-2 text-base font-semibold text-ink">Comment for the vessel</h2>
+                    <textarea class="textarea w-full" rows="3" maxlength="2000" @bind="_comment"></textarea>
+                    <button class="btn btn-secondary btn-sm mt-2" disabled="@_busy" @onclick="CommentAsync">Send the comment</button>
+                </div>
+            }
+
+            @if (_error is not null) { <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+            @if (_notice is not null) { <div class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_notice</div> }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private static readonly PermitAnswerKind[] Kinds = [PermitAnswerKind.Yes, PermitAnswerKind.No, PermitAnswerKind.NotApplicable];
+
+    private Guid _companyId, _handTo;
+    private Actor _actor = default!;
+    private PermitDetail? _d;
+    private bool _loaded, _busy, _ack;
+    private string? _error, _notice;
+    private string _instrument = "", _gasWhere = "", _conditions = "", _reason = "", _handState = "", _finishNote = "", _closeNote = "", _cancelReason = "", _comment = "";
+    private DateTime? _calibration;
+    private decimal? _o2, _lel, _h2s, _co;
+    private DateTime _extendUntil = DateTime.UtcNow.AddHours(2);
+    private PermitCloseStatus _closeStatus;
+    private List<CrewMember> _crew = [];
+    private readonly Dictionary<Guid, PermitAnswerKind> _kinds = [];
+    private readonly Dictionary<Guid, string> _notes = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        try { _d = await Svc.GetAsync(_companyId, Id, _actor); }
+        catch (InvalidOperationException) { _d = null; }
+        if (_d is null) return;
+        _kinds.Clear();
+        _notes.Clear();
+        foreach (var a in _d.Permit.Answers) { _kinds[a.Id] = a.Answer; _notes[a.Id] = a.Note; }
+        if (_crew.Count == 0 && NodeContext.Current.IsVessel) _crew = await Svc.CrewAboardAsync(_companyId, _d.Permit.VesselId);
+        _extendUntil = new DateTime(_d.Until.Year, _d.Until.Month, _d.Until.Day, _d.Until.Hour, _d.Until.Minute, 0).AddHours(2);
+    }
+
+    private IEnumerable<(int N, string Label, bool Done)> Steps()
+    {
+        var p = _d!.Permit;
+        var closed = _d.State is PermitState.Completed or PermitState.Cancelled or PermitState.Withdrawn;
+        yield return (1, "Checklist", p.Events.Any(e => e.Kind == PermitEventKind.ChecklistCompleted));
+        if (_d.Terms.GasTestRequired) yield return (2, "Gas test", p.Readings.Count > 0 && _d.Gas is PermitGasStatus.Ok || p.Events.Any(e => e.Kind == PermitEventKind.Issued) && p.Readings.Count > 0);
+        yield return (3, "Issued", p.Events.Any(e => e.Kind == PermitEventKind.Issued));
+        yield return (4, "Started", p.Events.Any(e => e.Kind == PermitEventKind.Started));
+        yield return (5, "Closed", closed);
+    }
+
+    private PermitAnswerKind Kind(PermitAnswer a) => _kinds.GetValueOrDefault(a.Id, a.Answer);
+    private string Note(PermitAnswer a) => _notes.GetValueOrDefault(a.Id, a.Note);
+    private void SetKind(Guid id, PermitAnswerKind kind) => _kinds[id] = kind;
+    private void SetNote(Guid id, string note) => _notes[id] = note;
+
+    private static RenderFragment Block(string title, string text) => string.IsNullOrWhiteSpace(text) ? (builder => { }) : (builder =>
+    {
+        builder.OpenElement(0, "div"); builder.AddAttribute(1, "class", "mt-3");
+        builder.OpenElement(2, "h3"); builder.AddAttribute(3, "class", "text-xs font-bold uppercase tracking-wider text-muted"); builder.AddContent(4, title); builder.CloseElement();
+        builder.OpenElement(5, "p"); builder.AddAttribute(6, "class", "whitespace-pre-line"); builder.AddContent(7, text); builder.CloseElement();
+        builder.CloseElement();
+    });
+
+    private async Task RunAsync(Func<Task> work, string done)
+    {
+        _error = _notice = null;
+        _busy = true;
+        try { await work(); await LoadAsync(); _notice = done; }
+        catch (InvalidOperationException ex) { _error = ex.Message; await LoadAsync(); }
+        finally { _busy = false; }
+    }
+
+    private Task SaveAnswersAsync()
+    {
+        var inputs = _d!.Permit.Answers.Where(a => Kind(a) != PermitAnswerKind.Unanswered).Select(a => new PermitAnswerInput(a.Id, Kind(a), Note(a))).ToList();
+        return RunAsync(async () => { await Svc.AnswerAsync(_companyId, Id, _actor, inputs); }, "Answers saved.");
+    }
+
+    private Task GasAsync() => RunAsync(async () =>
+    {
+        var reading = await Svc.RecordGasAsync(_companyId, Id, _actor, new PermitGasInput(_instrument, _calibration, _gasWhere, _o2, _lel, _h2s, _co));
+        _o2 = _lel = _h2s = _co = null;
+        if (!reading.WithinLimits) throw new InvalidOperationException("The reading is outside the limits: " + reading.Failures + ".");
+    }, "Reading recorded: within limits.");
+
+    private Task ApproveAsync() => RunAsync(async () => { await Svc.ApproveAsync(_companyId, Id, _actor); }, "Approved.");
+    private Task IssueAsync() => RunAsync(async () => { await Svc.IssueAsync(_companyId, Id, _actor, _ack, _conditions); }, "The permit is issued.");
+    private Task StartAsync() => RunAsync(async () => { await Svc.StartAsync(_companyId, Id, _actor); }, "The work has started.");
+    private Task ResumeAsync() => RunAsync(async () => { await Svc.ResumeAsync(_companyId, Id, _actor); }, "The work resumed.");
+    private Task SuspendAsync() => RunAsync(async () => { await Svc.SuspendAsync(_companyId, Id, _actor, _reason); _reason = ""; }, "The work is suspended.");
+    private Task ExtendAsync() => RunAsync(async () => { await Svc.ExtendAsync(_companyId, Id, _actor, _extendUntil); }, "The permit is extended.");
+    private Task HandOverAsync() => RunAsync(async () => { await Svc.HandOverAsync(_companyId, Id, _actor, _handTo, _handState); _handState = ""; }, "Handed over.");
+    private Task FinishAsync() => RunAsync(async () => { await Svc.FinishWorkAsync(_companyId, Id, _actor, _finishNote); }, "Signed: the work is finished.");
+    private Task CompleteAsync() => RunAsync(async () => { await Svc.CompleteAsync(_companyId, Id, _actor, _closeStatus, _closeNote); }, "The permit is closed.");
+    private Task CancelAsync() => RunAsync(async () => { await Svc.CancelAsync(_companyId, Id, _actor, _cancelReason); }, "The permit is cancelled.");
+    private Task WithdrawAsync() => RunAsync(async () => { await Svc.WithdrawAsync(_companyId, Id, _actor, _cancelReason); }, "The permit is withdrawn.");
+    private Task CommentAsync() => RunAsync(async () => { await Svc.CommentAsync(_companyId, Id, _actor, _comment); _comment = ""; }, "Comment sent.");
+}

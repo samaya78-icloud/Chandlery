@@ -1,0 +1,173 @@
+@page "/permits/new"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject PermitService Svc
+@inject NavigationManager Nav
+
+<PageTitle>New permit · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Vessel" Title="New permit to work" Subtitle="Choose the kind of permit, say where and what, and name who does the work. The checklist, gas test and issue come next.">
+    <Actions>
+        <a href="/permits" class="btn btn-secondary">Permit board</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Permits are not available" Message="@_blocked" />
+}
+else
+{
+    <div class="space-y-5">
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">1. The permit</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label>Kind of permit
+                    <select class="select mt-1 w-full" value="@_typeId" @onchange="OnTypeChanged">
+                        <option value="@Guid.Empty">Choose…</option>
+                        @foreach (var t in _types) { <option value="@t.Id">@t.Name</option> }
+                    </select>
+                </label>
+                <label>Valid from (ship's time)<input type="datetime-local" class="input mt-1 w-full" @bind="_from" /></label>
+                <label>Valid until<input type="datetime-local" class="input mt-1 w-full" @bind="_until" /></label>
+            </div>
+            @if (_type is { } t0)
+            {
+                <ul class="mt-3 flex flex-wrap gap-2 text-xs">
+                    <li class="chip">At most @t0.MaxValidityHours hours</li>
+                    <li class="chip">Requested by @PermitLook.Role(t0.RequesterRole).ToLowerInvariant()</li>
+                    @if (t0.GasTestRequired) { <li class="chip" data-tone="info">Gas test every @t0.GasRepeatMinutes min</li> }
+                    @if (t0.AttendantRequired) { <li class="chip" data-tone="info">Attendant required</li> }
+                    @if (t0.EntryLogRequired) { <li class="chip" data-tone="info">Entry log</li> }
+                    @if (t0.RiskAssessmentRequired) { <li class="chip" data-tone="info">Signed risk assessment required</li> }
+                    @if (t0.MasterApprovalRequired) { <li class="chip" data-tone="info">Master's approval required</li> }
+                </ul>
+            }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">2. Where and what</h2>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label>Where (as written on the permit)<input class="input mt-1 w-full" maxlength="200" @bind="_location" /></label>
+                <label>Tank (if it is a tank or space)
+                    <select class="select mt-1 w-full" @bind="_tank" @bind:after="OnTankChanged">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var t in _tanks) { <option value="@t.Id">@t.Code @t.Name</option> }
+                    </select>
+                </label>
+                <label>Equipment (from the maintenance plan)
+                    <select class="select mt-1 w-full" @bind="_machine">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var m in _machinery) { <option value="@m.Id">@m.Name@(m.Code == "" ? "" : $" ({m.Code})")</option> }
+                    </select>
+                </label>
+            </div>
+            <label class="mt-4 block">The work<textarea class="textarea mt-1 w-full" rows="3" maxlength="2000" @bind="_description"></textarea></label>
+            <label class="mt-4 block">Isolation points and equipment (optional)<textarea class="textarea mt-1 w-full" rows="2" maxlength="1000" @bind="_isolation"></textarea></label>
+            @if (_type?.RiskAssessmentRequired == true || _risks.Count > 0)
+            {
+                <label class="mt-4 block">Risk assessment@(_type?.RiskAssessmentRequired == true ? " (required, and it must be signed)" : "")
+                    <select class="select mt-1 w-full" @bind="_risk">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var r in _risks) { <option value="@r.Id">@r.Code, @r.Job@(r.Signed ? " (signed)" : " (not signed)")</option> }
+                    </select>
+                </label>
+            }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-3 text-base font-semibold text-ink">3. Who</h2>
+            <p class="mb-2 text-xs text-muted">You are the person in charge. Tick who does the work, and name the attendant if the permit needs one: the attendant is not one of the people doing the work.</p>
+            <div class="grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-3">
+                @foreach (var c in _crew)
+                {
+                    <label class="flex items-center gap-2"><input type="checkbox" checked="@_people.Contains(c.Id)" @onchange="e => Toggle(c.Id, (bool)e.Value!)" /> @c.FullName <span class="text-xs text-muted">@c.Rank</span></label>
+                }
+            </div>
+            <label class="mt-4 block max-w-sm">Attendant (stand-by person)
+                <select class="select mt-1 w-full" @bind="_attendant">
+                    <option value="@Guid.Empty">None</option>
+                    @foreach (var c in _crew) { <option value="@c.Id">@c.FullName, @c.Rank</option> }
+                </select>
+            </label>
+        </div>
+
+        @if (_error is not null) { <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+        <div class="flex gap-2">
+            <button class="btn btn-primary" disabled="@_busy" @onclick="SaveAsync">Request the permit</button>
+            <a href="/permits" class="btn btn-secondary">Cancel</a>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId, _typeId, _tank, _machine, _risk, _attendant;
+    private Actor _actor = default!;
+    private bool _loaded, _busy;
+    private string? _blocked, _error;
+    private string _location = "", _description = "", _isolation = "";
+    private DateTime _from = DateTime.UtcNow, _until = DateTime.UtcNow.AddHours(4);
+    private readonly HashSet<Guid> _people = [];
+    private List<PermitType> _types = [];
+    private List<CrewMember> _crew = [];
+    private List<Tank> _tanks = [];
+    private List<MachineryItem> _machinery = [];
+    private List<(Guid Id, string Code, string Job, bool Signed)> _risks = [];
+    private PermitType? _type => _types.FirstOrDefault(t => t.Id == _typeId);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        var me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+        var enabled = await Svc.EnabledVesselsAsync(_companyId);
+        if (me?.VesselId is not { } vessel || enabled.All(v => v.Id != vessel)) { _blocked = "Permits are requested onboard by the crew of the vessel, and the module must be switched on for it."; _loaded = true; return; }
+        _vesselId = vessel;
+        _types = await Svc.TypesAsync(_companyId);
+        _types = _types.Where(t => PermitRules.Meets(t.RequesterRole, me.IsMaster, me.Rank)).ToList();
+        _crew = await Svc.CrewAboardAsync(_companyId, vessel);
+        _tanks = await Svc.TanksAsync(_companyId, vessel);
+        _machinery = await Svc.MachineryAsync(_companyId, vessel);
+        _risks = await Svc.RisksAsync(_companyId, vessel);
+        _from = new DateTime(_from.Year, _from.Month, _from.Day, _from.Hour, _from.Minute, 0);
+        _until = _from.AddHours(4);
+        _loaded = true;
+    }
+
+    private void OnTypeChanged(ChangeEventArgs e)
+    {
+        _typeId = Guid.TryParse(e.Value?.ToString(), out var id) ? id : Guid.Empty;
+        if (_type is { } t && _until - _from > TimeSpan.FromHours(t.MaxValidityHours)) _until = _from.AddHours(t.MaxValidityHours);
+    }
+
+    private void OnTankChanged()
+    {
+        if (_tank != Guid.Empty && _location.Trim() == "") _location = _tanks.First(t => t.Id == _tank).Name;
+    }
+
+    private void Toggle(Guid id, bool on) { if (on) _people.Add(id); else _people.Remove(id); }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var input = new PermitInput(_typeId, _location, _description, _from, _until, _people.ToList(), _attendant == Guid.Empty ? null : _attendant,
+                _tank == Guid.Empty ? null : _tank, _machine == Guid.Empty ? null : _machine, _risk == Guid.Empty ? null : _risk, Isolation: _isolation);
+            var permit = await Svc.RequestAsync(_companyId, _vesselId, _actor, input);
+            Nav.NavigateTo($"/permits/{permit.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

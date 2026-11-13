@@ -1,0 +1,111 @@
+@page "/permits"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject PermitService Svc
+
+<PageTitle>Permit board · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Permit board"
+            Subtitle="Permits to work that are open now, where, and until when. A permit past its window and not closed stays here in red.">
+    <Actions>
+        @if (_mayRequest) { <a href="/permits/new" class="btn btn-primary">New permit</a> }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Permits are not available" Message="@_blocked" />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vessel" @bind:after="LoadAsync">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label class="flex items-center gap-2"><input type="checkbox" @bind="_history" @bind:after="LoadAsync" /> Show closed, cancelled and withdrawn</label>
+    </div>
+
+    @foreach (var o in _board.Overlaps)
+    {
+        <div class="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <span class="font-semibold">Simultaneous operations:</span> @CodeOf(o.A) and @CodeOf(o.B). @o.Message.
+        </div>
+    }
+
+    @if (_board.Rows.Count == 0)
+    {
+        <EmptyState Title="No permits" Message="@(_history ? "No permit has been requested yet." : "No permit is open.")" />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="px-4 py-3">Permit</th><th class="px-4 py-3">Where</th><th class="px-4 py-3">In charge</th><th class="px-4 py-3">Window</th><th class="px-4 py-3">State</th><th class="px-4 py-3">Valid now</th><th class="px-4 py-3">Inside</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _board.Rows)
+                    {
+                        var (label, tone) = PermitLook.State(r.State);
+                        <tr class="border-t border-line/60">
+                            <td class="px-4 py-3"><a class="link font-mono font-semibold" href="/permits/@r.Permit.Id">@r.Permit.Code</a><div class="text-xs text-muted">@r.Permit.TypeName@(_vessels.Count > 1 ? $", {r.VesselName}" : "")</div></td>
+                            <td class="px-4 py-3">@r.Permit.Location</td>
+                            <td class="px-4 py-3">@r.Permit.RequesterName</td>
+                            <td class="px-4 py-3 whitespace-nowrap">@PermitLook.Window(r.Permit, r.Until)</td>
+                            <td class="px-4 py-3"><StatusChip Label="@label" Tone="@tone" /></td>
+                            <td class="px-4 py-3">@if (r.State == PermitState.Active) { <StatusChip Label="@(r.Valid ? "Valid" : "Not valid")" Tone="@(r.Valid ? "success" : "danger")" /><div class="text-xs text-muted">@(r.Valid ? "" : r.Reason)</div> } else { <span class="text-muted">–</span> }</td>
+                            <td class="px-4 py-3">@(r.Inside == 0 ? "–" : r.Inside.ToString())</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] public Guid? VesselQuery { get; set; }
+
+    private Guid _companyId, _vessel;
+    private Actor _actor = default!;
+    private bool _loaded, _mayRequest, _history;
+    private string? _blocked;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private PermitBoard _board = new([], []);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Permit to Work module has not been switched on for any vessel."; _loaded = true; return; }
+        if (NodeContext.Current.IsVessel)
+        {
+            var me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+            if (me?.VesselId is not { } mine || _vessels.All(v => v.Id != mine)) { _blocked = "Permits onboard are for the crew of the vessel, and the module must be switched on for it."; _loaded = true; return; }
+            _vessel = mine;
+            _mayRequest = true;
+            await Svc.SweepAsync(_companyId, mine);
+        }
+        else _vessel = VesselQuery is { } q && _vessels.Any(v => v.Id == q) ? q : _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync() => _board = await Svc.BoardAsync(_companyId, _actor, _vessel, _history);
+
+    private string CodeOf(Guid id) => _board.Rows.FirstOrDefault(r => r.Permit.Id == id)?.Permit.Code ?? "";
+}

@@ -354,7 +354,7 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         var failures = PermitRules.GasFailures(terms, input.Oxygen, input.FlammablePercentLel, input.H2sPpm, input.CoPpm);
         var reading = new PermitGasReading
         {
-            Id = Guid.CreateVersion7(), PermitId = permit.Id, At = Now, Instrument = input.Instrument.Trim(), CalibrationDate = input.CalibrationDate?.Date, Location = (input.Location ?? "").Trim(),
+            Id = Guid.CreateVersion7(), PermitId = permit.Id, At = Now, Instrument = input.Instrument.Trim(), CalibrationDate = input.CalibrationDate is { } calibrated ? DateTime.SpecifyKind(calibrated.Date, DateTimeKind.Utc) : null, Location = (input.Location ?? "").Trim(),
             Oxygen = input.Oxygen, FlammablePercentLel = input.FlammablePercentLel, H2sPpm = input.H2sPpm, CoPpm = input.CoPpm, WithinLimits = failures.Count == 0,
             Failures = string.Join("; ", failures), ByName = who.Name, ByCrewId = who.Crew!.Id,
         };
@@ -696,6 +696,48 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         return comment;
     }
 
+    // ---- pickers for the screens ----
+
+    public async Task<CrewMember?> CrewOfUserAsync(Guid companyId, Guid? userId)
+    {
+        if (userId is null) return null;
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.CrewMembers.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId && c.UserId == userId && c.VesselId != null && c.IsActive);
+    }
+
+    public async Task<List<CrewMember>> CrewAboardAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.CrewMembers.AsNoTracking().Where(c => c.CompanyId == companyId && c.VesselId == vesselId && c.IsActive).OrderBy(c => c.FullName).ToListAsync();
+    }
+
+    public async Task<List<Tank>> TanksAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.Tanks.AsNoTracking().Where(t => t.CompanyId == companyId && t.VesselId == vesselId).OrderBy(t => t.Code).ToListAsync();
+    }
+
+    public async Task<List<MachineryItem>> MachineryAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.MachineryItems.AsNoTracking().Where(m => m.CompanyId == companyId && m.VesselId == vesselId).OrderBy(m => m.Name).ToListAsync();
+    }
+
+    /// <summary>The vessel's risk assessments, newest first, with whether each is signed, for linking one to a permit.</summary>
+    public async Task<List<(Guid Id, string Code, string Job, bool Signed)>> RisksAsync(Guid companyId, Guid vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var list = await db.RiskAssessments.AsNoTracking().Where(r => r.CompanyId == companyId && r.VesselId == vesselId).OrderByDescending(r => r.AssessedOn).Take(100).ToListAsync();
+        var ids = list.Select(r => r.Id).ToList();
+        var signs = (await db.RaSignOffs.AsNoTracking().Where(s => ids.Contains(s.AssessmentId)).ToListAsync()).ToLookup(s => s.AssessmentId);
+        return list.Select(r => (r.Id, r.Code, r.JobDescription, RaStatusRules.Of(r.SubmissionCount, signs[r.Id].ToList()) == RaStatus.Signed)).ToList();
+    }
+
     // ---- reading ----
 
     public async Task<PermitDetail?> GetAsync(Guid companyId, Guid permitId, Actor actor)
@@ -760,9 +802,9 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
     }
 
     /// <summary>The board: what is open on a vessel now, and which pairs of open permits conflict.</summary>
-    public async Task<PermitBoard> BoardAsync(Guid companyId, Actor actor, Guid? vesselId = null)
+    public async Task<PermitBoard> BoardAsync(Guid companyId, Actor actor, Guid? vesselId = null, bool includeClosed = false)
     {
-        var rows = await ListAsync(companyId, actor, vesselId, openOnly: true);
+        var rows = await ListAsync(companyId, actor, vesselId, openOnly: !includeClosed);
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var pairs = await db.PermitConflictPairs.AsNoTracking().Where(p => p.CompanyId == companyId).ToListAsync();
