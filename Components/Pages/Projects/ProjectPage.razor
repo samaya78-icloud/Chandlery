@@ -362,7 +362,7 @@ else
             }
             else
             {
-                <table class="w-full max-w-3xl text-sm">
+                <div class="overflow-x-auto"><table class="w-full max-w-3xl text-sm">
                     <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Category</th><th class="p-2 text-right">Planned (USD)</th><th class="p-2 text-right">Contingency %</th><th class="p-2"></th></tr></thead>
                     <tbody class="divide-y divide-line/60">
                         @foreach (var line in _lines)
@@ -375,7 +375,7 @@ else
                             </tr>
                         }
                     </tbody>
-                </table>
+                </table></div>
             }
             @if (_approvals.Count > 0)
             {

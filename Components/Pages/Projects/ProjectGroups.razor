@@ -61,7 +61,7 @@ else
 
             @if (members.Count > 0)
             {
-                <table class="mb-3 w-full text-sm">
+                <div class="overflow-x-auto"><table class="mb-3 w-full text-sm">
                     <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Vessel</th><th class="p-2">Project</th><th class="p-2">Status</th><th class="p-2 text-right">Budget</th><th class="p-2 text-right">Cost to date</th><th class="p-2"></th></tr></thead>
                     <tbody class="divide-y divide-line/60">
                         @foreach (var r in members)
@@ -76,7 +76,7 @@ else
                             </tr>
                         }
                     </tbody>
-                </table>
+                </table></div>
             }
             else
             {
