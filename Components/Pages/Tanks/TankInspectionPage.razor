@@ -1,4 +1,4 @@
-@page "/tanks/inspections/{Id:guid}"
+﻿@page "/tanks/inspections/{Id:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -137,6 +137,10 @@ else
     }
 
     <LinkedTasks CompanyId="_companyId" LinkType="tankinspection" TargetId="insp.Id" />
+
+    <div class="mt-6">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.TankInspection" RecordId="insp.Id" VesselId="insp.VesselId" Title="Conversation" />
+    </div>
 }
 
 @code {

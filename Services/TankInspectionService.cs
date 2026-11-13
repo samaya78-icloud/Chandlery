@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -112,6 +112,8 @@ public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory
         inspection.SubmittedAt = DateTime.UtcNow;
         inspection.ExceptionCount = exceptions.Count;
         inspection.HasBadRating = exceptions.Any(r => r.Scale == ScaleKind.Rating && r.Value == "Bad");
+        await ChatService.NoteAsync(db, companyId, ChatModules.TankInspection, inspection.Id, inspection.VesselId,
+            $"{(firstSubmission ? "Submitted" : "Submitted again")} by {actor.Name}: {exceptions.Count} exception(s)" + (inspection.HasBadRating ? ", including a Bad rating" : ""));
         await db.SaveChangesAsync();
         return await FollowUpAsync(db, companyId, inspection, exceptions, firstSubmission, actor);
     }
@@ -189,6 +191,13 @@ public class TankInspectionService(IDbContextFactory<ChandleryDbContext> factory
             Comment = (comment ?? "").Trim(), ReviewerName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.TankInspectionReviews.Add(review);
+        await ChatService.NoteAsync(db, companyId, ChatModules.TankInspection, inspection.Id, inspection.VesselId,
+            decision switch
+            {
+                ReviewDecision.Started => $"Review started by {actor.Name}",
+                ReviewDecision.Accepted => $"Accepted by {actor.Name}" + (review.Comment == "" ? "" : $": {review.Comment}"),
+                _ => $"Returned to the vessel by {actor.Name}: {review.Comment}",
+            });
         await db.SaveChangesAsync();
         return review;
     }

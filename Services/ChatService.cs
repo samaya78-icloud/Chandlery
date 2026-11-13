@@ -321,6 +321,16 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var jobs = Of(ChatModules.PmsJob);
         foreach (var j in await db.PlannedJobs.AsNoTracking().Where(j => jobs.Contains(j.Id)).Select(j => new { j.Id, j.Code, j.Title }).ToListAsync())
             result[(ChatModules.PmsJob, j.Id)] = new RecordInfo($"{j.Code} · {j.Title}", Href($"/pms/jobs/{j.Id}#conversation", $"/pms/jobs/{j.Id}#conversation"));
+        var inspections = Of(ChatModules.TankInspection);
+        foreach (var x in await db.TankInspections.AsNoTracking().Where(x => inspections.Contains(x.Id)).Select(x => new { x.Id, x.Code, x.TankId }).ToListAsync())
+        {
+            var tank = await db.Tanks.AsNoTracking().Where(t => t.Id == x.TankId).Select(t => t.Name).FirstOrDefaultAsync();
+            result[(ChatModules.TankInspection, x.Id)] = new RecordInfo($"Tank inspection {x.Code}" + (tank is null ? "" : $" · {tank}"), Href($"/tanks/inspections/{x.Id}#conversation", $"/tanks/inspections/{x.Id}#conversation"));
+        }
+
+        var risks = Of(ChatModules.RiskAssessment);
+        foreach (var x in await db.RiskAssessments.AsNoTracking().Where(x => risks.Contains(x.Id)).Select(x => new { x.Id, x.Code, x.Version, x.JobDescription }).ToListAsync())
+            result[(ChatModules.RiskAssessment, x.Id)] = new RecordInfo($"Risk assessment {x.Code} v{x.Version} · {(x.JobDescription.Length <= 50 ? x.JobDescription : x.JobDescription[..50] + "…")}", Href($"/risk/{x.Id}#conversation", $"/risk/{x.Id}#conversation"));
         return result;
     }
     /// <summary>Who this person is in a conversation (side, vessel, administrator), or null when they cannot take part.</summary>
