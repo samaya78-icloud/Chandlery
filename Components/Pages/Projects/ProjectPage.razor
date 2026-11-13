@@ -94,7 +94,7 @@ else
     {
         <div class="card mb-6 border-accent-300 p-5">
             <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-muted">Request a variation</h2>
-            <p class="mb-3 text-sm text-muted">Extra work found after approval, with the extra money it needs. @(_needsMatrix ? "The approval matrix decides who approves it, by this amount." : "No approval rules apply, so it is added straight away."). Once approved it joins the specification and the budget.</p>
+            <p class="mb-3 text-sm text-muted">Extra work found after approval, with the extra money it needs. @(_needsMatrix ? "The approval matrix decides who approves it, by this amount." : "No approval rules apply, so it is added straight away.") Once approved it joins the specification and the budget.</p>
             <div class="flex flex-wrap items-end gap-4">
                 <label class="text-sm">Group <input @bind="_variationGroup" class="input mt-1" placeholder="Variations" /></label>
                 <label class="min-w-[16rem] flex-1 text-sm">The extra work <input @bind="_variationText" class="input mt-1" /></label>
@@ -366,7 +366,7 @@ else
                         <span class="text-muted">· @Money.Format(r.AmountUsd, "USD") · asked by @r.SubmittedByName on @r.SubmittedAt.ToString("d MMM yyyy") ·</span>
                         <StatusChip Label="@r.Status.ToString()" Tone="@(r.Status switch { ProjectRequestStatus.Approved => "success", ProjectRequestStatus.Pending => "warning", ProjectRequestStatus.Rejected => "danger", _ => "neutral" })" /></p>
                     @if (r.Reason != "") { <p class="text-xs text-muted">@r.Reason</p> }
-                    <ApprovalPanel Slots="view.Slots" CanDecide="view.YourTurn" Noun="@(r.Kind == ProjectRequestKind.Budget ? "project budget" : "variation")" TotalText="@Money.Format(r.AmountUsd, "USD")" Busy="_busy" Error="_error"
+                    <ApprovalPanel Slots="view.Slots" CanDecide="view.YourTurn" Noun="@(r.Kind == ProjectRequestKind.Budget ? "project budget" : "variation")" TotalText="@Money.Format(r.AmountUsd, "USD")" Busy="_busy" Error="@_error"
                                    OnDecide="args => DecideApproval(r.Id, args)" />
                 }
             </section>
