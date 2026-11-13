@@ -75,6 +75,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<IncidentEvent> IncidentEvents => Set<IncidentEvent>();
     public DbSet<IncidentInvestigation> IncidentInvestigations => Set<IncidentInvestigation>();
     public DbSet<IncidentExposure> IncidentExposures => Set<IncidentExposure>();
+    public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<ChatRead> ChatReads => Set<ChatRead>();
     public DbSet<IncidentCause> IncidentCauses => Set<IncidentCause>();
     public DbSet<IncidentSettings> IncidentSettingsRows => Set<IncidentSettings>();
     public DbSet<RestRuleSet> RestRuleSets => Set<RestRuleSet>();
@@ -727,6 +729,28 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<Vessel>().WithMany().HasForeignKey(x => x.VesselId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(x => new { x.VesselId, x.Month, x.At });
             b.HasQueryFilter(x => CurrentCompanyId == null || x.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ChatMessage>(b =>
+        {
+            b.Property(m => m.ModuleType).HasMaxLength(40);
+            b.Property(m => m.Topic).HasMaxLength(80);
+            b.Property(m => m.Body).HasMaxLength(4000);
+            b.Property(m => m.Mentions).HasMaxLength(1000);
+            b.Property(m => m.AuthorName).HasMaxLength(120);
+            b.Property(m => m.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(m => m.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(m => m.VesselId).OnDelete(DeleteBehavior.Restrict);   // no foreign key from TargetId or ReplyToId: an edit can arrive before its message
+            b.HasIndex(m => new { m.ModuleType, m.RecordId, m.At });
+            b.HasIndex(m => new { m.VesselId, m.OwnerStage });
+            b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<ChatRead>(b =>
+        {
+            b.Property(r => r.ModuleType).HasMaxLength(40);
+            b.Property(r => r.Topic).HasMaxLength(80);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(r => new { r.UserId, r.ModuleType, r.RecordId, r.Topic }).IsUnique();
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
         });
         modelBuilder.Entity<IncidentCause>(b =>
         {
