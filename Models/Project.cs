@@ -212,7 +212,7 @@ public class ProjectCostEntry
     public DateTime At { get; set; }
 }
 
-public enum ProjectRequestKind { Budget, Variation }
+public enum ProjectRequestKind { Budget, Variation, Extension }
 
 public enum ProjectRequestStatus { Pending, Approved, Rejected, Withdrawn }
 
@@ -243,6 +243,12 @@ public class ProjectApprovalRequest
 
     /// <summary>For an approved variation: the specification item it became.</summary>
     public Guid? ItemId { get; set; }
+
+    /// <summary>For a variation that changes an existing job instead of adding one: the item it changes.</summary>
+    public Guid? TargetItemId { get; set; }
+
+    /// <summary>For an extension: the days asked for. The planned end moves by this many days when it is approved.</summary>
+    public int ExtraDays { get; set; }
 }
 
 /// <summary>One approver's slot on a project request, the same shape as on a purchase order.</summary>
@@ -253,6 +259,9 @@ public class ProjectApprovalSlot
     public Guid RequestId { get; set; }
     public int Level { get; set; }
     public Guid ApproverUserId { get; set; }
+
+    /// <summary>Empty for the steps that cover the whole request; a budget category for the extra sign-off the matrix asks for on that category.</summary>
+    public string Category { get; set; } = "";
     public ApprovalDecision Decision { get; set; } = ApprovalDecision.Pending;
     public Guid? DecidedByUserId { get; set; }
     public DateTime? DecidedAt { get; set; }

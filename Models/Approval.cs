@@ -26,6 +26,12 @@ public class ApprovalRule
     /// <summary>1 to 3; level N+1 opens only after level N is approved.</summary>
     public int Level { get; set; } = 1;
     public Guid ApproverUserId { get; set; }
+
+    /// <summary>
+    /// Set only for a rule about one project budget category (for example "Owner's costs"): it is then an extra sign-off on projects with that category in their budget, and is
+    /// never used for purchase orders or invoices.
+    /// </summary>
+    public string? ProjectCategory { get; set; }
 }
 
 /// <summary>One approver's pending/decided slot on a purchase order.</summary>

@@ -536,6 +536,19 @@ app.MapGet("/files/attachments/{attachmentId:guid}", async (Guid attachmentId, b
         : Results.File(found.Value.Content, found.Value.File.ContentType);
 }).RequireAuthorization();
 
+// Files kept with a project (a yard's quotation): only the office user of the company that owns them. Same safety headers as requisition files.
+app.MapGet("/files/project/{fileId:guid}", async (Guid fileId, bool? download, HttpContext http, ProjectPlanningService planning) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.NotFound();
+    var found = await planning.OpenFileAsync(companyId, fileId);
+    if (found is null) return Results.NotFound();
+    http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    if (found.Value.File.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
+    return download == true
+        ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
+        : Results.File(found.Value.Content, found.Value.File.ContentType);
+}).RequireAuthorization();
+
 // This installation's permanent node id (shore by default, set Platform:Profile=Vessel onboard). Records are stamped with it.
 static async Task EnsureNodeAsync(ChandleryDbContext db, IConfiguration config)
 {

@@ -22,12 +22,17 @@ public record RiskLinkView(ProjectRiskLink Link, Guid? AssessmentId, string Titl
 
 public record RiskCandidate(string Code, string Title);
 
+public record ProjectFileView(Guid Id, Guid? TenderId, string FileName, string ContentType, long SizeBytes, string UploadedByName, DateTime UploadedAt)
+{
+    public bool IsImage => ContentType.StartsWith("image/", StringComparison.Ordinal);
+}
+
 /// <summary>
 /// The office's planning tools for a project: the yard list, tenders and their comparison, phases of the stay, the documents checklist and links to risk
 /// assessments. All of it stays at the office; a vessel installation cannot write any of it. Changing any of it needs the same permission as planning the project,
 /// and a closed project is locked.
 /// </summary>
-public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factory)
+public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factory, IFileStore files)
 {
     private static DateTime? Day(DateTime? d) => d is { } v ? DateTime.SpecifyKind(v.Date, DateTimeKind.Utc) : null;
 
@@ -326,6 +331,126 @@ public class ProjectPlanningService(IDbContextFactory<ChandleryDbContext> factor
         var link = await db.ProjectRiskLinks.FirstOrDefaultAsync(l => l.Id == linkId && l.CompanyId == companyId) ?? throw new InvalidOperationException("Link not found.");
         await ProjectService.LoadEditableAsync(db, companyId, link.ProjectId);
         db.ProjectRiskLinks.Remove(link);
+        await db.SaveChangesAsync();
+    }
+
+    // ---- files kept with the project (a yard's quotation, a survey report) ----
+
+    public async Task<List<ProjectFileView>> FilesAsync(Guid companyId, Guid projectId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var rows = await db.ProjectFiles.AsNoTracking().Where(f => f.ProjectId == projectId).OrderBy(f => f.UploadedAt).ThenBy(f => f.Id).ToListAsync();
+        return rows.Select(f => new ProjectFileView(f.Id, f.TenderId, f.FileName, f.ContentType, f.SizeBytes, f.UploadedByName, f.UploadedAt)).ToList();
+    }
+
+    /// <summary>Keeps a file with the project, or with one of its tenders (the yard's quotation). Images and PDFs only, up to 10 MB, and up to 10 for each place.</summary>
+    public async Task<ProjectFile> AddFileAsync(Guid companyId, Guid projectId, Guid? tenderId, PendingAttachment file, Actor actor)
+    {
+        AttachmentRules.Validate(file);
+        await using var db = await OfficeAsync(companyId, actor);
+        await ProjectService.LoadEditableAsync(db, companyId, projectId);
+        if (tenderId is { } tid && !await db.ProjectTenders.AnyAsync(t => t.Id == tid && t.ProjectId == projectId)) throw new InvalidOperationException("That tender is not on this project.");
+        if (await db.ProjectFiles.CountAsync(f => f.ProjectId == projectId && f.TenderId == tenderId) >= AttachmentRules.MaxPerTarget)
+            throw new InvalidOperationException($"You can keep up to {AttachmentRules.MaxPerTarget} files here.");
+        var name = Path.GetFileName(file.FileName);
+        await using var stream = new MemoryStream(file.Data);
+        var key = await files.SaveAsync(companyId, stream);
+        var row = new ProjectFile
+        {
+            Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = projectId, TenderId = tenderId, FileName = name, ContentType = AttachmentRules.ContentTypeFor(name),
+            SizeBytes = file.Data.LongLength, StoredKey = key, UploadedByName = actor.Name, UploadedAt = DateTime.UtcNow,
+        };
+        db.ProjectFiles.Add(row);
+        await db.SaveChangesAsync();
+        return row;
+    }
+
+    public async Task DeleteFileAsync(Guid companyId, Guid fileId, Actor actor)
+    {
+        await using var db = await OfficeAsync(companyId, actor);
+        var row = await db.ProjectFiles.FirstOrDefaultAsync(f => f.Id == fileId && f.CompanyId == companyId) ?? throw new InvalidOperationException("File not found.");
+        await ProjectService.LoadEditableAsync(db, companyId, row.ProjectId);
+        db.ProjectFiles.Remove(row);
+        await db.SaveChangesAsync();
+        files.Delete(row.StoredKey);
+    }
+
+    /// <summary>Opens a file for the company that owns it, at the office. Onboard there is nothing to open: the vessel never holds a yard's prices.</summary>
+    public async Task<(ProjectFile File, Stream Content)?> OpenFileAsync(Guid companyId, Guid fileId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) return null;
+        var row = await db.ProjectFiles.AsNoTracking().FirstOrDefaultAsync(f => f.Id == fileId && f.CompanyId == companyId);
+        if (row is null) return null;
+        var content = files.OpenRead(row.StoredKey);
+        return content is null ? null : (row, content);
+    }
+
+    // ---- groups of projects (one drydock across sister ships) ----
+
+    public async Task<List<(ProjectGroup Group, List<Guid> ProjectIds)>> GroupsAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var groups = await db.ProjectGroups.AsNoTracking().Where(g => g.CompanyId == companyId).OrderBy(g => g.Name).ToListAsync();
+        var members = (await db.ProjectGroupMembers.AsNoTracking().Where(m => m.CompanyId == companyId).ToListAsync()).ToLookup(m => m.GroupId);
+        return groups.Select(g => (g, members[g.Id].Select(m => m.ProjectId).ToList())).ToList();
+    }
+
+    /// <summary>The group a project is in, if any.</summary>
+    public async Task<(Guid Id, string Name)?> GroupOfAsync(Guid companyId, Guid projectId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var group = await (from m in db.ProjectGroupMembers.AsNoTracking() join g in db.ProjectGroups.AsNoTracking() on m.GroupId equals g.Id where m.ProjectId == projectId select g).FirstOrDefaultAsync();
+        return group is null ? null : (group.Id, group.Name);
+    }
+
+    public async Task<ProjectGroup> CreateGroupAsync(Guid companyId, string name, string note, Actor actor)
+    {
+        name = (name ?? "").Trim();
+        if (name == "") throw new InvalidOperationException("Give the group a name.");
+        await using var db = await OfficeAsync(companyId, actor);
+        if (await db.ProjectGroups.AnyAsync(g => g.CompanyId == companyId && g.Name.ToLower() == name.ToLower())) throw new InvalidOperationException($"There is already a group called {name}.");
+        var group = new ProjectGroup { Id = Guid.CreateVersion7(), CompanyId = companyId, Name = name, Note = (note ?? "").Trim(), CreatedAt = DateTime.UtcNow, CreatedByName = actor.Name };
+        db.ProjectGroups.Add(group);
+        await db.SaveChangesAsync();
+        return group;
+    }
+
+    /// <summary>Deletes the group. Its projects are untouched: they simply stop being grouped.</summary>
+    public async Task DeleteGroupAsync(Guid companyId, Guid groupId, Actor actor)
+    {
+        await using var db = await OfficeAsync(companyId, actor);
+        var group = await db.ProjectGroups.FirstOrDefaultAsync(g => g.Id == groupId && g.CompanyId == companyId) ?? throw new InvalidOperationException("Group not found.");
+        db.ProjectGroupMembers.RemoveRange(await db.ProjectGroupMembers.Where(m => m.GroupId == groupId).ToListAsync());
+        db.ProjectGroups.Remove(group);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>Puts a project in a group. A project is in one group at most, and a group has at most one project for each vessel.</summary>
+    public async Task AddToGroupAsync(Guid companyId, Guid groupId, Guid projectId, Actor actor)
+    {
+        await using var db = await OfficeAsync(companyId, actor);
+        var group = await db.ProjectGroups.FirstOrDefaultAsync(g => g.Id == groupId && g.CompanyId == companyId) ?? throw new InvalidOperationException("Group not found.");
+        var project = await db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == projectId && p.CompanyId == companyId) ?? throw new InvalidOperationException("Project not found.");
+        if (await db.ProjectGroupMembers.FirstOrDefaultAsync(m => m.ProjectId == projectId) is { } existing)
+            throw new InvalidOperationException(existing.GroupId == groupId ? "That project is already in this group." : "That project is already in another group; take it out of that one first.");
+        var memberIds = await db.ProjectGroupMembers.Where(m => m.GroupId == groupId).Select(m => m.ProjectId).ToListAsync();
+        if (await db.Projects.AnyAsync(p => memberIds.Contains(p.Id) && p.VesselId == project.VesselId))
+            throw new InvalidOperationException($"{group.Name} already has a project for that vessel.");
+        db.ProjectGroupMembers.Add(new ProjectGroupMember { Id = Guid.CreateVersion7(), CompanyId = companyId, GroupId = groupId, ProjectId = projectId });
+        await db.SaveChangesAsync();
+    }
+
+    public async Task RemoveFromGroupAsync(Guid companyId, Guid projectId, Actor actor)
+    {
+        await using var db = await OfficeAsync(companyId, actor);
+        var member = await db.ProjectGroupMembers.FirstOrDefaultAsync(m => m.ProjectId == projectId && m.CompanyId == companyId);
+        if (member is null) return;
+        db.ProjectGroupMembers.Remove(member);
         await db.SaveChangesAsync();
     }
 }

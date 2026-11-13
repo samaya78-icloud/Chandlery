@@ -87,3 +87,31 @@ public static class ProjectPlanningRules
 
     public static bool IsOverdue(ProjectDocumentCheck d, DateTime today) => IsMissing(d) && d.DueDate is { } due && due.Date < today.Date;
 }
+
+/// <summary>What a group of projects (one drydock across sister ships) adds up to.</summary>
+public record GroupSummary(int Projects, int Vessels, decimal Budget, decimal Contingency, decimal Cost, int ItemsDone, int ItemsTotal, DateTime? Start, DateTime? End, ProjectStatus? Overall)
+{
+    public decimal Variance => ProjectCostRules.Variance(Budget, Cost);
+    public bool OverBudget => Budget > 0 && Cost > Budget;
+}
+
+public static class ProjectGroupRules
+{
+    /// <summary>
+    /// Adds a group's projects up: budget, contingency and cost to date, items done of all items (dropped ones left out), and the span from the earliest start to the latest end.
+    /// The group's overall status is the most active member's: ongoing if any is, else complete or closed once all are, else planning if any is still being planned, else approved.
+    /// </summary>
+    public static GroupSummary Summarise(IReadOnlyCollection<ProjectListRow> rows, DateTime today)
+    {
+        if (rows.Count == 0) return new GroupSummary(0, 0, 0, 0, 0, 0, 0, null, null, null);
+        var spans = rows.Select(r => ProjectFleetRules.SpanOf(r, today)).OfType<FleetSpan>().ToList();
+        ProjectStatus overall;
+        if (rows.Any(r => r.Row.Status == ProjectStatus.Ongoing)) overall = ProjectStatus.Ongoing;
+        else if (rows.All(r => r.Row.Status == ProjectStatus.Closed)) overall = ProjectStatus.Closed;
+        else if (rows.All(r => r.Row.Status is ProjectStatus.Complete or ProjectStatus.Closed)) overall = ProjectStatus.Complete;
+        else if (rows.Any(r => r.Row.Status == ProjectStatus.Planning)) overall = ProjectStatus.Planning;
+        else overall = ProjectStatus.Approved;
+        return new GroupSummary(rows.Count, rows.Select(r => r.Row.Project.VesselId).Distinct().Count(), rows.Sum(r => r.Budget), rows.Sum(r => r.Contingency), rows.Sum(r => r.Cost.ToDate),
+            rows.Sum(r => r.Row.ItemsDone), rows.Sum(r => r.Row.ItemsDone + r.Row.ItemsOpen), spans.Count == 0 ? null : spans.Min(s => s.Start), spans.Count == 0 ? null : spans.Max(s => s.End), overall);
+    }
+}

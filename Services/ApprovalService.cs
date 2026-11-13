@@ -18,9 +18,18 @@ public static class ApprovalEngine
     /// </summary>
     public static List<ApprovalRule> ResolveChain(IReadOnlyCollection<ApprovalRule> rules, Guid? departmentId, decimal total)
     {
+        rules = rules.Where(r => r.ProjectCategory is null).ToList();
         var scoped = departmentId.HasValue ? rules.Where(r => r.DepartmentId == departmentId).ToList() : new List<ApprovalRule>();
         if (scoped.Count == 0) scoped = rules.Where(r => r.DepartmentId == null).ToList();
+        return Tier(scoped, total);
+    }
 
+    /// <summary>
+    /// The rules to ask for a total, from a set of rules that already apply: those at the smallest amount limit that covers it, or the highest tier when it is above every
+    /// one. Used for departments and, on their own, for the rules about one project budget category.
+    /// </summary>
+    public static List<ApprovalRule> Tier(IReadOnlyCollection<ApprovalRule> scoped, decimal total)
+    {
         var covering = scoped.Where(r => r.UpToAmount == null || r.UpToAmount >= total).ToList();
 
         List<ApprovalRule> chain;
@@ -121,7 +130,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 
         return rules
             .Select(r => new ApprovalRuleRow(r,
-                r.DepartmentId.HasValue ? depts.GetValueOrDefault(r.DepartmentId.Value) ?? "?" : "All departments",
+                r.ProjectCategory is not null ? "Projects: " + r.ProjectCategory : r.DepartmentId.HasValue ? depts.GetValueOrDefault(r.DepartmentId.Value) ?? "?" : "All departments",
                 users.GetValueOrDefault(r.ApproverUserId) ?? "?"))
             .OrderBy(r => r.Department == "All departments" ? "" : r.Department)
             .ThenBy(r => r.Rule.UpToAmount ?? decimal.MaxValue)
@@ -130,7 +139,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
             .ToList();
     }
 
-    public async Task AddRuleAsync(Guid companyId, Guid? departmentId, decimal? upToAmount, int level, Guid approverUserId)
+    public async Task AddRuleAsync(Guid companyId, Guid? departmentId, decimal? upToAmount, int level, Guid approverUserId, string? projectCategory = null)
     {
         if (level is < 1 or > 3) throw new InvalidOperationException("Level must be 1, 2 or 3.");
         if (upToAmount is <= 0) throw new InvalidOperationException("The amount limit must be above zero (or empty for no limit).");
@@ -140,15 +149,17 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 
         if (!await db.Users.AnyAsync(u => u.Id == approverUserId && u.CompanyId == companyId))
             throw new InvalidOperationException("Choose an approver from your company's users.");
+        projectCategory = string.IsNullOrWhiteSpace(projectCategory) ? null : projectCategory.Trim();
+        if (projectCategory is not null && departmentId.HasValue) throw new InvalidOperationException("A rule about a project budget category covers every department: leave the department as All.");
         if (departmentId.HasValue && !await db.Departments.AnyAsync(d => d.Id == departmentId.Value && d.CompanyId == companyId))
             throw new InvalidOperationException("Department not found.");
-        if (await db.ApprovalRules.AnyAsync(r => r.CompanyId == companyId && r.DepartmentId == departmentId
+        if (await db.ApprovalRules.AnyAsync(r => r.CompanyId == companyId && r.DepartmentId == departmentId && r.ProjectCategory == projectCategory
                                                  && r.UpToAmount == upToAmount && r.Level == level && r.ApproverUserId == approverUserId))
             throw new InvalidOperationException("That rule already exists.");
 
         db.ApprovalRules.Add(new ApprovalRule
         {
-            CompanyId = companyId, DepartmentId = departmentId, UpToAmount = upToAmount, Level = level, ApproverUserId = approverUserId
+            CompanyId = companyId, DepartmentId = departmentId, UpToAmount = upToAmount, Level = level, ApproverUserId = approverUserId, ProjectCategory = projectCategory
         });
         await db.SaveChangesAsync();
     }
@@ -173,10 +184,10 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 
         if (toDepartmentId.HasValue && !await db.Departments.AnyAsync(d => d.Id == toDepartmentId.Value && d.CompanyId == companyId))
             throw new InvalidOperationException("Target department not found.");
-        if (await db.ApprovalRules.AnyAsync(r => r.CompanyId == companyId && r.DepartmentId == toDepartmentId))
+        if (await db.ApprovalRules.AnyAsync(r => r.CompanyId == companyId && r.DepartmentId == toDepartmentId && r.ProjectCategory == null))
             throw new InvalidOperationException("The target already has rules. Delete them first.");
 
-        var source = await db.ApprovalRules.Where(r => r.CompanyId == companyId && r.DepartmentId == fromDepartmentId).ToListAsync();
+        var source = await db.ApprovalRules.Where(r => r.CompanyId == companyId && r.DepartmentId == fromDepartmentId && r.ProjectCategory == null).ToListAsync();
         if (source.Count == 0) throw new InvalidOperationException("The source has no rules to copy.");
 
         foreach (var r in source)
@@ -323,7 +334,7 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
 }
 
 /// <summary>One approver's slot as the shared ApprovalPanel shows it (built from a PoApproval or an InvoiceApproval).</summary>
-public record ApprovalSlotView(int Level, string LevelName, string ApproverName, ApprovalDecision Decision, string DecidedByName, DateTime? DecidedAt, string Comment)
+public record ApprovalSlotView(int Level, string LevelName, string ApproverName, ApprovalDecision Decision, string DecidedByName, DateTime? DecidedAt, string Comment, string Scope = "")
 {
     public static ApprovalSlotView From(PoApprovalRow r, ApprovalLevelNames names) =>
         new(r.Approval.Level, names.Name(r.Approval.Level), r.ApproverName, r.Approval.Decision, r.DecidedByName, r.Approval.DecidedAt, r.Approval.Comment);

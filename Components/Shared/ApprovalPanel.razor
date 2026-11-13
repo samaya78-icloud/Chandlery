@@ -3,10 +3,10 @@
 {
     <div class="mt-6 card p-6 print:hidden">
         <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Approval</h2>
-        @foreach (var level in Slots.GroupBy(a => a.Level).OrderBy(g => g.Key))
+        @foreach (var level in Slots.GroupBy(a => (a.Scope, a.Level)).OrderBy(g => g.Key.Scope).ThenBy(g => g.Key.Level))
         {
             <div class="mb-3 flex flex-wrap items-center gap-3 text-sm">
-                <span class="min-w-44 text-xs font-semibold uppercase tracking-wide text-muted">@level.First().LevelName</span>
+                <span class="min-w-44 text-xs font-semibold uppercase tracking-wide text-muted">@(level.Key.Scope == "" ? "" : level.Key.Scope + ": ")@level.First().LevelName</span>
                 @foreach (var a in level)
                 {
                     <span class="@(DecisionClasses(a.Decision) + " rounded-lg px-3 py-1.5")">

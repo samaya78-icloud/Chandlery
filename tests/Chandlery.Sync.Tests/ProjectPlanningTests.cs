@@ -77,6 +77,13 @@ public class ProjectPlanningRulesTests
 /// <summary>Yard tenders, phases, the documents checklist and risk links on a real office and a real vessel: office only, locked when the project is.</summary>
 public class ProjectPlanningTests : IAsyncLifetime
 {
+    private sealed class NoFiles : IFileStore
+    {
+        public Task<string> SaveAsync(Guid companyId, Stream content, CancellationToken ct = default) => throw new NotSupportedException();
+        public Stream? OpenRead(string key) => null;
+        public void Delete(string key) { }
+    }
+
     private readonly TwoSites _s = new();
     private ProjectService _shore = null!;
     private ProjectPlanningService _plan = null!, _vesselPlan = null!;
@@ -86,8 +93,8 @@ public class ProjectPlanningTests : IAsyncLifetime
     {
         await _s.InitializeAsync();
         _shore = new ProjectService(_s.ShoreFactory);
-        _plan = new ProjectPlanningService(_s.ShoreFactory);
-        _vesselPlan = new ProjectPlanningService(_s.VesselFactory);
+        _plan = new ProjectPlanningService(_s.ShoreFactory, new NoFiles());
+        _vesselPlan = new ProjectPlanningService(_s.VesselFactory, new NoFiles());
         await using var db = await _s.ShoreFactory.CreateDbContextAsync();
         db.ApprovalRules.RemoveRange(db.ApprovalRules);                                                                     // the plain approval step needs no matrix
         db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = PolicyModules.Projects, Enabled = true });
