@@ -134,6 +134,7 @@ public class PermitWalkthroughTests : IAsyncLifetime
         var wrong = await _vessel.RequestAsync(_s.CompanyId, _s.VesselId, As(_second), Input(Hot, from: _now, until: _now.AddHours(2)));
         await _vessel.WithdrawAsync(_s.CompanyId, wrong.Id, As(_second), "Raised for the wrong hold.");
 
+        await _s.SettleUntilQuietAsync();                                                                                          // the office needs the permits before it can comment
         await _shore.CommentAsync(_s.CompanyId, entry.Id, _s.User, "Please keep the gas detector calibration record with the permit.");
         await _s.SettleUntilQuietAsync();
 
@@ -203,6 +204,7 @@ public class PermitWalkthroughTests : IAsyncLifetime
             shore.PermitComments.Add(new PermitComment { Id = Guid.CreateVersion7(), CompanyId = _s.CompanyId, VesselId = _s.OtherVesselId, PermitId = theirs.Id, Text = "For them only", ByName = "Office", At = _now });
             await shore.SaveChangesAsync();
         }
+        await _s.SettleUntilQuietAsync();
         await _shore.CommentAsync(_s.CompanyId, ours.Id, _s.User, "For us");
         await _s.SettleUntilQuietAsync();
         await _s.ShorePublisher.BaselineAsync(_s.VesselNode.SyncNodeId!);

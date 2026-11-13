@@ -47,6 +47,13 @@ public class PermitFleetTests
     }
 
     [Fact]
+    public void AnIssuedPermitWaitingToStartIsCountedAsAwaiting()
+    {
+        var view = PermitFleet.Build(From, To, [Row(VesselA, "Alpha", "Hot work", PermitState.Issued, At(11, 10), At(11, 10, 16)), Row(VesselA, "Alpha", "Hot work", PermitState.Requested, At(11, 11), At(11, 11, 16))]);
+        Assert.Equal(2, view.Vessels.Single().Awaiting);
+    }
+
+    [Fact]
     public void ThePermitsToLookAtAreTheExpired_TheActiveButNotValid_AndTheSuspended_OldestFirst()
     {
         var expired = Row(VesselB, "Bravo", "Hot work", PermitState.Expired, At(11, 2), At(11, 2, 16));

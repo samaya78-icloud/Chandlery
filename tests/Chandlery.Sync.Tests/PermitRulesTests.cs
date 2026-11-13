@@ -131,6 +131,16 @@ public class PermitRulesTests
         => Assert.Empty(PermitRules.IssueCheck(Facts(answers: [Answer(1, PermitAnswerKind.Yes), Answer(2, PermitAnswerKind.NotApplicable)])));
 
     [Fact]
+    public void AnOptionalItemThatWantsANoteBlocksNothingWhileItIsUnanswered_AndMissingIdsAreNotTheSamePerson()
+    {
+        Assert.Empty(PermitRules.IssueCheck(Facts(answers: [Answer(1, PermitAnswerKind.Unanswered, mandatory: false, noteRequired: true)])));
+        Assert.Equal(["Needs a note: Item 1"], PermitRules.IssueCheck(Facts(answers: [Answer(1, PermitAnswerKind.Yes, mandatory: false, noteRequired: true)])));
+        // Nobody named as requester or issuer is not "the same person".
+        var none = new PermitIssueFacts(Cold, [], [], [], null, null, true, null, [], true, true, At(8), At(14), At(8));
+        Assert.Empty(PermitRules.IssueCheck(none));
+    }
+
+    [Fact]
     public void EachMandatoryItemMustBeAnswered_NotNo_AndWithItsNoteWhereOneIsAsked()
     {
         var missing = PermitRules.IssueCheck(Facts(answers:
@@ -196,6 +206,8 @@ public class PermitRulesTests
         Assert.Equal(["A new gas reading within limits is needed"], PermitRules.ExtensionCheck(Entry, [], At(16), At(20), now));
         Assert.Equal(["A new gas reading within limits is needed"], PermitRules.ExtensionCheck(Entry, [Reading(At(14, 50), lel: 3m, ok: false)], At(16), At(20), now));
         Assert.Equal(["The last gas reading is out of date: take a new one"], PermitRules.ExtensionCheck(Entry, [Reading(At(14, 0))], At(16), At(20), now));
+        Assert.Empty(PermitRules.ExtensionCheck(Entry, [Reading(At(14, 30))], At(16), At(20), now));                       // exactly the interval old: still in date
+        Assert.Equal(["The last gas reading is out of date: take a new one"], PermitRules.ExtensionCheck(Entry, [Reading(At(14, 29))], At(16), At(20), now));
         Assert.Equal(["The new end must be after the current end"], PermitRules.ExtensionCheck(Cold, [], At(16), At(16), now));
         Assert.Equal(["A period cannot run longer than 8 hours"], PermitRules.ExtensionCheck(Cold, [], At(16), At(23, 1), now));
         Assert.Empty(PermitRules.ExtensionCheck(Cold, [], At(16), At(23), now));                            // no gas test, so no reading asked

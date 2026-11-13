@@ -54,7 +54,7 @@ public static class PermitRules
                 case PermitEventKind.Cancelled: return PermitState.Cancelled;
                 case PermitEventKind.Completed: return PermitState.Completed;
                 case PermitEventKind.Issued: issued = true; break;
-                case PermitEventKind.Started: started = true; suspended = false; break;
+                case PermitEventKind.Started: started = true; break;
                 case PermitEventKind.Suspended: suspended = true; break;
                 case PermitEventKind.Resumed: suspended = false; break;
             }
