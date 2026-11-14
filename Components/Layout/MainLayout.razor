@@ -134,6 +134,7 @@
     {
         _ when user.IsInRole("CompanyAdmin") => "Company Admin",
         _ when user.IsInRole("CompanyUser") => "Company",
+        _ when user.IsInRole("YardUser") => "Yard",
         _ when user.IsInRole("SupplierAdmin") => "Supplier Admin",
         _ => "Supplier"
     };

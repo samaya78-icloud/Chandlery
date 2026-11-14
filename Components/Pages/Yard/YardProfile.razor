@@ -1,0 +1,67 @@
+@page "/yard/profile"
+@attribute [Authorize(Roles = "YardUser")]
+@rendermode InteractiveServer
+@inject YardPortalService Portal
+@inject NavigationManager Navigation
+@inject ToastService Toasts
+
+<PageTitle>Contact details · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Yard" Title="Contact details" Subtitle="How the owner's office reaches your yard. Keep it up to date; the owner can see it when comparing tenders." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_profile is null)
+{
+    <EmptyState Title="Yard not found" Message="This login is not linked to a yard." />
+}
+else
+{
+    <section class="card max-w-2xl p-5">
+        @if (_error is not null) { <div class="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+        <p class="mb-4 text-sm"><span class="text-muted">Yard</span> <span class="font-medium">@_profile.Name</span></p>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <label class="text-sm">Location <input class="input mt-1" maxlength="150" @bind="_location" /></label>
+            <label class="text-sm">Contact person <input class="input mt-1" maxlength="120" @bind="_contactName" /></label>
+            <label class="text-sm md:col-span-2">Contact email <input type="email" class="input mt-1" maxlength="200" @bind="_contactEmail" /></label>
+        </div>
+        <button @onclick="Save" disabled="@_busy" class="btn btn-primary mt-4">Save</button>
+    </section>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _yardId, _companyId;
+    private bool _loaded, _busy;
+    private string? _error;
+    private YardPortalService.YardProfile? _profile;
+    private string _location = "", _contactName = "", _contactEmail = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthStateTask!).User;
+        if (user.HasClaim("MustChange", "true")) { Navigation.NavigateTo("/change-password", replace: true); return; }
+        if (Guid.TryParse(user.FindFirst("YardId")?.Value, out _yardId) && Guid.TryParse(user.FindFirst("YardCompanyId")?.Value, out _companyId))
+        {
+            try
+            {
+                _profile = await Portal.ProfileAsync(_companyId, _yardId);
+                (_location, _contactName, _contactEmail) = (_profile.Location, _profile.ContactName, _profile.ContactEmail);
+            }
+            catch (InvalidOperationException) { _profile = null; }
+        }
+        _loaded = true;
+    }
+
+    private async Task Save()
+    {
+        _busy = true;
+        _error = null;
+        try { await Portal.SaveProfileAsync(_companyId, _yardId, _location, _contactName, _contactEmail); await Toasts.Success("Details saved"); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

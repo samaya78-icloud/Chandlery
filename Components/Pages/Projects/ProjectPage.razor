@@ -112,6 +112,12 @@ else
                 }
                 <label class="min-w-[16rem] flex-1 text-sm">@(_variationItem == Guid.Empty ? "The extra work" : "The job as it now reads") <input @bind="_variationText" class="input mt-1" /></label>
                 <label class="text-sm">Extra amount (USD) <input type="number" step="0.01" min="0" @bind="_variationAmount" class="input mt-1 w-40 text-right" /></label>
+                <label class="text-sm">Budget category
+                    <select class="select mt-1" @bind="_variationCategory">
+                        <option value="">None</option>
+                        @foreach (var c in BudgetCategories()) { <option value="@c">@c</option> }
+                    </select>
+                </label>
                 <label class="min-w-[16rem] flex-1 text-sm">Why <input @bind="_variationReason" class="input mt-1" /></label>
                 <button @onclick="RequestVariation" disabled="@_busy" class="btn btn-primary">Submit</button>
                 <button @onclick="() => _variationOpen = false" class="btn btn-secondary">Cancel</button>
@@ -127,6 +133,12 @@ else
             <div class="flex flex-wrap items-end gap-4">
                 <label class="text-sm">Extra days <input type="number" min="1" max="365" @bind="_extensionDays" class="input mt-1 w-28 text-right" /></label>
                 <label class="text-sm">What it costs (USD, if anything) <input type="number" step="0.01" min="0" @bind="_extensionAmount" class="input mt-1 w-40 text-right" /></label>
+                <label class="text-sm">Budget category
+                    <select class="select mt-1" @bind="_extensionCategory">
+                        <option value="">None</option>
+                        @foreach (var c in BudgetCategories()) { <option value="@c">@c</option> }
+                    </select>
+                </label>
                 <label class="min-w-[16rem] flex-1 text-sm">Why <input @bind="_extensionReason" class="input mt-1" /></label>
                 <button @onclick="RequestExtension" disabled="@_busy" class="btn btn-primary">Submit</button>
                 <button @onclick="() => _extensionOpen = false" class="btn btn-secondary">Cancel</button>
@@ -391,7 +403,7 @@ else
                 {
                     var r = view.Request;
                     <p class="mt-4 text-sm"><span class="font-medium">@(r.Kind switch { ProjectRequestKind.Budget => "Budget", ProjectRequestKind.Extension => "Extension: " + r.Description, _ => "Variation: " + r.Description })</span>
-                        <span class="text-muted">· @Money.Format(r.AmountUsd, "USD") · asked by @r.SubmittedByName on @r.SubmittedAt.ToString("d MMM yyyy") ·</span>
+                        <span class="text-muted">· @Money.Format(r.AmountUsd, "USD")@(r.Category != "" ? " in " + r.Category : "") · asked by @r.SubmittedByName on @r.SubmittedAt.ToString("d MMM yyyy") ·</span>
                         <StatusChip Label="@r.Status.ToString()" Tone="@(r.Status switch { ProjectRequestStatus.Approved => "success", ProjectRequestStatus.Pending => "warning", ProjectRequestStatus.Rejected => "danger", _ => "neutral" })" /></p>
                     @if (r.Reason != "") { <p class="text-xs text-muted">@r.Reason</p> }
                     <ApprovalPanel Slots="view.Slots" CanDecide="view.YourTurn" Noun="@(r.Kind switch { ProjectRequestKind.Budget => "project budget", ProjectRequestKind.Extension => "extension", _ => "variation" })" TotalText="@Money.Format(r.AmountUsd, "USD")" Busy="_busy" Error="@_error"
@@ -470,6 +482,7 @@ else
 
         @* ---- J9: the office's planning tools. None of it leaves the office. ---- *@
         <ProjectTenders CompanyId="_companyId" ProjectId="ProjectId" User="_actor" Items="p.Items" CanEdit="@(canEdit && _detail.Status is ProjectStatus.Planning or ProjectStatus.Approved or ProjectStatus.Ongoing)" OnAwarded="ReloadAsync" />
+        <ProjectTenderDialogue CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
         <ProjectPhases CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
         <ProjectDocuments CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
         <ProjectRisks CompanyId="_companyId" ProjectId="ProjectId" User="_actor" CanEdit="canEdit" />
@@ -549,7 +562,10 @@ else
     private bool _extensionOpen;
     private int _extensionDays = 7;
     private decimal _extensionAmount;
-    private string _extensionReason = "";
+    private string _extensionReason = "", _extensionCategory = "", _variationCategory = "";
+
+    /// <summary>The categories the budget already has, offered for a variation or extension so the matrix rules for a category can apply to its money.</summary>
+    private List<string> BudgetCategories() => _lines.Select(l => (l.Category ?? "").Trim()).Where(c => c != "").Distinct(StringComparer.OrdinalIgnoreCase).Order().ToList();
     private ProjectService.ApprovalRequestView? BudgetPending => _approvalRequests.FirstOrDefault(v => v.Request.Kind == ProjectRequestKind.Budget && v.Request.Status == ProjectRequestStatus.Pending);
 
     // adding from the Worklist and maintenance
@@ -631,7 +647,7 @@ else
         _approvals = _onVessel ? [] : await Svc.ApprovalsAsync(_companyId, ProjectId);
         _pmsWaiting = _onVessel ? [] : await Svc.PmsWaitingAsync(_companyId, ProjectId);
         _approvalRequests = _onVessel ? [] : await Svc.RequestsOfAsync(_companyId, ProjectId, _actor.UserId);
-        _needsMatrix = !_onVessel && await Svc.NeedsMatrixAsync(_companyId, ProjectId);
+        _needsMatrix = !_onVessel && await Svc.NeedsMatrixAsync(_companyId, ProjectId, _actor.UserId);
         var costs = _onVessel ? new Dictionary<Guid, ProjectItemCost>() : (await Svc.ItemCostsAsync(_companyId, ProjectId)).ToDictionary(c => c.ItemId);
         _requests = await Svc.RequestsAsync(_companyId, ProjectId);
         foreach (var waiting in _requests.Where(r => r.Decision is null)) _answers.TryAdd(waiting.Request.Id, new AnswerRow());
@@ -692,14 +708,14 @@ else
 
     private Task RequestVariation() => RunAsync(async () =>
     {
-        await Svc.RequestVariationAsync(_companyId, ProjectId, _variationGroup, _variationText, _variationAmount, _variationReason, _actor, _variationItem == Guid.Empty ? null : _variationItem);
-        (_variationOpen, _variationGroup, _variationText, _variationReason, _variationAmount, _variationItem) = (false, "", "", "", 0m, Guid.Empty);
+        await Svc.RequestVariationAsync(_companyId, ProjectId, _variationGroup, _variationText, _variationAmount, _variationReason, _actor, _variationItem == Guid.Empty ? null : _variationItem, _variationCategory);
+        (_variationOpen, _variationGroup, _variationText, _variationReason, _variationAmount, _variationItem, _variationCategory) = (false, "", "", "", 0m, Guid.Empty, "");
     }, "Variation requested");
 
     private Task RequestExtension() => RunAsync(async () =>
     {
-        await Svc.RequestExtensionAsync(_companyId, ProjectId, _extensionDays, _extensionAmount, _extensionReason, _actor);
-        (_extensionOpen, _extensionDays, _extensionAmount, _extensionReason) = (false, 7, 0m, "");
+        await Svc.RequestExtensionAsync(_companyId, ProjectId, _extensionDays, _extensionAmount, _extensionReason, _actor, _extensionCategory);
+        (_extensionOpen, _extensionDays, _extensionAmount, _extensionReason, _extensionCategory) = (false, 7, 0m, "", "");
     }, "Extension requested");
 
     private static ProjectEventKind[] NextSteps(ProjectStatus status) => status switch

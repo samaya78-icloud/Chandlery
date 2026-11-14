@@ -28,6 +28,11 @@
                             <span class="font-medium">@y.Name</span><span class="text-muted">@y.Location@(y.ContactEmail == "" ? "" : " · " + y.ContactEmail)</span>
                             @if (!y.IsActive) { <span class="text-xs text-muted">(not used now)</span> }
                             <button @onclick="() => ToggleYard(y)" class="ml-auto text-xs text-link hover:underline">@(y.IsActive ? "Stop using" : "Use again")</button>
+                            @foreach (var login in _logins.GetValueOrDefault(y.Id, []))
+                            {
+                                <span class="w-full pl-4 text-xs @(login.IsEnabled ? "text-muted" : "text-muted line-through")">Portal login: @login.Email (@login.DisplayName)
+                                    <button @onclick="() => ToggleLogin(login)" class="ml-2 text-link hover:underline">@(login.IsEnabled ? "Disable" : "Enable")</button></span>
+                            }
                         </li>
                     }
                 </ul>
@@ -39,6 +44,24 @@
                 <label>Contact email <input class="input mt-1" @bind="_yardEmail" /></label>
                 <button @onclick="AddYard" disabled="@_busy" class="btn btn-primary btn-sm">Add yard</button>
             </div>
+
+            @if (_allYards.Any(y => y.IsActive))
+            {
+                <p class="mb-1 mt-5 text-sm font-medium">Let a yard quote for itself</p>
+                <p class="mb-2 text-xs text-muted">A yard login sees only the tenders its yard is invited to: the ship, the jobs to price, and its own quote. It enters its prices and attaches its quotation; you still award. The person chooses their own password at first sign-in.</p>
+                <div class="flex flex-wrap items-end gap-3 text-sm">
+                    <label>Yard
+                        <select class="select mt-1" @bind="_loginYard">
+                            <option value="@Guid.Empty">Choose…</option>
+                            @foreach (var y in _allYards.Where(y => y.IsActive)) { <option value="@y.Id">@y.Name</option> }
+                        </select>
+                    </label>
+                    <label>Person's name <input class="input mt-1" @bind="_loginName" /></label>
+                    <label>Email <input class="input mt-1" @bind="_loginEmail" /></label>
+                    <label>Temporary password <input class="input mt-1" @bind="_loginPassword" autocomplete="off" /></label>
+                    <button @onclick="CreateLogin" disabled="@_busy" class="btn btn-secondary btn-sm">Create login</button>
+                </div>
+            }
         </div>
     }
 
@@ -57,7 +80,7 @@
                         var t = v.Tender;
                         <tr>
                             <td class="p-2 font-medium">@v.YardName</td>
-                            <td class="p-2"><StatusChip Label="@Label(t.Status)" Tone="@Tone(t.Status)" /></td>
+                            <td class="p-2"><StatusChip Label="@Label(t.Status)" Tone="@Tone(t.Status)" />@if (t.QuotedByYard) { <span class="ml-1 text-xs text-muted">entered by the yard</span> }</td>
                             <td class="p-2">@(t.YardReference == "" ? "—" : t.YardReference)</td>
                             <td class="p-2 whitespace-nowrap">@(t.ValidUntil is { } vu ? vu.ToString("d MMM yyyy") : "—")</td>
                             <td class="p-2 text-right tabular-nums">@(t.QuotedAt is null ? "—" : Money.Format(v.Lines.Sum(l => l.AmountUsd) + t.OtherChargesUsd, "USD"))</td>
@@ -66,7 +89,7 @@
                                 {
                                     @if (t.Status is TenderStatus.Invited or TenderStatus.Quoted) { <button @onclick="() => OpenQuote(v)" class="btn btn-secondary btn-sm">@(t.Status == TenderStatus.Invited ? "Enter quote" : "Change quote")</button> }
                                     @if (t.Status == TenderStatus.Invited) { <button @onclick="() => Decline(t.Id)" disabled="@_busy" class="btn btn-secondary btn-sm">Declined to quote</button> }
-                                    @if (t.Status is TenderStatus.Quoted or TenderStatus.NotAwarded) { <button @onclick="() => Award(t.Id)" disabled="@_busy" class="btn btn-primary btn-sm">Award</button> }
+                                    @if (t.Status is TenderStatus.Quoted or TenderStatus.NotAwarded && t.QuotedAt is not null) { <button @onclick="() => Award(t.Id)" disabled="@_busy" class="btn btn-primary btn-sm">Award</button> }
                                     @if (t.Status is TenderStatus.Invited or TenderStatus.Declined) { <button @onclick="() => Remove(t.Id)" disabled="@_busy" class="text-xs text-rose-600 hover:underline">Remove</button> }
                                 }
                             </td>
@@ -209,6 +232,9 @@
     private readonly Dictionary<Guid, decimal?> _qPrices = [];
 
     private List<ProjectFileView> _files = [];
+    private readonly Dictionary<Guid, List<ProjectPlanningService.YardLogin>> _logins = [];
+    private Guid _loginYard;
+    private string _loginName = "", _loginEmail = "", _loginPassword = "";
     private readonly Dictionary<Guid, List<PendingAttachment>> _pending = [];
 
     private IEnumerable<ProjectFileView> FilesOf(Guid tenderId) => _files.Where(f => f.TenderId == tenderId);
@@ -237,6 +263,8 @@
         _openYards = _allYards.Where(y => y.IsActive && !invited.Contains(y.Id)).ToList();
         _comparison = await Planning.CompareAsync(CompanyId, ProjectId);
         _files = await Planning.FilesAsync(CompanyId, ProjectId);
+        _logins.Clear();
+        foreach (var y in _allYards) _logins[y.Id] = await Planning.YardLoginsAsync(CompanyId, y.Id);
     }
 
     private async Task Run(Func<Task> action, string? success = null)
@@ -252,6 +280,14 @@
         catch (InvalidOperationException ex) { _error = ex.Message; }
         finally { _busy = false; }
     }
+
+    private Task CreateLogin() => Run(async () =>
+    {
+        await Planning.CreateYardLoginAsync(CompanyId, _loginYard, _loginEmail, _loginName, _loginPassword, User);
+        (_loginName, _loginEmail, _loginPassword) = ("", "", "");
+    }, "Login created");
+
+    private Task ToggleLogin(ProjectPlanningService.YardLogin login) => Run(() => Planning.SetYardLoginEnabledAsync(CompanyId, login.UserId, !login.IsEnabled, User));
 
     private Task AddYard() => Run(async () =>
     {

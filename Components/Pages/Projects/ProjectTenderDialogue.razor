@@ -1,0 +1,106 @@
+@inject ProjectPlanningService Planning
+@inject ToastService Toasts
+
+@if (_questions.Count > 0 || _notices.Count > 0 || _revised.Count > 0)
+{
+    <section class="card mb-6 p-5">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Yard activity</h2>
+            @if (_notices.Count > 0) { <button @onclick="MarkRead" class="btn btn-secondary btn-sm ml-auto">Mark @_notices.Count as read</button> }
+        </div>
+
+        @if (_error is not null) { <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+
+        @if (_notices.Count > 0)
+        {
+            <ul class="mb-4 space-y-1 text-sm">
+                @foreach (var n in _notices) { <li><span class="mr-2 inline-block h-2 w-2 rounded-full bg-sky-500"></span>@n.Text <span class="text-xs text-muted">@n.At.ToString("d MMM HH:mm")</span></li> }
+            </ul>
+        }
+
+        @if (_questions.Count > 0)
+        {
+            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Questions from yards</h3>
+            <ul class="mb-4 divide-y divide-line/60 text-sm">
+                @foreach (var q in _questions)
+                {
+                    <li class="py-2">
+                        <div><span class="font-medium">@q.YardName</span> <span class="text-xs text-muted">asked @q.Question.AskedAt.ToString("d MMM")</span></div>
+                        <div class="mt-1">@q.Question.Question</div>
+                        @if (q.Question.AnsweredAt is not null)
+                        {
+                            <div class="mt-1 rounded-lg bg-emerald-50 px-3 py-2 text-emerald-800">@q.Question.Answer <span class="text-xs">— @q.Question.AnsweredByName, @q.Question.AnsweredAt?.ToString("d MMM")</span></div>
+                        }
+                        else if (CanEdit)
+                        {
+                            <div class="mt-2 flex flex-wrap items-center gap-2">
+                                <input class="input min-w-64 flex-1" placeholder="Your answer (only this yard sees it)" @bind="Draft(q.Question.Id).Text" />
+                                <button @onclick="() => Answer(q.Question.Id)" disabled="@_busy" class="btn btn-primary btn-sm">Answer</button>
+                            </div>
+                        }
+                        else { <div class="mt-1 text-xs text-amber-600">Not answered yet.</div> }
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (_revised.Count > 0)
+        {
+            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Quote revisions</h3>
+            @foreach (var (yard, list) in _revised)
+            {
+                <div class="mb-2 text-sm">
+                    <span class="font-medium">@yard</span>
+                    <ol class="ml-4 list-decimal text-muted">
+                        @foreach (var r in list)
+                        {
+                            <li>@Money.Format(r.TotalUsd, "USD") <span class="text-xs">@r.At.ToString("d MMM")@(r.Reason == "" ? "" : " · " + r.Reason)</span></li>
+                        }
+                    </ol>
+                </div>
+            }
+        }
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+    [Parameter, EditorRequired] public Actor User { get; set; } = Actor.System;
+    [Parameter] public bool CanEdit { get; set; }
+
+    private List<ProjectNotice> _notices = [];
+    private List<TenderQuestionView> _questions = [];
+    private List<(string Yard, List<ProjectTenderRevision> Versions)> _revised = [];
+    private readonly Dictionary<Guid, DraftBox> _drafts = [];
+    private string? _error;
+    private bool _busy;
+
+    private sealed class DraftBox { public string Text { get; set; } = ""; }
+
+    private DraftBox Draft(Guid id) => _drafts.TryGetValue(id, out var d) ? d : _drafts[id] = new DraftBox();
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _notices = await Planning.NoticesAsync(CompanyId, ProjectId);
+        _questions = await Planning.QuestionsOfAsync(CompanyId, ProjectId);
+        var revisions = await Planning.RevisionsOfAsync(CompanyId, ProjectId);
+        var tenders = await Planning.TendersAsync(CompanyId, ProjectId);
+        _revised = tenders.Where(t => revisions[t.Tender.Id].Count() > 1).Select(t => (t.YardName, revisions[t.Tender.Id].ToList())).ToList();
+    }
+
+    private async Task Run(Func<Task> action, string success)
+    {
+        _busy = true;
+        _error = null;
+        try { await action(); await LoadAsync(); await Toasts.Success(success); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task Answer(Guid id) => Run(() => Planning.AnswerQuestionAsync(CompanyId, id, Draft(id).Text, User), "Answer sent");
+
+    private Task MarkRead() => Run(() => Planning.MarkNoticesReadAsync(CompanyId, ProjectId), "Marked as read");
+}

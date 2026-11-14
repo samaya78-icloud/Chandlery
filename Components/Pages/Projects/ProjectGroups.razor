@@ -83,6 +83,48 @@ else
                 <p class="mb-3 text-sm text-muted">No projects in this group yet.</p>
             }
 
+            @if (members.Count > 0 && (_mayManage || _yardCols.GetValueOrDefault(group.Id, []).Count > 0))
+            {
+                var cols = _yardCols.GetValueOrDefault(group.Id, []);
+                <div class="mb-4 rounded-lg border border-line p-4">
+                    <h3 class="mb-1 text-sm font-semibold">Group tender</h3>
+                    <p class="mb-3 text-xs text-muted">Invite a yard to every ship's project at once. Each ship's quote is entered on its own project (the jobs differ); the yards are then compared across the whole group, and one can be awarded to every member in one step.</p>
+                    @if (cols.Count > 0)
+                    {
+                        <div class="overflow-x-auto"><table class="mb-3 w-full text-sm">
+                            <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Yard</th><th class="p-2">Quoted</th><th class="p-2 text-right">Group total</th><th class="p-2"></th></tr></thead>
+                            <tbody class="divide-y divide-line/60">
+                                @foreach (var c in cols)
+                                {
+                                    <tr>
+                                        <td class="p-2 font-medium">@c.YardName@if (c.Awarded) { <span class="ml-2"><StatusChip Label="Awarded" Tone="success" /></span> }</td>
+                                        <td class="p-2">@c.Quoted of @c.Members ships@(c.Quoted == c.Members && !c.Complete ? " · some jobs not priced" : "")</td>
+                                        <td class="@("p-2 text-right tabular-nums " + (c.IsLowest ? "font-semibold text-emerald-600" : ""))">@Money.Format(c.Total, "USD")@if (c.IsLowest) { <span class="ml-1 text-xs font-normal">lowest</span> }</td>
+                                        <td class="p-2 text-right">@if (_mayManage && c.Quoted == c.Members && !c.Awarded) { <button @onclick="() => AwardAll(group.Id, c.YardId)" disabled="@_busy" class="btn btn-primary btn-sm">Award to every ship</button> }</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table></div>
+                    }
+                    else
+                    {
+                        <p class="mb-3 text-sm text-muted">No yard has quoted yet.</p>
+                    }
+                    @if (_mayManage && _yards.Count > 0)
+                    {
+                        <div class="flex flex-wrap items-end gap-2 text-sm">
+                            <label>Invite a yard to all ships
+                                <select class="select mt-1" @bind="_inviteYard[group.Id]">
+                                    <option value="@Guid.Empty">Choose…</option>
+                                    @foreach (var y in _yards) { <option value="@y.Id">@y.Name</option> }
+                                </select>
+                            </label>
+                            <button @onclick="() => InviteAll(group.Id)" disabled="@_busy" class="btn btn-secondary btn-sm">Invite</button>
+                        </div>
+                    }
+                </div>
+            }
+
             @if (_mayManage && Candidates().Count > 0)
             {
                 <div class="flex flex-wrap items-end gap-2 text-sm">
@@ -110,7 +152,9 @@ else
     private string _name = "", _note = "";
     private List<(ProjectGroup Group, List<Guid> ProjectIds)> _groups = [];
     private List<ProjectListRow> _rows = [];
-    private readonly Dictionary<Guid, Guid> _pick = [];
+    private readonly Dictionary<Guid, Guid> _pick = [], _inviteYard = [];
+    private List<ProjectYard> _yards = [];
+    private readonly Dictionary<Guid, List<GroupYardColumn>> _yardCols = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -126,7 +170,10 @@ else
     {
         _rows = await Svc.IsEnabledForCompanyAsync(_companyId) ? await Svc.ListWithMoneyAsync(_companyId) : [];
         _groups = await Planning.GroupsAsync(_companyId);
-        foreach (var (group, _) in _groups) _pick.TryAdd(group.Id, Guid.Empty);
+        _yards = await Planning.YardsAsync(_companyId);
+        _yardCols.Clear();
+        foreach (var (group, ids) in _groups) if (ids.Count > 0) _yardCols[group.Id] = await Planning.GroupYardsAsync(_companyId, group.Id);
+        foreach (var (group, _) in _groups) { _pick.TryAdd(group.Id, Guid.Empty); _inviteYard.TryAdd(group.Id, Guid.Empty); }
     }
 
     /// <summary>Projects not in any group yet, live ones first.</summary>
@@ -150,6 +197,15 @@ else
     private Task Delete(Guid id) => Run(() => Planning.DeleteGroupAsync(_companyId, id, _actor), "Group deleted");
 
     private Task Add(Guid groupId) => Run(async () => { await Planning.AddToGroupAsync(_companyId, groupId, _pick[groupId], _actor); _pick[groupId] = Guid.Empty; }, "Project added");
+
+    private async Task InviteAll(Guid groupId)
+    {
+        List<string> skipped = [];
+        await Run(async () => { (_, skipped) = await Planning.InviteGroupAsync(_companyId, groupId, _inviteYard[groupId], _actor); _inviteYard[groupId] = Guid.Empty; }, "Yard invited");
+        if (skipped.Count > 0) _error = "Not invited to every ship. " + string.Join(" ", skipped);
+    }
+
+    private Task AwardAll(Guid groupId, Guid yardId) => Run(() => Planning.AwardGroupAsync(_companyId, groupId, yardId, _actor), "Every ship awarded to this yard");
 
     private Task Remove(Guid projectId) => Run(() => Planning.RemoveFromGroupAsync(_companyId, projectId, _actor), "Taken out of the group");
 }
