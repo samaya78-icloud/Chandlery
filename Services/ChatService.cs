@@ -331,6 +331,10 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var risks = Of(ChatModules.RiskAssessment);
         foreach (var x in await db.RiskAssessments.AsNoTracking().Where(x => risks.Contains(x.Id)).Select(x => new { x.Id, x.Code, x.Version, x.JobDescription }).ToListAsync())
             result[(ChatModules.RiskAssessment, x.Id)] = new RecordInfo($"Risk assessment {x.Code} v{x.Version} · {(x.JobDescription.Length <= 50 ? x.JobDescription : x.JobDescription[..50] + "…")}", Href($"/risk/{x.Id}#conversation", $"/risk/{x.Id}#conversation"));
+
+        var projects = Of(ChatModules.Project);
+        foreach (var x in await db.Projects.AsNoTracking().Where(x => projects.Contains(x.Id)).Select(x => new { x.Id, x.Code, x.Title }).ToListAsync())
+            result[(ChatModules.Project, x.Id)] = new RecordInfo($"Project {x.Code} · {x.Title}", Href($"/projects/{x.Id}#conversation", $"/projects/{x.Id}#conversation"));
         return result;
     }
     /// <summary>Who this person is in a conversation (side, vessel, administrator), or null when they cannot take part.</summary>

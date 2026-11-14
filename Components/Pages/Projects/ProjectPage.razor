@@ -1,4 +1,4 @@
-@page "/projects/{ProjectId:guid}"
+﻿@page "/projects/{ProjectId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -522,6 +522,9 @@ else
         }
     </section>
 
+    <div class="mb-6 print:hidden">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.Project" RecordId="p.Id" VesselId="p.VesselId" Title="Conversation" />
+    </div>
     @* ---- history ---- *@
     <section class="card mb-6 p-5">
         <h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">History</h2>

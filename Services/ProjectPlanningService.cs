@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -201,6 +201,7 @@ public partial class ProjectPlanningService(IDbContextFactory<ChandleryDbContext
             if (cost is null) db.ProjectItemCosts.Add(new ProjectItemCost { Id = Guid.CreateVersion7(), CompanyId = companyId, ProjectId = tender.ProjectId, ItemId = line.ItemId, QuotedUsd = line.AmountUsd });
             else cost.QuotedUsd = line.AmountUsd;
         }
+        await ChatService.NoteAsync(db, companyId, ChatModules.Project, tender.ProjectId, project.VesselId, $"{yard.Name} awarded the project by {actor.Name}");
         await db.SaveChangesAsync();
         return tender;
     }
