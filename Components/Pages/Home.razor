@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject DashboardService Dashboards
 @inject ApprovalService ApprovalSvc
+@inject NavigationManager Navigation
 
 <PageTitle>Dashboard · Chandlery</PageTitle>
 
@@ -238,6 +239,7 @@ else if (_supplier is { } s)
     protected override async Task OnInitializedAsync()
     {
         var user = (await AuthStateTask!).User;
+        if (user.IsInRole("YardUser")) { Navigation.NavigateTo("/yard", replace: true); return; }   // a yard has its own home
         if (NodeContext.Current.IsVessel) return;   // a vessel has its own home (VesselHome)
         _firstName = (user.Identity?.Name ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
 

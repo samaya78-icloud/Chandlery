@@ -80,7 +80,7 @@ public class NavCatalogTests : IAsyncLifetime
         Assert.Equal(["Assessments", "New assessment", "Sign-off queue"], Pages(groups, "Risk assessment"));
         Assert.Equal(["Fleet compliance", "Working table", "Reports", "Rules"], Pages(groups, "Safety"));
         Assert.All(groups.Single(g => g.Title == "Safety").Items, i => Assert.Equal("Hours of rest", i.Section));
-        Assert.Equal(["Projects", "New project"], Pages(groups, "Projects"));
+        Assert.Equal(["Projects", "Fleet view", "Project groups", "New project"], Pages(groups, "Projects"));
         Assert.Equal(["Worklist lists", "Maintenance library", "Tank checklists", "Risk library"], Pages(groups, "Admin").Skip(6));          // each module adds its setup page for the admin
         Assert.Equal("pms planned maintenance", groups.Single(g => g.Title == "Maintenance").Aliases);                                            // what the finder also matches
     }
@@ -91,8 +91,8 @@ public class NavCatalogTests : IAsyncLifetime
         await SwitchOnAsync(PolicyModules.Pms, PolicyModules.RiskAssessment, PolicyModules.Projects);
 
         var user = await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync()), isVessel: false);
-        Assert.Equal(["Projects"], Pages(user, "Projects"));                                                                                  // a clerk can read projects but not start one
-        Assert.Equal(["Projects", "New project"], Pages(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync(projectManager: true)), isVessel: false), "Projects"));
+        Assert.Equal(["Projects", "Fleet view", "Project groups"], Pages(user, "Projects"));                                                                                  // a clerk can read projects but not start one
+        Assert.Equal(["Projects", "Fleet view", "Project groups", "New project"], Pages(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync(projectManager: true)), isVessel: false), "Projects"));
         Assert.DoesNotContain("Admin", Titles(user));                                                                                         // setup pages are for the company admin
         Assert.Contains("Maintenance", Titles(user));
 

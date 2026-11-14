@@ -1,0 +1,274 @@
+@page "/projects/fleet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject ProjectService Svc
+@inject ProjectPlanningService Planning
+
+<PageTitle>Fleet projects · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Fleet projects" Subtitle="Which ship is in the yard when, how busy each month is, and what the projects are costing.">
+    <Actions>
+        <a href="/projects" class="btn btn-secondary">Project list</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_all.Count == 0)
+{
+    <EmptyState Title="No projects yet" Message="Plan a project and it will appear here against its vessel." />
+}
+else
+{
+    <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+        <label>Status
+            <select class="select mt-1" value="@_statusFilter" @onchange="e => { _statusFilter = e.Value?.ToString() ?? string.Empty; Recompute(); }">
+                <option value="">All</option>
+                @foreach (var s in Enum.GetValues<ProjectStatus>()) { <option value="@s">@StatusChip.Describe(s).Label</option> }
+            </select>
+        </label>
+        <label>Year
+            <select class="select mt-1" value="@_yearFilter" @onchange="e => { _yearFilter = e.Value?.ToString() ?? string.Empty; Recompute(); }">
+                <option value="">Any year</option>
+                @foreach (var y in _years) { <option value="@y">@y</option> }
+            </select>
+        </label>
+        <span class="text-xs text-muted">@_rows.Count of @_all.Count projects</span>
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <EmptyState Title="No projects match" Message="Change the status or year to see more." />
+        return;
+    }
+
+    <section class="card mb-5 p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-sm font-semibold">Timeline</h2>
+            <div class="flex flex-wrap items-center gap-3 text-xs text-muted">
+                @foreach (var s in Enum.GetValues<ProjectStatus>())
+                {
+                    <span class="inline-flex items-center gap-1"><span class="@("inline-block h-2.5 w-2.5 rounded-sm " + Bar(s))"></span>@StatusChip.Describe(s).Label</span>
+                }
+                <span>Drydocks have a heavier outline. Planned dates are lighter until the work starts.</span>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <div class="@("relative")" style="@("min-width:" + (_months * 56 + 160) + "px")">
+                <div class="flex">
+                    <div class="w-40 shrink-0"></div>
+                    <div class="flex flex-1 text-xs text-muted">
+                        @for (var i = 0; i < _months; i++)
+                        {
+                            var m = _from.AddMonths(i);
+                            <div class="flex-1 border-l border-line/60 px-1 py-1">@m.ToString("MMM")@(m.Month == 1 || i == 0 ? " " + m.ToString("yy") : "")</div>
+                        }
+                    </div>
+                </div>
+                @foreach (var vessel in _byVessel)
+                {
+                    <div class="flex border-t border-line/60">
+                        <div class="w-40 shrink-0 py-2 pr-2 text-sm font-medium">@vessel.Key</div>
+                        <div class="relative flex-1" style="@("height:" + (vessel.Value.Lanes * 26 + 8) + "px")">
+                            @for (var i = 0; i < _months; i++)
+                            {
+                                <div class="absolute inset-y-0 border-l border-line/40" style="@("left:" + Pct((double)i / _months))"></div>
+                            }
+                            @foreach (var (span, lane) in vessel.Value.Placed)
+                            {
+                                var p = span.Row.Row.Project;
+                                var left = ProjectFleetRules.Position(span.Start, _from, _months);
+                                var right = ProjectFleetRules.Position(span.End.AddDays(1), _from, _months);
+                                <a href="/projects/@p.Id" class="@("absolute flex items-center overflow-hidden whitespace-nowrap rounded px-1.5 text-[11px] font-medium text-white " + Bar(span.Row.Row.Status) + (span.Actual ? "" : " opacity-60") + (p.Type == ProjectType.Drydock ? " ring-2 ring-white/50" : ""))"
+                                   style="@("left:" + Pct(left) + ";width:" + Pct(Math.Max(right - left, 0.006)) + ";top:" + (lane * 26 + 4) + "px;height:22px")"
+                                   title="@(p.Code + " " + p.Title + ": " + span.Start.ToString("d MMM yyyy") + " to " + span.End.ToString("d MMM yyyy") + (span.Actual ? "" : " (planned)"))">@p.Title</a>
+                            }
+                            @if (_today >= _from && _today < _from.AddMonths(_months))
+                            {
+                                <div class="pointer-events-none absolute inset-y-0 w-px bg-rose-500" style="@("left:" + Pct(ProjectFleetRules.Position(_today, _from, _months)))"></div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        @if (_unscheduled.Count > 0)
+        {
+            <p class="mt-3 text-xs text-muted">Not on the timeline, no dates yet: @string.Join(", ", _unscheduled.Select(r => r.Row.Project.Code + " " + r.Row.Project.Title)).</p>
+        }
+    </section>
+
+    <section class="card mb-5 p-4">
+        <h2 class="mb-1 text-sm font-semibold">Workload by month</h2>
+        <p class="mb-3 text-xs text-muted">Projects running in each month, with the drydocks among them and the project days that fall in it.</p>
+        <div class="overflow-x-auto">
+            <div class="flex items-end gap-1" style="@("min-width:" + (_months * 56) + "px")">
+                @foreach (var m in _workload)
+                {
+                    var height = _maxProjects == 0 ? 0 : (int)Math.Round(80.0 * m.Projects / _maxProjects);
+                    <div class="flex flex-1 flex-col items-center text-xs" title="@(m.Month.ToString("MMMM yyyy") + ": " + m.Projects + " running, " + m.Drydocks + " drydock, " + m.Days + " project days")">
+                        <div class="font-semibold tabular-nums">@(m.Projects == 0 ? "" : m.Projects.ToString())</div>
+                        <div class="@("w-full rounded-t " + (m.Projects == 0 ? "bg-line/40" : "bg-sky-500/70"))" style="@("height:" + Math.Max(height, 2) + "px")"></div>
+                        <div class="mt-1 text-muted">@m.Month.ToString("MMM")</div>
+                        <div class="text-[10px] text-muted">@(m.Drydocks == 0 ? "" : m.Drydocks + " dd")</div>
+                    </div>
+                }
+            </div>
+        </div>
+    </section>
+
+    @if (_load.Count > 0)
+    {
+        <section class="card mb-5 p-4">
+            <h2 class="mb-1 text-sm font-semibold">Workload by superintendent</h2>
+            <p class="mb-3 text-xs text-muted">Project days in each month, for the projects each superintendent has in charge. Busiest first.</p>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                        <tr><th class="p-2">Superintendent</th><th class="p-2 text-right">Projects</th><th class="p-2 text-right">Days</th>@for (var i = 0; i < _months; i++) { <th class="p-2 text-right">@_from.AddMonths(i).ToString("MMM")</th> }</tr>
+                    </thead>
+                    <tbody class="divide-y divide-line/60">
+                        @foreach (var l in _load)
+                        {
+                            <tr><td class="p-2">@l.Name</td><td class="p-2 text-right tabular-nums">@l.Projects</td><td class="p-2 text-right font-semibold tabular-nums">@l.Days</td>
+                                @foreach (var d in l.DaysByMonth) { <td class="@("p-2 text-right tabular-nums " + (d == 0 ? "text-muted" : ""))">@(d == 0 ? "·" : d.ToString())</td> }</tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+
+    @if (_missing.Count > 0)
+    {
+        <section class="card mb-5 p-4">
+            <h2 class="mb-1 text-sm font-semibold">Missing documents</h2>
+            <p class="mb-3 text-xs text-muted">Projects that are not closed and still wait on a document from their checklist.</p>
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Project</th><th class="p-2">Vessel</th><th class="p-2">Missing</th><th class="p-2 text-right">Overdue</th></tr></thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var m in _missing)
+                    {
+                        <tr>
+                            <td class="p-2"><a href="/projects/@m.ProjectId" class="link font-mono text-xs font-semibold">@m.Code</a> <span>@m.Title</span></td>
+                            <td class="p-2">@m.VesselName</td>
+                            <td class="p-2">@m.Missing.Count: <span class="text-muted">@string.Join("; ", m.Missing.Take(3))@(m.Missing.Count > 3 ? "…" : "")</span></td>
+                            <td class="@("p-2 text-right tabular-nums " + (m.Overdue > 0 ? "font-semibold text-rose-600" : "text-muted"))">@(m.Overdue == 0 ? "—" : m.Overdue.ToString())</td>
+                        </tr>
+                    }
+                </tbody>
+            </table></div>
+        </section>
+    }
+
+    <div class="grid gap-5 lg:grid-cols-2">
+        <section class="card p-4">
+            <h2 class="mb-3 text-sm font-semibold">Spend by vessel</h2>
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="py-2">Vessel</th><th class="py-2 text-right">Projects</th><th class="py-2 text-right">Budget</th><th class="py-2 text-right">Cost to date</th><th class="py-2 text-right">Over budget</th></tr></thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var s in _spendByVessel)
+                    {
+                        <tr><td class="py-2">@s.Vessel</td><td class="py-2 text-right tabular-nums">@s.Projects</td><td class="py-2 text-right tabular-nums">@Usd(s.Budget)</td><td class="py-2 text-right tabular-nums">@Usd(s.Cost)</td>
+                            <td class="@("py-2 text-right tabular-nums " + (s.Over > 0 ? "font-semibold text-rose-600" : ""))">@Usd(s.Over)</td></tr>
+                    }
+                </tbody>
+            </table></div>
+        </section>
+        <section class="card p-4">
+            <h2 class="mb-3 text-sm font-semibold">Spend by year</h2>
+            <div class="overflow-x-auto"><table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="py-2">Year</th><th class="py-2 text-right">Projects</th><th class="py-2 text-right">Budget</th><th class="py-2 text-right">Cost to date</th><th class="py-2 text-right">Over budget</th></tr></thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var (year, s) in _spendByYear)
+                    {
+                        <tr><td class="py-2">@year</td><td class="py-2 text-right tabular-nums">@s.Projects</td><td class="py-2 text-right tabular-nums">@Usd(s.Budget)</td><td class="py-2 text-right tabular-nums">@Usd(s.Cost)</td>
+                            <td class="@("py-2 text-right tabular-nums " + (s.Over > 0 ? "font-semibold text-rose-600" : ""))">@Usd(s.Over)</td></tr>
+                    }
+                </tbody>
+            </table></div>
+        </section>
+    </div>
+    <p class="mt-3 text-xs text-muted">Cost to date is approved orders not yet invoiced, plus finalized invoices (before tax), plus costs entered by hand, in US dollars. Projects are counted in the year they started or are planned to start.</p>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private record Lane(List<(FleetSpan Span, int Lane)> Placed, int Lanes);
+
+    private bool _loaded;
+    private DateTime _today = DateTime.UtcNow.Date, _from;
+    private int _months, _maxProjects;
+    private List<ProjectListRow> _all = [], _rows = [], _unscheduled = [];
+    private List<SuperintendentLoad> _load = [];
+    private List<MissingDocumentsRow> _missing = [];
+    private List<int> _years = [];
+    private string _statusFilter = "", _yearFilter = "";
+    private List<FleetMonth> _workload = [];
+    private List<FleetSpend> _spendByVessel = [];
+    private List<(int Year, FleetSpend Spend)> _spendByYear = [];
+    private Dictionary<string, Lane> _byVessel = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        if (await Svc.IsEnabledForCompanyAsync(companyId))
+        {
+            _all = await Svc.ListWithMoneyAsync(companyId);
+            _missing = await Planning.MissingDocumentsAsync(companyId, _today);
+        }
+        _years = _all.Select(YearOf).Distinct().OrderDescending().ToList();
+        Recompute();
+        _loaded = true;
+    }
+
+    private static int YearOf(ProjectListRow r) => (r.Row.ActualStart ?? r.Row.Project.PlannedStart ?? r.Row.Project.CreatedAt).Year;
+
+    /// <summary>Redraws everything from the projects that pass the filters.</summary>
+    private void Recompute()
+    {
+        _rows = _all.Where(r => (_statusFilter == "" || r.Row.Status.ToString() == _statusFilter) && (_yearFilter == "" || YearOf(r).ToString() == _yearFilter)).ToList();
+        var spans = ProjectFleetRules.Spans(_rows, _today);
+        _unscheduled = _rows.Where(r => spans.All(s => s.Row != r)).ToList();
+        (_from, _months) = ProjectFleetRules.Window(spans, _today);
+        _workload = ProjectFleetRules.Workload(spans, _from, _months);
+        _maxProjects = _workload.Count == 0 ? 0 : _workload.Max(m => m.Projects);
+        _load = ProjectFleetRules.WorkloadBySuperintendent(spans, _from, _months);
+        _spendByVessel = ProjectFleetRules.SpendByVessel(_rows);
+        _spendByYear = ProjectFleetRules.SpendByYear(_rows);
+        _byVessel = spans.GroupBy(s => s.Row.VesselName).ToDictionary(g => g.Key, g => Place(g.ToList()));
+    }
+
+    /// <summary>Puts each project of a vessel on the first row where it does not overlap another, so two projects on one ship never hide each other.</summary>
+    private static Lane Place(List<FleetSpan> spans)
+    {
+        var ends = new List<DateTime>();
+        var placed = new List<(FleetSpan, int)>();
+        foreach (var s in spans.OrderBy(s => s.Start))
+        {
+            var lane = ends.FindIndex(e => e < s.Start);
+            if (lane < 0) { ends.Add(s.End); lane = ends.Count - 1; }
+            else ends[lane] = s.End;
+            placed.Add((s, lane));
+        }
+        return new Lane(placed, Math.Max(ends.Count, 1));
+    }
+
+    private static string Pct(double fraction) => (fraction * 100).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private static string Usd(decimal amount) => amount == 0 ? "—" : Money.Format(amount, "USD");
+
+    private static string Bar(ProjectStatus s) => s switch
+    {
+        ProjectStatus.Planning => "bg-slate-500",
+        ProjectStatus.Approved => "bg-sky-600",
+        ProjectStatus.Ongoing => "bg-amber-600",
+        ProjectStatus.Complete => "bg-emerald-600",
+        _ => "bg-violet-600",
+    };
+}

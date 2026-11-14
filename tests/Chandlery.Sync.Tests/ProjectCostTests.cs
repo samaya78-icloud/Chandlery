@@ -39,6 +39,7 @@ public class ProjectCostTests : IAsyncLifetime
         _shore = new ProjectService(_s.ShoreFactory);
         _vessel = new ProjectService(_s.VesselFactory);
         await using var db = await _s.ShoreFactory.CreateDbContextAsync();
+        db.ApprovalRules.RemoveRange(db.ApprovalRules);      // the fixture seeds approval rules; the plain approval step needs none to apply
         db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = PolicyModules.Projects, Enabled = true });
         await db.SaveChangesAsync();
         _supplier = await db.Suppliers.Select(s => s.Id).FirstAsync();

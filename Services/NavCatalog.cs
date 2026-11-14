@@ -34,6 +34,9 @@ public class NavCatalogService(
         if ((await authorization.AuthorizeAsync(user, "CrewAdmin")).Succeeded)
             groups.Add(new("Vessel", [new("/crew", "Crew logins", "team")]));
 
+        if (user.IsInRole("YardUser"))
+            groups.Add(new("Workspace", [new("/yard", "Tenders", "rfq"), new("/yard/profile", "Contact details", "profile")]));
+
         if (user.IsInRole("SupplierAdmin") || user.IsInRole("SupplierUser"))
             groups.Add(new("Workspace",
             [
@@ -49,7 +52,7 @@ public class NavCatalogService(
 
     private async Task<List<NavGroup>> CompanyGroupsAsync(Guid companyId, Guid userId, bool isVessel, bool isAdmin)
     {
-        var pendingApprovals = await approvals.GetPendingCountForUserAsync(companyId, userId) + (await invoices.GetPendingForUserAsync(companyId, userId)).Count;
+        var pendingApprovals = await approvals.GetPendingCountForUserAsync(companyId, userId) + (await invoices.GetPendingForUserAsync(companyId, userId)).Count + (await projects.PendingForUserAsync(companyId, userId)).Count;
 
         List<NavEntry> work = [new("/", "Dashboard", "home"), new("/company/approvals", "My Approvals", "approval", pendingApprovals)];
         List<NavEntry> onboard =
@@ -182,6 +185,8 @@ public class NavCatalogService(
         if (await projects.IsEnabledForCompanyAsync(companyId))
         {
             projectItems.Add(new("/projects", "Projects", "project"));
+            if (!isVessel) projectItems.Add(new("/projects/fleet", "Fleet view", "project"));
+            if (!isVessel) projectItems.Add(new("/projects/groups", "Project groups", "project"));
             if (!isVessel && await projects.MayManageAsync(companyId, userId)) projectItems.Add(new("/projects/new", "New project", "project"));
         }
 

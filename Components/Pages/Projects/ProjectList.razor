@@ -3,6 +3,7 @@
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
 @inject ProjectService Svc
+@inject ProjectPlanningService Planning
 
 <PageTitle>Projects · Chandlery</PageTitle>
 
@@ -25,6 +26,16 @@ else if (_vessels.Count == 0)
 }
 else
 {
+    @if (_notices.Count > 0)
+    {
+        <div class="mb-5 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm">
+            <div class="mb-1 flex items-center gap-3"><span class="font-semibold text-sky-800">From the yards</span><button class="ml-auto text-xs text-link hover:underline" @onclick="MarkNoticesRead">Mark all as read</button></div>
+            <ul class="space-y-0.5">
+                @foreach (var n in _notices) { <li><a href="/projects/@n.ProjectId" class="hover:underline">@n.Text</a> <span class="text-xs text-muted">@n.At.ToString("d MMM HH:mm")</span></li> }
+            </ul>
+        </div>
+    }
+
     <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
         @if (_vessels.Count > 1)
         {
@@ -124,6 +135,9 @@ else
     private List<ProjectListRow> _rows = [];
     private List<string> _superintendents = [];
     private List<int> _years = [];
+    private List<ProjectNotice> _notices = [];
+
+    private async Task MarkNoticesRead() { await Planning.MarkNoticesReadAsync(_companyId); _notices = []; }
 
     protected override async Task OnInitializedAsync()
     {
@@ -137,6 +151,7 @@ else
             _rows = await Svc.ListWithMoneyAsync(_companyId);
             _superintendents = _rows.Select(r => r.Row.Project.SuperintendentName).Where(n => n != "").Distinct().Order().ToList();
             _years = _rows.Select(YearOf).Distinct().OrderDescending().ToList();
+            _notices = await Planning.NoticesAsync(_companyId);
         }
         if (Enum.TryParse<ProjectStatus>(StatusFilter, true, out var s)) _status = s;
         _loaded = true;

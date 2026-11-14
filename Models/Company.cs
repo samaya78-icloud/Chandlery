@@ -28,4 +28,7 @@ public class Company
 
     /// <summary>The Worklist nature that means "deferred to drydock", used to find the tasks to import into a project. When none is chosen, a nature whose name says drydock is used.</summary>
     public Guid? ProjectDrydockNatureId { get; set; }
+
+    /// <summary>When on, a project that has a superintendent needs that person's own sign-off on every budget, variation and extension, before or alongside the matrix steps.</summary>
+    public bool ProjectSuperintendentSignOff { get; set; }
 }

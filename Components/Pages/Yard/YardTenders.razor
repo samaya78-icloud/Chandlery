@@ -1,0 +1,59 @@
+@page "/yard"
+@attribute [Authorize(Roles = "YardUser")]
+@rendermode InteractiveServer
+@inject YardPortalService Portal
+@inject NavigationManager Navigation
+
+<PageTitle>Tenders · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Yard" Title="Tenders" Subtitle="The jobs you have been invited to quote for. Open one to read the specification, enter your prices and attach your quotation." />
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_rows.Count == 0)
+{
+    <EmptyState Title="No invitations yet" Message="When a ship owner invites your yard to quote, it will appear here." />
+}
+else
+{
+    <div class="card overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-3">Job</th><th class="p-3">Vessel</th><th class="p-3">Planned</th><th class="p-3">Status</th><th class="p-3 text-right">Your quote</th><th class="p-3"></th></tr></thead>
+            <tbody class="divide-y divide-line/60">
+                @foreach (var r in _rows)
+                {
+                    <tr>
+                        <td class="p-3"><div class="font-medium">@r.ProjectTitle</div><div class="text-xs text-muted">@(r.Type == ProjectType.Drydock ? "Drydock" : "Technical project")</div></td>
+                        <td class="p-3">@r.VesselName</td>
+                        <td class="p-3 whitespace-nowrap">@(r.PlannedStart is { } s ? s.ToString("d MMM yyyy") : "—")@(r.PlannedEnd is { } e ? " to " + e.ToString("d MMM yyyy") : "")</td>
+                        <td class="p-3"><StatusChip Label="@Label(r.Status)" Tone="@Tone(r.Status)" /></td>
+                        <td class="p-3 text-right tabular-nums">@(r.QuoteTotal is { } t ? Money.Format(t, "USD") : "—")</td>
+                        <td class="p-3 text-right"><a href="/yard/tenders/@r.TenderId" class="btn btn-secondary btn-sm">@(r.CanQuote ? (r.Status == TenderStatus.Invited ? "Quote" : "Review") : "View")</a></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _loaded;
+    private List<YardInvitation> _rows = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthStateTask!).User;
+        if (user.HasClaim("MustChange", "true")) { Navigation.NavigateTo("/change-password", replace: true); return; }   // the temporary password has to be replaced first
+        if (Guid.TryParse(user.FindFirst("YardId")?.Value, out var yardId) && Guid.TryParse(user.FindFirst("YardCompanyId")?.Value, out var companyId))
+            _rows = await Portal.InvitationsAsync(companyId, yardId);
+        _loaded = true;
+    }
+
+    private static string Label(TenderStatus s) => s switch { TenderStatus.Invited => "Invited", TenderStatus.Quoted => "Quoted", TenderStatus.Declined => "Declined", TenderStatus.Awarded => "Awarded to you", _ => "Not awarded" };
+
+    private static string Tone(TenderStatus s) => s switch { TenderStatus.Awarded => "success", TenderStatus.Quoted => "info", TenderStatus.Invited => "warning", _ => "neutral" };
+}

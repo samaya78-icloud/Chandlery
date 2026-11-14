@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject ApprovalService Approvals
 @inject ProcurementService Procurement
+@inject ProjectService Projects
 
 <PageTitle>Approval Matrix · Chandlery</PageTitle>
 
@@ -29,6 +30,12 @@
             </DataGrid>
         </div>
     }
+
+    <div class="mb-6 max-w-3xl card p-6">
+        <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Projects: the superintendent's own sign-off</h2>
+        <p class="mb-3 text-xs text-slate-400">When on, a project that has a superintendent also needs that person's approval on every budget, variation and extension, in addition to the steps above. It is skipped when the superintendent is the one asking, and for a project with no superintendent.</p>
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" checked="@_superSignOff" @onchange="ToggleSuperSignOff" /> Require the project's superintendent to sign off</label>
+    </div>
 
     <div class="mb-6 max-w-3xl card p-6">
         <h2 class="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">Name the approval steps</h2>
@@ -66,7 +73,11 @@
                 <SelectBox TValue="Guid" @bind-Value="_approverId" Options="_userOptions" Placeholder="Select…" SearchPlaceholder="Search people…" />
             </div>
         </div>
-        <p class="mt-3 text-xs text-slate-400">Several approvers on the same step and amount limit are alternatives: any one of them can approve that step.</p>
+        <div class="mt-4 max-w-md">
+            <label class="mb-1 block text-sm font-medium text-slate-700">Project budget category <span class="font-normal text-slate-400">(optional)</span></label>
+            <input @bind="_category" placeholder="for example Owner's costs" class="@InputClass" />
+        </div>
+        <p class="mt-3 text-xs text-slate-400">Several approvers on the same step and amount limit are alternatives: any one of them can approve that step. A rule with a project budget category is an extra sign-off on project budgets that have that category, by what the budget holds in it: it covers every department, and is never used for purchase orders or invoices.</p>
         <button @onclick="AddRule" class="mt-4 btn btn-primary">Add rule</button>
     </div>
 
@@ -113,7 +124,7 @@
 
     private Guid _departmentId, _approverId, _copyFrom, _copyTo;
     private int _level = 1;
-    private string _upTo = "";
+    private string _upTo = "", _category = "";
     private string? _error;
     private string? _message;
 
@@ -136,6 +147,22 @@
         _rules = await Approvals.GetRulesAsync(_companyId);
         _levelNames = await Approvals.GetLevelNamesAsync(_companyId);
         _stepNames = _levelNames.Raw();
+        _superSignOff = await Projects.GetSuperintendentSignOffAsync(_companyId);
+    }
+
+    private bool _superSignOff;
+
+    private async Task ToggleSuperSignOff(ChangeEventArgs e)
+    {
+        _error = _message = null;
+        var on = e.Value is true;
+        try
+        {
+            await Projects.SetSuperintendentSignOffAsync(_companyId, on);
+            _superSignOff = on;
+            _message = on ? "Superintendents now sign off their own projects." : "The superintendent's own sign-off is off.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
     }
 
     private string StepText(ApprovalRuleRow row) => _levelNames.Name(row.Rule.Level);
@@ -169,7 +196,7 @@
 
         try
         {
-            await Approvals.AddRuleAsync(_companyId, _departmentId == Guid.Empty ? null : _departmentId, upTo, _level, _approverId);
+            await Approvals.AddRuleAsync(_companyId, _departmentId == Guid.Empty ? null : _departmentId, upTo, _level, _approverId, _category);
             await Reload();
             _message = "Rule added.";
         }

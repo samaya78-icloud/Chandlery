@@ -57,6 +57,22 @@ public class ProcurementService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>
+    /// A person choosing their own password, for any account that is not crew (a yard's login, for one): after a temporary one was handed over, or any time. Returns false when the
+    /// current password is wrong. Clears the "must change" mark so the next sign-in goes straight in.
+    /// </summary>
+    public async Task<bool> ChangeOwnPasswordAsync(Guid userId, string current, string next)
+    {
+        if ((next ?? "").Length < CrewService.MinPasswordLength) throw new InvalidOperationException($"The new password needs at least {CrewService.MinPasswordLength} characters.");
+        await using var db = await factory.CreateDbContextAsync();
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId) ?? throw new InvalidOperationException("Account not found.");
+        if (user.PasswordHash == "" || _hasher.VerifyHashedPassword(user, user.PasswordHash, current ?? "") == PasswordVerificationResult.Failed) return false;
+        user.PasswordHash = _hasher.HashPassword(user, next!);
+        user.MustChangePassword = false;
+        await db.SaveChangesAsync();
+        return true;
+    }
+
+    /// <summary>
     /// Signs in with an email, or (onboard only) a crew code. Disabled accounts and accounts without a password never sign in.
     /// Crew codes are not accepted at the office: crew are not office staff.
     /// </summary>

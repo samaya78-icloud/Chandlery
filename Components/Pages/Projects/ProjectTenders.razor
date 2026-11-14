@@ -1,0 +1,328 @@
+@inject ProjectPlanningService Planning
+@inject ToastService Toasts
+
+<section class="card mb-6 p-5">
+    <div class="mb-3 flex flex-wrap items-center gap-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Yard tenders</h2>
+        @if (CanEdit)
+        {
+            <button @onclick="() => _yardsOpen = !_yardsOpen" class="btn btn-secondary btn-sm ml-auto">@(_yardsOpen ? "Close yard list" : "Yard list")</button>
+        }
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div>
+    }
+
+    @if (_yardsOpen && CanEdit)
+    {
+        <div class="mb-4 rounded-lg border border-line p-4">
+            <p class="mb-2 text-sm font-medium">Yards</p>
+            @if (_allYards.Count > 0)
+            {
+                <ul class="mb-3 divide-y divide-line/60 text-sm">
+                    @foreach (var y in _allYards)
+                    {
+                        <li class="flex flex-wrap items-center gap-2 py-1.5">
+                            <span class="font-medium">@y.Name</span><span class="text-muted">@y.Location@(y.ContactEmail == "" ? "" : " · " + y.ContactEmail)</span>
+                            @if (!y.IsActive) { <span class="text-xs text-muted">(not used now)</span> }
+                            <button @onclick="() => ToggleYard(y)" class="ml-auto text-xs text-link hover:underline">@(y.IsActive ? "Stop using" : "Use again")</button>
+                            @foreach (var login in _logins.GetValueOrDefault(y.Id, []))
+                            {
+                                <span class="w-full pl-4 text-xs @(login.IsEnabled ? "text-muted" : "text-muted line-through")">Portal login: @login.Email (@login.DisplayName)
+                                    <button @onclick="() => ToggleLogin(login)" class="ml-2 text-link hover:underline">@(login.IsEnabled ? "Disable" : "Enable")</button></span>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+            <div class="flex flex-wrap items-end gap-3 text-sm">
+                <label>Name <input class="input mt-1" @bind="_yardName" /></label>
+                <label>Location <input class="input mt-1" @bind="_yardLocation" /></label>
+                <label>Contact name <input class="input mt-1" @bind="_yardContact" /></label>
+                <label>Contact email <input class="input mt-1" @bind="_yardEmail" /></label>
+                <button @onclick="AddYard" disabled="@_busy" class="btn btn-primary btn-sm">Add yard</button>
+            </div>
+
+            @if (_allYards.Any(y => y.IsActive))
+            {
+                <p class="mb-1 mt-5 text-sm font-medium">Let a yard quote for itself</p>
+                <p class="mb-2 text-xs text-muted">A yard login sees only the tenders its yard is invited to: the ship, the jobs to price, and its own quote. It enters its prices and attaches its quotation; you still award. The person chooses their own password at first sign-in.</p>
+                <div class="flex flex-wrap items-end gap-3 text-sm">
+                    <label>Yard
+                        <select class="select mt-1" @bind="_loginYard">
+                            <option value="@Guid.Empty">Choose…</option>
+                            @foreach (var y in _allYards.Where(y => y.IsActive)) { <option value="@y.Id">@y.Name</option> }
+                        </select>
+                    </label>
+                    <label>Person's name <input class="input mt-1" @bind="_loginName" /></label>
+                    <label>Email <input class="input mt-1" @bind="_loginEmail" /></label>
+                    <label>Temporary password <input class="input mt-1" @bind="_loginPassword" autocomplete="off" /></label>
+                    <button @onclick="CreateLogin" disabled="@_busy" class="btn btn-secondary btn-sm">Create login</button>
+                </div>
+            }
+        </div>
+    }
+
+    @if (_tenders.Count == 0)
+    {
+        <p class="text-sm text-muted">No yards invited yet.@(CanEdit ? " Invite the yards that should quote for this specification." : "")</p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Yard</th><th class="p-2">Status</th><th class="p-2">Their reference</th><th class="p-2">Valid until</th><th class="p-2 text-right">Quote total</th><th class="p-2"></th></tr></thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var v in _tenders)
+                    {
+                        var t = v.Tender;
+                        <tr>
+                            <td class="p-2 font-medium">@v.YardName</td>
+                            <td class="p-2"><StatusChip Label="@Label(t.Status)" Tone="@Tone(t.Status)" />@if (t.QuotedByYard) { <span class="ml-1 text-xs text-muted">entered by the yard</span> }</td>
+                            <td class="p-2">@(t.YardReference == "" ? "—" : t.YardReference)</td>
+                            <td class="p-2 whitespace-nowrap">@(t.ValidUntil is { } vu ? vu.ToString("d MMM yyyy") : "—")</td>
+                            <td class="p-2 text-right tabular-nums">@(t.QuotedAt is null ? "—" : Money.Format(v.Lines.Sum(l => l.AmountUsd) + t.OtherChargesUsd, "USD"))</td>
+                            <td class="p-2 text-right whitespace-nowrap">
+                                @if (CanEdit)
+                                {
+                                    @if (t.Status is TenderStatus.Invited or TenderStatus.Quoted) { <button @onclick="() => OpenQuote(v)" class="btn btn-secondary btn-sm">@(t.Status == TenderStatus.Invited ? "Enter quote" : "Change quote")</button> }
+                                    @if (t.Status == TenderStatus.Invited) { <button @onclick="() => Decline(t.Id)" disabled="@_busy" class="btn btn-secondary btn-sm">Declined to quote</button> }
+                                    @if (t.Status is TenderStatus.Quoted or TenderStatus.NotAwarded && t.QuotedAt is not null) { <button @onclick="() => Award(t.Id)" disabled="@_busy" class="btn btn-primary btn-sm">Award</button> }
+                                    @if (t.Status is TenderStatus.Invited or TenderStatus.Declined) { <button @onclick="() => Remove(t.Id)" disabled="@_busy" class="text-xs text-rose-600 hover:underline">Remove</button> }
+                                }
+                            </td>
+                        </tr>
+                        @if (t.Status == TenderStatus.Declined && t.Remarks != "")
+                        {
+                            <tr><td colspan="6" class="px-2 pb-2 text-xs text-muted">@v.YardName declined: @t.Remarks</td></tr>
+                        }
+                        @if (t.Status is not (TenderStatus.Declined) && (CanEdit || FilesOf(t.Id).Any()))
+                        {
+                            <tr>
+                                <td colspan="6" class="px-2 pb-3">
+                                    <span class="mr-2 text-xs text-muted">Quotation files:</span>
+                                    @foreach (var f in FilesOf(t.Id))
+                                    {
+                                        <span class="mr-2 inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1 text-xs">
+                                            <a href="/files/project/@f.Id" target="_blank" class="link" title="@(f.UploadedByName + " · " + f.UploadedAt.ToString("d MMM yyyy"))">@f.FileName</a>
+                                            @if (CanEdit) { <button type="button" @onclick="() => DeleteFile(f.Id)" class="text-slate-400 hover:text-rose-500" title="Remove">&#10005;</button> }
+                                        </span>
+                                    }
+                                    @if (CanEdit)
+                                    {
+                                        <FilePicker Files="PendingFor(t.Id)" OnChanged="() => UploadPending(t.Id)" Compact="true" AllowShare="false" />
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (CanEdit && _openYards.Count > 0)
+    {
+        <div class="mt-3 flex flex-wrap items-end gap-2 text-sm">
+            <label>Invite a yard
+                <select class="select mt-1" @bind="_inviteYard">
+                    <option value="@Guid.Empty">Choose…</option>
+                    @foreach (var y in _openYards) { <option value="@y.Id">@y.Name@(y.Location == "" ? "" : " · " + y.Location)</option> }
+                </select>
+            </label>
+            <button @onclick="Invite" disabled="@(_busy || _inviteYard == Guid.Empty)" class="btn btn-secondary btn-sm">Invite</button>
+        </div>
+    }
+    else if (CanEdit && _allYards.Count == 0)
+    {
+        <p class="mt-3 text-xs text-muted">Add the yards you deal with under “Yard list”, then invite them here.</p>
+    }
+
+    @if (_quoting is { } q)
+    {
+        <div class="mt-4 rounded-lg border border-accent/40 p-4">
+            <p class="mb-2 text-sm font-medium">Quote from @q.YardName</p>
+            <div class="mb-3 flex flex-wrap items-end gap-3 text-sm">
+                <label>Their reference <input class="input mt-1" @bind="_qRef" /></label>
+                <label>Valid until <input type="date" class="input mt-1" @bind="_qValid" /></label>
+                <label>Other charges (USD) <input type="number" step="0.01" min="0" class="input mt-1 w-36 text-right" @bind="_qOther" /></label>
+            </div>
+            <table class="mb-3 w-full max-w-3xl text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted"><tr><th class="p-2">Item</th><th class="p-2 text-right">Their price (USD)</th></tr></thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var item in LiveItems)
+                    {
+                        <tr><td class="p-2"><span class="text-xs text-muted">@item.Group</span> @item.Description</td>
+                            <td class="p-2 text-right"><input type="number" step="0.01" min="0" class="input w-36 text-right" value="@_qPrices.GetValueOrDefault(item.Id)" @onchange="e => SetPrice(item.Id, e.Value?.ToString())" placeholder="not priced" /></td></tr>
+                    }
+                </tbody>
+            </table>
+            <label class="text-sm">Remarks <input class="input mt-1 w-full max-w-3xl" @bind="_qRemarks" /></label>
+            <div class="mt-3 flex gap-2">
+                <button @onclick="SaveQuote" disabled="@_busy" class="btn btn-primary btn-sm">Save quote</button>
+                <button @onclick="() => _quoting = null" class="btn btn-secondary btn-sm">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_comparison is { Columns.Count: > 0 } cmp)
+    {
+        <h3 class="mb-2 mt-6 text-sm font-semibold">Comparison</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="text-left text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="p-2">Item</th>@foreach (var c in cmp.Columns) { <th class="p-2 text-right">@c.YardName</th> }</tr>
+                </thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var row in cmp.Rows)
+                    {
+                        <tr>
+                            <td class="p-2"><span class="text-xs text-muted">@row.Group</span> @row.Description</td>
+                            @foreach (var c in cmp.Columns)
+                            {
+                                <td class="@("p-2 text-right tabular-nums " + (row.CheapestTenderId == c.TenderId ? "font-semibold text-emerald-600" : ""))">@(row.ByTender.TryGetValue(c.TenderId, out var amount) ? Money.Format(amount, "USD") : "—")</td>
+                            }
+                        </tr>
+                    }
+                    <tr>
+                        <td class="p-2 text-muted">Other charges</td>
+                        @foreach (var c in cmp.Columns) { <td class="p-2 text-right tabular-nums">@(c.OtherCharges == 0 ? "—" : Money.Format(c.OtherCharges, "USD"))</td> }
+                    </tr>
+                    <tr class="font-semibold">
+                        <td class="p-2">Total</td>
+                        @foreach (var c in cmp.Columns)
+                        {
+                            <td class="@("p-2 text-right tabular-nums " + (c.IsLowest ? "text-emerald-600" : ""))">@Money.Format(c.Total, "USD")@if (c.IsLowest) { <span class="ml-1 text-xs font-normal">lowest</span> }
+                                @if (c.Unpriced > 0) { <div class="text-xs font-normal text-amber-600">@c.Unpriced not priced</div> }</td>
+                        }
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="mt-2 text-xs text-muted">Green is the lowest price for an item. The lowest total is only picked from yards that priced every item. Awarding a yard makes it the project's yard and its prices the items' quoted costs.</p>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid ProjectId { get; set; }
+    [Parameter, EditorRequired] public Actor User { get; set; } = Actor.System;
+    [Parameter, EditorRequired] public List<ProjectItem> Items { get; set; } = [];
+
+    /// <summary>True for a project manager on a project that can still be changed.</summary>
+    [Parameter] public bool CanEdit { get; set; }
+
+    /// <summary>Called after an award, which changes the project's yard and its quoted costs.</summary>
+    [Parameter] public EventCallback OnAwarded { get; set; }
+
+    private List<TenderView> _tenders = [];
+    private List<ProjectYard> _allYards = [], _openYards = [];
+    private TenderComparison? _comparison;
+    private string? _error;
+    private bool _busy, _yardsOpen;
+    private Guid _inviteYard;
+    private string _yardName = "", _yardLocation = "", _yardContact = "", _yardEmail = "";
+
+    private TenderView? _quoting;
+    private string _qRef = "", _qRemarks = "";
+    private DateTime? _qValid;
+    private decimal _qOther;
+    private readonly Dictionary<Guid, decimal?> _qPrices = [];
+
+    private List<ProjectFileView> _files = [];
+    private readonly Dictionary<Guid, List<ProjectPlanningService.YardLogin>> _logins = [];
+    private Guid _loginYard;
+    private string _loginName = "", _loginEmail = "", _loginPassword = "";
+    private readonly Dictionary<Guid, List<PendingAttachment>> _pending = [];
+
+    private IEnumerable<ProjectFileView> FilesOf(Guid tenderId) => _files.Where(f => f.TenderId == tenderId);
+
+    private List<PendingAttachment> PendingFor(Guid tenderId) => _pending.TryGetValue(tenderId, out var list) ? list : _pending[tenderId] = [];
+
+    /// <summary>The picker only collects; each file is saved as soon as it is picked and the picker's list is emptied.</summary>
+    private async Task UploadPending(Guid tenderId)
+    {
+        var list = PendingFor(tenderId).ToList();
+        PendingFor(tenderId).Clear();
+        await Run(async () => { foreach (var file in list) await Planning.AddFileAsync(CompanyId, ProjectId, tenderId, file, User); }, list.Count == 0 ? null : "File kept");
+    }
+
+    private Task DeleteFile(Guid id) => Run(() => Planning.DeleteFileAsync(CompanyId, id, User));
+
+    private IEnumerable<ProjectItem> LiveItems => Items.Where(i => i.Status != ProjectItemStatus.Dropped).OrderBy(i => i.SortOrder);
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _tenders = await Planning.TendersAsync(CompanyId, ProjectId);
+        _allYards = await Planning.YardsAsync(CompanyId, includeInactive: true);
+        var invited = _tenders.Select(t => t.Tender.YardId).ToHashSet();
+        _openYards = _allYards.Where(y => y.IsActive && !invited.Contains(y.Id)).ToList();
+        _comparison = await Planning.CompareAsync(CompanyId, ProjectId);
+        _files = await Planning.FilesAsync(CompanyId, ProjectId);
+        _logins.Clear();
+        foreach (var y in _allYards) _logins[y.Id] = await Planning.YardLoginsAsync(CompanyId, y.Id);
+    }
+
+    private async Task Run(Func<Task> action, string? success = null)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            await action();
+            await LoadAsync();
+            if (success is not null) await Toasts.Success(success);
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task CreateLogin() => Run(async () =>
+    {
+        await Planning.CreateYardLoginAsync(CompanyId, _loginYard, _loginEmail, _loginName, _loginPassword, User);
+        (_loginName, _loginEmail, _loginPassword) = ("", "", "");
+    }, "Login created");
+
+    private Task ToggleLogin(ProjectPlanningService.YardLogin login) => Run(() => Planning.SetYardLoginEnabledAsync(CompanyId, login.UserId, !login.IsEnabled, User));
+
+    private Task AddYard() => Run(async () =>
+    {
+        await Planning.SaveYardAsync(CompanyId, new YardInput(null, _yardName, _yardLocation, _yardContact, _yardEmail), User);
+        (_yardName, _yardLocation, _yardContact, _yardEmail) = ("", "", "", "");
+    }, "Yard added");
+
+    private Task ToggleYard(ProjectYard y) => Run(() => Planning.SaveYardAsync(CompanyId, new YardInput(y.Id, y.Name, y.Location, y.ContactName, y.ContactEmail, y.Notes, !y.IsActive), User));
+
+    private Task Invite() => Run(async () => { await Planning.InviteAsync(CompanyId, ProjectId, _inviteYard, User); _inviteYard = Guid.Empty; }, "Yard invited");
+
+    private void OpenQuote(TenderView v)
+    {
+        _quoting = v;
+        (_qRef, _qValid, _qOther, _qRemarks) = (v.Tender.YardReference, v.Tender.ValidUntil, v.Tender.OtherChargesUsd, v.Tender.Remarks);
+        _qPrices.Clear();
+        foreach (var l in v.Lines) _qPrices[l.ItemId] = l.AmountUsd;
+    }
+
+    private void SetPrice(Guid itemId, string? text)
+        => _qPrices[itemId] = decimal.TryParse(text, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : null;
+
+    private Task SaveQuote() => Run(async () =>
+    {
+        await Planning.RecordQuoteAsync(CompanyId, _quoting!.Tender.Id, new TenderQuoteInput(_qRef, _qValid, _qOther, _qRemarks, new Dictionary<Guid, decimal?>(_qPrices)), User);
+        _quoting = null;
+    }, "Quote saved");
+
+    private Task Decline(Guid id) => Run(() => Planning.DeclineAsync(CompanyId, id, "", User), "Marked as declined");
+
+    private Task Remove(Guid id) => Run(() => Planning.RemoveTenderAsync(CompanyId, id, User));
+
+    private Task Award(Guid id) => Run(async () => { await Planning.AwardAsync(CompanyId, id, User); await OnAwarded.InvokeAsync(); }, "Project awarded");
+
+    private static string Label(TenderStatus s) => s switch { TenderStatus.Invited => "Invited", TenderStatus.Quoted => "Quoted", TenderStatus.Declined => "Declined", TenderStatus.Awarded => "Awarded", _ => "Not awarded" };
+
+    private static string Tone(TenderStatus s) => s switch { TenderStatus.Awarded => "success", TenderStatus.Quoted => "info", TenderStatus.Invited => "warning", _ => "neutral" };
+}
