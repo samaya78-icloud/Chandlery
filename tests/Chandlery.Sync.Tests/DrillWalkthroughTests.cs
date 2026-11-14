@@ -73,7 +73,7 @@ public class DrillWalkthroughTests : IAsyncLifetime
         _officer = await SignOnAsync("W1002", "Chief Officer", DateTime.UtcNow.Date.AddMonths(-8), authorities: CrewAuthority.ConductDrills);
         _cook = await SignOnAsync("W1003", "Cook", DateTime.UtcNow.Date.AddMonths(-8));
         _leaver = await SignOnAsync("W1004", "Able Seaman", DateTime.UtcNow.Date.AddMonths(-8));
-        _joiner = await SignOnAsync("W1005", "Ordinary Seaman", DateTime.UtcNow.Date.AddDays(-4));                  // joined this week: inside the grace
+        _joiner = await SignOnAsync("W1005", "Ordinary Seaman", DateTime.UtcNow.Date.AddDays(-2));                  // joined this week: inside the 14-day grace, and more than the fire drill's 10-day warning from the end of it
         _types = await _shore.TypesAsync(_s.CompanyId);
 
         // The office changes its mind about the fire drill (every two months, a longer warning) and gives this vessel no abandon ship drill.
