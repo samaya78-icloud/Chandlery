@@ -78,6 +78,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<PermitType> PermitTypes => Set<PermitType>();
     public DbSet<PermitChecklistItem> PermitChecklistItems => Set<PermitChecklistItem>();
     public DbSet<PermitConflictPair> PermitConflictPairs => Set<PermitConflictPair>();
+    public DbSet<PermitJobRule> PermitJobRules => Set<PermitJobRule>();
     public DbSet<Permit> Permits => Set<Permit>();
     public DbSet<PermitAnswer> PermitAnswers => Set<PermitAnswer>();
     public DbSet<PermitPerson> PermitPersons => Set<PermitPerson>();
@@ -760,6 +761,13 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<PermitType>().WithMany().HasForeignKey(p => p.PermitTypeAId).OnDelete(DeleteBehavior.Cascade);
             b.HasOne<PermitType>().WithMany().HasForeignKey(p => p.PermitTypeBId).OnDelete(DeleteBehavior.Restrict);
             b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitJobRule>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(r => r.PermitTypeId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(r => new { r.CompanyId, r.JobTemplateId }).IsUnique();
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
         });
         modelBuilder.Entity<Permit>(b =>
         {

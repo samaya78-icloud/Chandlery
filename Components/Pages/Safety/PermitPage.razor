@@ -64,6 +64,14 @@ else
                 @Block("Conditions", p.Conditions)
                 @if (p.RiskAssessmentId is { } riskId) { <p class="mt-3">Risk assessment: <a class="link" href="/risk/@riskId">open it</a></p> }
                 @if (p.PlannedJobId is { } jobId) { <p class="mt-1">Maintenance job: <a class="link" href="/pms/jobs/@jobId">open it</a></p> }
+                @if (_rescue is { } drill)
+                {
+                    <p class="mt-3 rounded-lg px-3 py-2 @(drill.Overdue ? "bg-amber-50 text-amber-800" : "bg-slate-50 text-muted")">
+                        Drill this permit relies on: <strong>@drill.DrillName</strong>,
+                        @(drill.LastHeld is { } held ? $"last held {held:d MMM yyyy}" : "never held on this vessel")@(drill.Overdue ? " (due)" : "").
+                        <a class="link" href="/drills">Drills</a>
+                    </p>
+                }
             </div>
 
             <div class="card p-4 text-sm">
@@ -320,6 +328,7 @@ else
     private Guid _companyId, _handTo;
     private Actor _actor = default!;
     private PermitDetail? _d;
+    private PermitRescueDrill? _rescue;
     private bool _loaded, _busy, _ack;
     private string? _error, _notice;
     private string _instrument = "", _gasWhere = "", _conditions = "", _reason = "", _handState = "", _finishNote = "", _closeNote = "", _cancelReason = "", _comment = "";
@@ -345,6 +354,8 @@ else
         try { _d = await Svc.GetAsync(_companyId, Id, _actor); }
         catch (InvalidOperationException) { _d = null; }
         if (_d is null) return;
+        try { _rescue = await Svc.RescueDrillAsync(_companyId, _d.Permit.VesselId, _d.Permit.PermitTypeId); }
+        catch (InvalidOperationException) { _rescue = null; }
         _kinds.Clear();
         _notes.Clear();
         foreach (var a in _d.Permit.Answers) { _kinds[a.Id] = a.Answer; _notes[a.Id] = a.Note; }

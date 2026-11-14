@@ -473,7 +473,7 @@ app.MapGet("/permits/{permitId:guid}/pdf", async (Guid permitId, HttpContext htt
     return Results.File(PermitPdf.Build(detail, company), "application/pdf", PermitPdf.FileName(detail));
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
-app.MapGet("/permits/reports/{kind}.csv", async (string kind, Guid? vessel, DateTime? from, DateTime? to, HttpContext http, PermitService permits) =>
+app.MapGet("/permits/reports/{kind}.csv", async (string kind, Guid? vessel, DateTime? from, DateTime? to, int? months, HttpContext http, PermitService permits) =>
 {
     if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
     var actor = Actor.From(http.User);
@@ -488,6 +488,7 @@ app.MapGet("/permits/reports/{kind}.csv", async (string kind, Guid? vessel, Date
             "events" => PermitReports.EventsCsv(await permits.ListAsync(companyId, actor, vessel == Guid.Empty ? null : vessel, false, start, end)),
             "fleet" => PermitReports.FleetCsv(await permits.FleetAsync(companyId, actor, start, end)),
             "months" => PermitReports.MonthsCsv(await permits.FleetAsync(companyId, actor, start, end)),
+            "retention" => PermitReports.RetentionCsv(await permits.ListAsync(companyId, actor, vessel == Guid.Empty ? null : vessel), DateTime.UtcNow, Math.Clamp(months ?? 36, 6, 240)),
             _ => null,
         };
     }

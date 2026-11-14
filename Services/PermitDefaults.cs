@@ -99,12 +99,16 @@ public static class PermitDefaults
         if (await db.PermitTypes.IgnoreQueryFilters().AnyAsync(t => t.CompanyId == companyId)) return;
         var order = 0;
         var ids = new Dictionary<string, Guid>();
+        const string rescueName = "Enclosed space entry and rescue";
+        var rescueDrill = await db.DrillTypes.IgnoreQueryFilters().Where(t => t.CompanyId == companyId && t.Name == rescueName).Select(t => (Guid?)t.Id).FirstOrDefaultAsync()
+            ?? db.DrillTypes.Local.FirstOrDefault(t => t.CompanyId == companyId && t.Name == rescueName)?.Id;
         foreach (var d in Types)
         {
             var type = new PermitType
             {
                 Id = Guid.CreateVersion7(), CompanyId = companyId, Name = d.Name, Code = d.Code, MaxValidityHours = 8, RequesterRole = d.Requester, GasTestRequired = d.Gas, GasRepeatMinutes = d.GasRepeat,
                 AttendantRequired = d.Attendant, EntryLogRequired = d.EntryLog, RiskAssessmentRequired = d.Risk, MasterApprovalRequired = d.Master, Reference = d.Reference, SortOrder = ++order, ChecklistVersion = 1,
+                RescueDrillTypeId = d.Name == "Enclosed space entry" ? rescueDrill : null,
             };
             db.PermitTypes.Add(type);
             ids[d.Name] = type.Id;

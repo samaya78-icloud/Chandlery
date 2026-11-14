@@ -11,6 +11,7 @@
     <Actions>
         <a href="/permits/reports/register.csv?vessel=@_vessel&from=@_from.ToString("yyyy-MM-dd")&to=@_to.ToString("yyyy-MM-dd")" class="btn btn-secondary">Permits CSV</a>
         <a href="/permits/reports/events.csv?vessel=@_vessel&from=@_from.ToString("yyyy-MM-dd")&to=@_to.ToString("yyyy-MM-dd")" class="btn btn-secondary">Events CSV</a>
+        <a href="/permits/reports/retention.csv?vessel=@_vessel&months=36" class="btn btn-secondary" title="Closed permits older than 36 months (to verify against the company's retention rule). Nothing is deleted.">Past retention CSV</a>
         <a href="/permits/fleet" class="btn btn-secondary">Fleet activity</a>
     </Actions>
 </PageHeader>

@@ -153,6 +153,7 @@ else
                     _jobCode = found.Job.Code;
                     if (_machinery.Any(m => m.Id == found.Job.MachineryItemId)) _machine = found.Job.MachineryItemId;
                     _description = found.Job.Title;
+                    if (await Svc.RequiredForJobAsync(_companyId, found.Job.TemplateId) is { } needed && _types.Any(t => t.Id == needed.Id)) _typeId = needed.Id;
                     if (_location.Trim() == "") _location = found.Item.Name;
                     if (found.Job.TankId is { } jobTank && _tanks.Any(t => t.Id == jobTank)) { _tank = jobTank; }
                 }

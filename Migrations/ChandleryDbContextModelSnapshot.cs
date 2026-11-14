@@ -3916,6 +3916,49 @@ namespace Chandlery.Migrations
                     b.ToTable("PermitGasReadings");
                 });
 
+            modelBuilder.Entity("Chandlery.Models.PermitJobRule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("JobTemplateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OriginNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("PermitTypeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("SyncCreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTime>("SyncUpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<int>("SyncVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PermitTypeId");
+
+                    b.HasIndex("CompanyId", "JobTemplateId")
+                        .IsUnique();
+
+                    b.ToTable("PermitJobRules");
+                });
+
             modelBuilder.Entity("Chandlery.Models.PermitPerson", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4031,6 +4074,9 @@ namespace Chandlery.Migrations
 
                     b.Property<int>("RequesterRole")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("RescueDrillTypeId")
+                        .HasColumnType("uuid");
 
                     b.Property<bool>("RiskAssessmentRequired")
                         .HasColumnType("boolean");
@@ -9466,6 +9512,21 @@ namespace Chandlery.Migrations
                     b.HasOne("Chandlery.Models.Permit", null)
                         .WithMany("Readings")
                         .HasForeignKey("PermitId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Chandlery.Models.PermitJobRule", b =>
+                {
+                    b.HasOne("Chandlery.Models.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Chandlery.Models.PermitType", null)
+                        .WithMany()
+                        .HasForeignKey("PermitTypeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

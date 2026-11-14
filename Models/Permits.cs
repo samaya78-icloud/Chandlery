@@ -50,6 +50,9 @@ public class PermitType
     public string Reference { get; set; } = "";
     public int SortOrder { get; set; }
     public bool IsActive { get; set; } = true;
+
+    /// <summary>The drill this kind of permit relies on (for enclosed space entry, the rescue drill). The permit page shows when it was last held; it never blocks a permit.</summary>
+    public Guid? RescueDrillTypeId { get; set; }
 }
 
 /// <summary>One line of a permit type's checklist, in a version of it.</summary>
@@ -79,6 +82,15 @@ public class PermitConflictPair
     /// <summary>Only when both are at the same location (as written); otherwise anywhere on the vessel.</summary>
     public bool SameLocationOnly { get; set; }
     public string Message { get; set; } = "";
+}
+
+/// <summary>Maintenance jobs made from this library job need this kind of permit. The job page tells the crew and offers to raise it; nothing is blocked.</summary>
+public class PermitJobRule
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid JobTemplateId { get; set; }
+    public Guid PermitTypeId { get; set; }
 }
 
 /// <summary>The type's rules as they were when the permit was requested. Kept on the permit as JSON, so the rules read the permit alone.</summary>

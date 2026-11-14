@@ -70,6 +70,21 @@ public static class PermitReports
 
     public static string MonthsCsv(PermitFleetView view) => WorklistReports.Csv(["Month", "Kind", "Permits"], view.ByTypeMonth.Select(m => new[] { m.Month, m.TypeName, m.Count.ToString() }));
 
+    /// <summary>
+    /// Closed permits (completed, cancelled or withdrawn) whose last event is older than the retention period, oldest first, for the company to review. Nothing is deleted by it:
+    /// how long permits are kept is the company's rule, and a vessel's copy is kept until the company decides.
+    /// </summary>
+    public static IReadOnlyList<(PermitRow Row, DateTime ClosedAt)> PastRetention(IEnumerable<PermitRow> rows, DateTime today, int months) =>
+        rows.Where(r => (r.State is PermitState.Completed or PermitState.Cancelled or PermitState.Withdrawn) && r.Permit.Events.Count > 0)
+            .Select(r => (Row: r, ClosedAt: r.Permit.Events.Max(e => e.At)))
+            .Where(x => x.ClosedAt.AddMonths(months) < today)
+            .OrderBy(x => x.ClosedAt).ToList();
+
+    public static string RetentionCsv(IEnumerable<PermitRow> rows, DateTime today, int months) => WorklistReports.Csv(
+        ["Permit", "Vessel", "Kind", "Closed", "State", "Age in months"],
+        PastRetention(rows, today, months).Select(x => new[] { x.Row.Permit.Code, x.Row.VesselName, x.Row.Permit.TypeName, D(x.ClosedAt), PermitLook.State(x.Row.State).Label,
+            ((today.Year - x.ClosedAt.Year) * 12 + today.Month - x.ClosedAt.Month).ToString() }));
+
     /// <summary>Every event of every permit, for the audit: who did what, and when.</summary>
     public static string EventsCsv(IEnumerable<PermitRow> rows) => WorklistReports.Csv(
         ["Permit", "Vessel", "Kind", "Time", "Event", "By", "Note"],

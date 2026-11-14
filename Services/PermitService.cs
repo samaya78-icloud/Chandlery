@@ -38,6 +38,11 @@ public sealed record PermitCounts(bool IsOffice, int Active, int Awaiting, int S
 /// <summary>Where a tank stands for entry: the permit module is on, and the enclosed-space permit open for it, if any.</summary>
 public sealed record PermitTankStatus(bool ModuleOn, PermitRow? Permit);
 
+public sealed record PermitJobRuleRow(PermitJobRule Rule, string JobTitle, string TypeName);
+
+/// <summary>The drill a kind of permit relies on: when it was last held on the vessel, when it is due, and whether that date has passed (or it was never held).</summary>
+public sealed record PermitRescueDrill(string DrillName, DateTime? LastHeld, DateTime? Due, bool Overdue);
+
 public sealed record PermitRow(Permit Permit, string VesselName, PermitState State, bool Valid, string Reason, DateTime Until, int Inside);
 
 /// <summary>Permits on one vessel's board: those that are open, and the pairs of open permits that conflict.</summary>
@@ -129,6 +134,8 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         (type.FlammableMaxPercentLel, type.H2sMaxPpm, type.CoMaxPpm) = (input.FlammableMaxPercentLel, input.H2sMaxPpm, input.CoMaxPpm);
         (type.AttendantRequired, type.EntryLogRequired, type.RiskAssessmentRequired, type.MasterApprovalRequired) = (input.AttendantRequired, input.EntryLogRequired, input.RiskAssessmentRequired, input.MasterApprovalRequired);
         (type.Reference, type.IsActive) = ((input.Reference ?? "").Trim(), input.IsActive);
+        if (input.RescueDrillTypeId is { } drillId && !await db.DrillTypes.AnyAsync(d => d.Id == drillId && d.CompanyId == companyId)) throw new InvalidOperationException("That drill type is not in the list.");
+        type.RescueDrillTypeId = input.RescueDrillTypeId;
         await db.SaveChangesAsync();
         return type;
     }
@@ -200,6 +207,74 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         var pair = await db.PermitConflictPairs.FirstOrDefaultAsync(p => p.Id == pairId && p.CompanyId == companyId) ?? throw new InvalidOperationException("That pair is not listed.");
         db.PermitConflictPairs.Remove(pair);
         await db.SaveChangesAsync();
+    }
+
+    // ---- jobs that need a permit, and the drill a permit relies on ----
+
+    public async Task<List<PermitJobRuleRow>> JobRulesAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var rules = await db.PermitJobRules.AsNoTracking().Where(r => r.CompanyId == companyId).ToListAsync();
+        var titles = await db.JobTemplates.AsNoTracking().Where(t => t.CompanyId == companyId).ToDictionaryAsync(t => t.Id, t => t.Title);
+        var types = await db.PermitTypes.AsNoTracking().Where(t => t.CompanyId == companyId).ToDictionaryAsync(t => t.Id, t => t.Name);
+        return rules.Select(r => new PermitJobRuleRow(r, titles.GetValueOrDefault(r.JobTemplateId, "(removed job)"), types.GetValueOrDefault(r.PermitTypeId, "?"))).OrderBy(r => r.JobTitle).ToList();
+    }
+
+    /// <summary>The library jobs a rule can be set on.</summary>
+    public async Task<List<JobTemplate>> JobTemplatesAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await db.JobTemplates.AsNoTracking().Where(t => t.CompanyId == companyId && t.IsActive).OrderBy(t => t.Title).ToListAsync();
+    }
+
+    /// <summary>Says that maintenance jobs made from this library job need this kind of permit; one kind to a job, so a second call changes it.</summary>
+    public async Task SaveJobRuleAsync(Guid companyId, Guid jobTemplateId, Guid permitTypeId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) throw new InvalidOperationException("The jobs that need a permit are the office's to set.");
+        if (!await db.JobTemplates.AnyAsync(t => t.Id == jobTemplateId && t.CompanyId == companyId)) throw new InvalidOperationException("Choose a job from the maintenance library.");
+        if (!await db.PermitTypes.AnyAsync(t => t.Id == permitTypeId && t.CompanyId == companyId && t.IsActive)) throw new InvalidOperationException("Choose a permit type that is in use.");
+        var rule = await db.PermitJobRules.FirstOrDefaultAsync(r => r.CompanyId == companyId && r.JobTemplateId == jobTemplateId);
+        if (rule is null) db.PermitJobRules.Add(new PermitJobRule { Id = Guid.CreateVersion7(), CompanyId = companyId, JobTemplateId = jobTemplateId, PermitTypeId = permitTypeId });
+        else rule.PermitTypeId = permitTypeId;
+        await db.SaveChangesAsync();
+    }
+
+    public async Task RemoveJobRuleAsync(Guid companyId, Guid ruleId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        if (db.Node.IsVessel) throw new InvalidOperationException("The jobs that need a permit are the office's to set.");
+        var rule = await db.PermitJobRules.FirstOrDefaultAsync(r => r.Id == ruleId && r.CompanyId == companyId) ?? throw new InvalidOperationException("That rule is not listed.");
+        db.PermitJobRules.Remove(rule);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>The kind of permit a job needs, from the library job it was made from; nothing when none is set, the job came from no library job, or the kind is switched off.</summary>
+    public async Task<PermitType?> RequiredForJobAsync(Guid companyId, Guid? jobTemplateId)
+    {
+        if (jobTemplateId is not { } templateId) return null;
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var typeId = await db.PermitJobRules.AsNoTracking().Where(r => r.CompanyId == companyId && r.JobTemplateId == templateId).Select(r => (Guid?)r.PermitTypeId).FirstOrDefaultAsync();
+        return typeId is null ? null : await db.PermitTypes.AsNoTracking().FirstOrDefaultAsync(t => t.Id == typeId && t.CompanyId == companyId && t.IsActive);
+    }
+
+    /// <summary>When the drill this kind of permit relies on was last held on the vessel and whether it is due. Nothing when the type names no drill.</summary>
+    public async Task<PermitRescueDrill?> RescueDrillAsync(Guid companyId, Guid vesselId, Guid permitTypeId, DateTime? today = null)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var drillTypeId = await db.PermitTypes.AsNoTracking().Where(t => t.Id == permitTypeId && t.CompanyId == companyId).Select(t => t.RescueDrillTypeId).FirstOrDefaultAsync();
+        if (drillTypeId is not { } id) return null;
+        var drillType = await db.DrillTypes.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id && t.CompanyId == companyId);
+        if (drillType is null) return null;
+        var last = await db.Drills.AsNoTracking().Where(d => d.VesselId == vesselId && d.DrillTypeId == id).MaxAsync(d => (DateTime?)d.StartedAt);
+        var due = DrillRules.DueDate(DrillRules.Of(drillType), last);
+        return new PermitRescueDrill(drillType.Name, last, due, due is null || due.Value.Date < (today ?? Now).Date);
     }
 
     // ---- loading and appending ----
