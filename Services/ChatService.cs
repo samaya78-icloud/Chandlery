@@ -49,7 +49,11 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
 
         var user = await db.Users.AsNoTracking().IgnoreQueryFilters().FirstOrDefaultAsync(u => u.Id == actor.UserId && u.IsEnabled)
             ?? throw new InvalidOperationException("This user cannot take part in conversations.");
-        if (user.IsSupplierRole) return new(new ChatViewer(ChatSide.Supplier, user.Id), actor.Name, user.Id);
+        if (user.IsSupplierRole)
+        {
+            var supplier = user.SupplierId is { } sid ? await db.Suppliers.AsNoTracking().IgnoreQueryFilters().Where(s => s.Id == sid).Select(s => s.Name).FirstOrDefaultAsync() : null;
+            return new(new ChatViewer(ChatSide.Supplier, user.Id, SupplierId: user.SupplierId), supplier is null ? actor.Name : $"{actor.Name} ({supplier})", user.Id);
+        }
         if (user.CompanyId != companyId) throw new InvalidOperationException("This user does not belong to this company.");
         return new(new ChatViewer(ChatSide.Office, user.Id, IsAdmin: user.Role == UserRole.CompanyAdmin), actor.Name, user.Id);
     }
@@ -68,8 +72,12 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         db.CurrentCompanyId = companyId;
         var who = await WhoAsync(db, companyId, actor);
         Validate(post, who);
+        // A supplier is never taken at its word about which vessel a record belongs to.
+        if (who.Side == ChatSide.Supplier)
+            post = post with { VesselId = post.ModuleType == ChatModules.Rfq ? await db.Rfqs.AsNoTracking().Where(r => r.Id == post.RecordId).Select(r => r.VesselId).FirstOrDefaultAsync()
+                : await db.PurchaseOrders.AsNoTracking().Where(p => p.Id == post.RecordId).Select(p => p.VesselId).FirstOrDefaultAsync() };
         await RequireEnabledAsync(db, companyId, post.VesselId);
-        if (post.ModuleType == ChatModules.Incident && (await HiddenIncidentsAsync(db, companyId, who.Viewer, [post.RecordId])).Count > 0) throw new InvalidOperationException("This incident is not open to you.");
+        if ((await HiddenRecordsAsync(db, companyId, who.Viewer, post.ModuleType, [post.RecordId])).Count > 0) throw new InvalidOperationException("This record is not open to you.");
         if (!ChatRules.CanPost(who.Side, post.Channel)) throw new InvalidOperationException(who.Side == ChatSide.Vessel ? "Onboard, messages are internal." : "This channel is not open to you.");
         if (who.Side == ChatSide.Vessel && post.VesselId != who.Viewer.VesselId) throw new InvalidOperationException("You are not signed on to this vessel.");
 
@@ -81,8 +89,8 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         }
 
         var body = post.Body.Trim();
-        var message = New(db, companyId, who, post.ModuleType, post.RecordId, post.VesselId, post.Topic.Trim(), ChatKind.Message, post.Channel, body, null, post.ReplyToId,
-            ChatRules.ParseMentions(body, await PeopleAsync(db, companyId)));
+        var message = New(db, companyId, who, post.ModuleType, post.RecordId, post.VesselId, TopicFor(who.Viewer, post.Topic), ChatKind.Message, post.Channel, body, null, post.ReplyToId,
+            ChatRules.ParseMentions(body, who.Side == ChatSide.Supplier ? [] : await PeopleAsync(db, companyId)));
         db.ChatMessages.Add(message);
         await db.SaveChangesAsync();
         return message;
@@ -260,17 +268,20 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var who = await WhoAsync(db, companyId, actor);
+        if (who.Side == ChatSide.Supplier) throw new InvalidOperationException("Suppliers have no inbox.");
         var cutoff = DateTime.UtcNow.AddDays(-InboxDays);
         var recent = db.ChatMessages.Where(m => m.CompanyId == companyId && m.At >= cutoff).Select(m => m.RecordId).Distinct();
         var visible = (await db.ChatMessages.AsNoTracking().Where(m => m.CompanyId == companyId && recent.Contains(m.RecordId)).ToListAsync()).Where(m => ChatRules.Visible(m, who.Viewer)).ToList();
-        var hidden = await HiddenIncidentsAsync(db, companyId, who.Viewer, visible.Where(m => m.ModuleType == ChatModules.Incident).Select(m => m.RecordId));
-        visible = visible.Where(m => !(m.ModuleType == ChatModules.Incident && hidden.Contains(m.RecordId))).ToList();
+        var hiddenIncidents = await HiddenRecordsAsync(db, companyId, who.Viewer, ChatModules.Incident, visible.Where(m => m.ModuleType == ChatModules.Incident).Select(m => m.RecordId));
+        visible = visible.Where(m => !(m.ModuleType == ChatModules.Incident && hiddenIncidents.Contains(m.RecordId))).ToList();
         var reads = await db.ChatReads.AsNoTracking().Where(r => r.UserId == who.UserId).ToListAsync();
         var threads = visible.GroupBy(m => (m.ModuleType, m.RecordId, m.Topic)).ToList();
 
         var vesselIds = threads.Select(g => g.First().VesselId).Where(v => v is not null).Select(v => v!.Value).Distinct().ToList();
         var vessels = await db.Vessels.AsNoTracking().Where(v => vesselIds.Contains(v.Id)).ToDictionaryAsync(v => v.Id, v => v.Name);
         var records = await DescribeAsync(db, who.Side, threads.Select(g => (g.Key.ModuleType, g.Key.RecordId)));
+        var supplierIds = threads.Select(g => ChatRules.SupplierOfTopic(g.Key.Topic)).OfType<Guid>().Distinct().ToList();
+        var supplierNames = supplierIds.Count == 0 ? [] : await db.Suppliers.AsNoTracking().IgnoreQueryFilters().Where(s => supplierIds.Contains(s.Id)).ToDictionaryAsync(s => s.Id, s => s.Name);
 
         var rows = new List<ChatInboxRow>();
         foreach (var g in threads)
@@ -280,7 +291,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
             if (s.Last is null) continue;
             var vessel = g.First().VesselId;
             var info = records.GetValueOrDefault((g.Key.ModuleType, g.Key.RecordId));
-            var label = (info?.Label ?? g.Key.ModuleType) + (g.Key.Topic.Length > 0 ? $" · {g.Key.Topic}" : "");
+            var label = (info?.Label ?? g.Key.ModuleType) + (g.Key.Topic.Length == 0 ? "" : ChatRules.SupplierOfTopic(g.Key.Topic) is { } supplierId ? $" · with {supplierNames.GetValueOrDefault(supplierId, "the supplier")}" : $" · {g.Key.Topic}");
             rows.Add(new ChatInboxRow(g.Key.ModuleType, g.Key.RecordId, g.Key.Topic, vessel, vessel is { } v ? vessels.GetValueOrDefault(v, "") : "", label, info?.Href, s.Last.Message.At,
                 s.Last.Message.Kind == ChatKind.System ? "" : s.Last.Message.AuthorName, s.Last.Body, s.Unread, s.UnreadMentions, s.WaitingForMe, s.Resolved));
         }
@@ -367,25 +378,40 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
 
     private static async Task<List<ChatMessage>> LoadAsync(ChandleryDbContext db, Guid companyId, string moduleType, Guid recordId, ChatViewer viewer)
     {
-        if (moduleType == ChatModules.Incident && (await HiddenIncidentsAsync(db, companyId, viewer, [recordId])).Count > 0) return [];
+        if ((await HiddenRecordsAsync(db, companyId, viewer, moduleType, [recordId])).Count > 0) return [];
         return (await db.ChatMessages.AsNoTracking().Where(m => m.CompanyId == companyId && m.ModuleType == moduleType && m.RecordId == recordId).ToListAsync())
             .Where(m => ChatRules.Visible(m, viewer)).ToList();
     }
 
     /// <summary>
-    /// The incidents this person may not read a conversation about. An incident is confidential: the office sees every one; onboard only the Master and the reporter do;
-    /// a supplier never does. A conversation on an incident follows the same rule, so it is not shown, counted or quoted to anyone else.
+    /// The records of one kind whose conversation this person may not read. An incident is confidential: the office sees every one; onboard only the Master and the reporter do.
+    /// A supplier sees only the conversations on an RFQ it was invited to and on an approved order that is its own, and nothing else.
     /// </summary>
-    private static async Task<HashSet<Guid>> HiddenIncidentsAsync(ChandleryDbContext db, Guid companyId, ChatViewer viewer, IEnumerable<Guid> incidentIds)
+    private static async Task<HashSet<Guid>> HiddenRecordsAsync(ChandleryDbContext db, Guid companyId, ChatViewer viewer, string moduleType, IEnumerable<Guid> recordIds)
     {
-        var ids = incidentIds.Distinct().ToList();
+        var ids = recordIds.Distinct().ToList();
         if (ids.Count == 0 || viewer.Side == ChatSide.Office) return [];
-        if (viewer.Side == ChatSide.Supplier) return ids.ToHashSet();
+
+        if (viewer.Side == ChatSide.Supplier)
+        {
+            if (viewer.SupplierId is not { } supplier) return ids.ToHashSet();
+            if (moduleType == ChatModules.Rfq)
+                return ids.Except(await db.Rfqs.AsNoTracking().Where(r => r.CompanyId == companyId && ids.Contains(r.Id) && r.InvitedSupplierIds.Contains(supplier)).Select(r => r.Id).ToListAsync()).ToHashSet();
+            if (moduleType == ChatModules.PurchaseOrder)
+                return ids.Except(await db.PurchaseOrders.AsNoTracking().Where(p => p.CompanyId == companyId && ids.Contains(p.Id) && p.SupplierId == supplier && p.Status == PoStatus.Approved).Select(p => p.Id).ToListAsync()).ToHashSet();
+            return ids.ToHashSet();
+        }
+
+        if (moduleType != ChatModules.Incident) return [];
         var allowed = await db.Incidents.AsNoTracking().Where(i => i.CompanyId == companyId && ids.Contains(i.Id) && i.VesselId == viewer.VesselId).Select(i => new { i.Id, i.ReporterCrewId }).ToListAsync();
         if (viewer.IsMaster) return ids.Except(allowed.Select(a => a.Id)).ToHashSet();
         var reporters = await db.CrewMembers.AsNoTracking().Where(c => c.UserId == viewer.UserId).Select(c => c.Id).ToListAsync();
         return ids.Except(allowed.Where(a => a.ReporterCrewId is { } r && reporters.Contains(r)).Select(a => a.Id)).ToHashSet();
     }
+
+    /// <summary>A supplier always reads and writes its own thread; everyone else names the topic they mean.</summary>
+    private static string TopicFor(ChatViewer viewer, string? topic)
+        => viewer.Side == ChatSide.Supplier ? ChatRules.SupplierTopic(viewer.SupplierId) : (topic ?? "").Trim();
 
     /// <summary>One thread of a record (the main thread when <paramref name="topic"/> is empty), as the person reads it.</summary>
     public async Task<ChatThreadView> ThreadAsync(Guid companyId, Actor actor, string moduleType, Guid recordId, string topic = "")
@@ -393,10 +419,13 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var who = await WhoAsync(db, companyId, actor);
-        topic = (topic ?? "").Trim();
+        topic = TopicFor(who.Viewer, topic);
         var thread = (await LoadAsync(db, companyId, moduleType, recordId, who.Viewer)).Where(m => m.Topic == topic).ToList();
         var read = await db.ChatReads.AsNoTracking().FirstOrDefaultAsync(r => r.UserId == who.UserId && r.ModuleType == moduleType && r.RecordId == recordId && r.Topic == topic);
-        return ChatRules.Replay(thread, who.Viewer, read?.LastReadAt);
+        var view = ChatRules.Replay(thread, who.Viewer, read?.LastReadAt);
+        var authors = view.Items.Select(i => i.Message.AuthorUserId).OfType<Guid>().Distinct().ToList();
+        var fromSuppliers = authors.Count == 0 ? [] : (await db.Users.AsNoTracking().IgnoreQueryFilters().Where(u => authors.Contains(u.Id) && u.SupplierId != null).Select(u => u.Id).ToListAsync()).ToHashSet();
+        return view with { Items = view.Items.Select(i => i with { FromSupplier = i.Message.AuthorUserId is { } a && fromSuppliers.Contains(a) }).ToList() };
     }
 
     /// <summary>The topics of a record that have messages the person can see, with the main thread (empty) first.</summary>
@@ -425,7 +454,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var who = await WhoAsync(db, companyId, actor);
-        topic = (topic ?? "").Trim();
+        topic = TopicFor(who.Viewer, topic);
         var newest = (await LoadAsync(db, companyId, moduleType, recordId, who.Viewer)).Where(m => m.Topic == topic).Select(m => (DateTime?)m.At).Max();
         if (newest is null) return;
         var row = await db.ChatReads.FirstOrDefaultAsync(r => r.UserId == who.UserId && r.ModuleType == moduleType && r.RecordId == recordId && r.Topic == topic);

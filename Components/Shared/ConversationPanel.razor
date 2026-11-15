@@ -1,4 +1,4 @@
-@implements IDisposable
+﻿@implements IDisposable
 @inject ChatService Chat
 
 @* The conversation on one record (spec 10). Messages from the vessel and the office appear in send order; the panel looks for new ones every few seconds.
@@ -41,8 +41,8 @@
                         <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted">
                             <span class="font-semibold text-ink">@m.AuthorName</span>
                             <span>@m.At.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
-                            <span class="chip chip-plain" data-tone="neutral">@(m.OwnerStage == SyncStages.Vessel ? "vessel" : "office")</span>
-                            @if (m.Channel != ChatChannel.Internal) { <span class="chip chip-plain" data-tone="warning">@(m.Channel == ChatChannel.OfficeOnly ? "office only" : "shared")</span> }
+                            <span class="chip chip-plain" data-tone="neutral">@(item.FromSupplier ? "supplier" : m.OwnerStage == SyncStages.Vessel ? "vessel" : "office")</span>
+                            @if (m.Channel != ChatChannel.Internal && OnlyChannel is null) { <span class="chip chip-plain" data-tone="warning">@(m.Channel == ChatChannel.OfficeOnly ? "office only" : "shared")</span> }
                             @if (item.Edited && !item.Removed) { <span>edited</span> }
                             @if (item.NeedsReply) { <span class="chip chip-plain" data-tone="warning">needs a reply</span> }
                             @if (item.Mine && _unsynced.Contains(m.Id)) { <span class="chip chip-plain" data-tone="neutral" title="Saved here; it reaches the other side at the next sync">not yet synced</span> }
@@ -94,7 +94,7 @@
             {
                 <p class="flex items-center gap-2 text-xs text-muted">Replying to @replying.Message.AuthorName <button class="link" @onclick="() => _replyTo = null">cancel</button></p>
             }
-            <textarea class="textarea" rows="3" placeholder="Write a message. Use @@office, @@master, @@crew or @@name to mention someone." @bind="_text" @bind:event="oninput"></textarea>
+            <textarea class="textarea" rows="3" placeholder="@(_viewer.Side == ChatSide.Supplier ? "Write a message to the buyer. Use @@office to name them." : "Write a message. Use @@office, @@master, @@crew or @@name to mention someone.")" @bind="_text" @bind:event="oninput"></textarea>
             <div class="flex flex-wrap items-center gap-2">
                 @if (_channels.Count > 1)
                 {
@@ -103,6 +103,8 @@
                     </select>
                 }
                 <button class="btn btn-primary" disabled="@(string.IsNullOrWhiteSpace(_text))" @onclick="SendAsync">Send</button>
+                @if (_viewer.Side == ChatSide.Supplier) { <span class="text-xs text-muted">Read by the buyer's office and vessel.</span> }
+                else if (OnlyChannel == ChatChannel.Shared) { <span class="text-xs text-muted">Everything here is read by the supplier.</span> }
             </div>
         </div>
     </div>
@@ -118,6 +120,9 @@
     [Parameter] public Guid? VesselId { get; set; }
     [Parameter] public string Title { get; set; } = "Conversation";
     [Parameter] public string Topic { get; set; } = "";
+
+    /// <summary>Set for a conversation with a supplier: the only channel offered, and the hint that the other side can read every word.</summary>
+    [Parameter] public ChatChannel? OnlyChannel { get; set; }
 
     private const int RefreshSeconds = 15;
 
@@ -140,7 +145,7 @@
         _enabled = await Chat.IsEnabledAsync(CompanyId, VesselId);
         _viewer = _enabled ? await Chat.ViewerAsync(CompanyId, Actor) : null;
         if (_viewer is null) return;
-        _channels = ChatRules.ChannelsFor(_viewer.Side);
+        _channels = OnlyChannel is { } only && ChatRules.ChannelsFor(_viewer.Side).Contains(only) ? [only] : ChatRules.ChannelsFor(_viewer.Side);
         if (!_channels.Contains(_channel)) _channel = _channels.FirstOrDefault();
         _view = await Chat.ThreadAsync(CompanyId, Actor, ModuleType, RecordId, Topic);
         _unreadAtOpen = _view.Unread;

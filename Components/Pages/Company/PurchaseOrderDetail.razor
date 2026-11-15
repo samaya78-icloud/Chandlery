@@ -284,6 +284,11 @@ else
         <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.PurchaseOrder" RecordId="_po.Id" VesselId="_po.VesselId" Title="Conversation" />
     </div>
 
+    <div class="mt-4 print:hidden">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.PurchaseOrder" RecordId="_po.Id" VesselId="_po.VesselId" Topic="@ChatRules.SupplierTopic(_po.SupplierId)"
+                           OnlyChannel="ChatChannel.Shared" Title="@($"With {_supplier?.Name ?? "the supplier"}")" />
+    </div>
+
     <div class="mt-6 flex gap-3 print:hidden">
         <button onclick="window.print()" class="btn btn-secondary">Print</button>
     </div>

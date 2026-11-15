@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using Chandlery.Models;
 using Chandlery.Services;
 
@@ -13,7 +13,8 @@ public class ChatRulesTests
     private static readonly ChatViewer Office = new(ChatSide.Office, Ana, IsAdmin: true);
     private static readonly ChatViewer OfficeUser = new(ChatSide.Office, Ben);
     private static readonly ChatViewer Crew = new(ChatSide.Vessel, Chief, Vessel);
-    private static readonly ChatViewer Supplier = new(ChatSide.Supplier, Guid.NewGuid());
+    private static readonly Guid SupplierCo = Guid.NewGuid();
+    private static readonly ChatViewer Supplier = new(ChatSide.Supplier, Guid.NewGuid(), SupplierId: SupplierCo);
 
     private static int _tick;
 
@@ -34,9 +35,18 @@ public class ChatRulesTests
         var internalMessage = Msg("a", Chief);
         var shared = Msg("b", Ana, channel: ChatChannel.Shared, stage: SyncStages.Office);
         var officeOnly = Msg("c", Ana, channel: ChatChannel.OfficeOnly, stage: SyncStages.Office);
-        Assert.All(new[] { internalMessage, shared, officeOnly }, m => Assert.True(ChatRules.Visible(m, Office)));
-        Assert.Equal([true, true, false], new[] { internalMessage, shared, officeOnly }.Select(m => ChatRules.Visible(m, Crew)));
-        Assert.Equal([false, true, false], new[] { internalMessage, shared, officeOnly }.Select(m => ChatRules.Visible(m, Supplier)));
+        var toSupplier = Msg("d", Ana, channel: ChatChannel.Shared, stage: SyncStages.Office);
+        toSupplier.Topic = ChatRules.SupplierTopic(SupplierCo);
+        var toOther = Msg("e", Ana, channel: ChatChannel.Shared, stage: SyncStages.Office);
+        toOther.Topic = ChatRules.SupplierTopic(Guid.NewGuid());
+        var all = new[] { internalMessage, shared, officeOnly, toSupplier, toOther };
+        Assert.All(all, m => Assert.True(ChatRules.Visible(m, Office)));
+        Assert.Equal([true, true, false, true, true], all.Select(m => ChatRules.Visible(m, Crew)));
+        // A supplier reads only the shared messages of its own thread: not the internal talk, not the main thread, not another supplier's thread.
+        Assert.Equal([false, false, false, true, false], all.Select(m => ChatRules.Visible(m, Supplier)));
+        Assert.False(ChatRules.Visible(toSupplier, new ChatViewer(ChatSide.Supplier, Guid.NewGuid())));             // a supplier with no company has no thread
+        Assert.Equal(SupplierCo, ChatRules.SupplierOfTopic(toSupplier.Topic));
+        Assert.Null(ChatRules.SupplierOfTopic("Delivery damage"));
     }
 
     [Fact]
@@ -254,6 +264,7 @@ public class ChatRulesTests
     public void AViewerReadsOnlyWhatTheyMaySee_EvenIfTheOtherRecordsAreHeld()
     {
         var shared = Msg("to the supplier", Ana, 0, ChatChannel.Shared, stage: SyncStages.Office);
+        shared.Topic = ChatRules.SupplierTopic(SupplierCo);
         var inside = Msg("internal talk", Ana, 1, ChatChannel.Internal, stage: SyncStages.Office);
         var edit = Msg("edited internal", Ana, 2, kind: ChatKind.Edit, target: inside.Id, stage: SyncStages.Office);
         Assert.Equal(["to the supplier"], ChatRules.Replay([shared, inside, edit], Supplier).Items.Select(i => i.Body));

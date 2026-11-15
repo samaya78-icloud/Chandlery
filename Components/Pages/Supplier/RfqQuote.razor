@@ -1,4 +1,4 @@
-@page "/supplier/rfqs/{RfqId:guid}"
+﻿@page "/supplier/rfqs/{RfqId:guid}"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -275,6 +275,10 @@ else
                 }            </div>
         </div>
     </div>
+
+    <div class="mt-6 print:hidden">
+        <ConversationPanel CompanyId="_rfq.CompanyId" Actor="_actor" ModuleType="@ChatModules.Rfq" RecordId="_rfq.Id" VesselId="_rfq.VesselId" OnlyChannel="ChatChannel.Shared" Title="Questions and replies" />
+    </div>
 }
 
 @code {
@@ -286,6 +290,7 @@ else
 
     private Guid _supplierId;
     private Rfq? _rfq;
+    private Actor _actor = Actor.System;
     private Quote? _existing;
     private QuoteInput _input = new();
     private readonly Dictionary<Guid, QuoteLine> _lines = new();
@@ -350,6 +355,7 @@ else
     {
         var authState = await AuthStateTask!;
         _supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _actor = Actor.From(authState.User);
         CurrencyOptions = await FxSvc.GetAllCurrencyOptionsAsync();
         await Load();
     }

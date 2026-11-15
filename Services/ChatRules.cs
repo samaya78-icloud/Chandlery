@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using Chandlery.Models;
 
 namespace Chandlery.Services;
@@ -6,7 +6,7 @@ namespace Chandlery.Services;
 public enum ChatSide { Office, Vessel, Supplier }
 
 /// <summary>Who is looking at (or writing in) a conversation. <see cref="VesselId"/> is the vessel of a vessel viewer; <see cref="IsAdmin"/> is a company administrator.</summary>
-public sealed record ChatViewer(ChatSide Side, Guid? UserId, Guid? VesselId = null, bool IsAdmin = false, bool IsMaster = false);
+public sealed record ChatViewer(ChatSide Side, Guid? UserId, Guid? VesselId = null, bool IsAdmin = false, bool IsMaster = false, Guid? SupplierId = null);
 
 /// <summary>What a thread comes to for one person: how much is new, whether they are named, whether something waits for them, and its newest line (null when it has none they can read).</summary>
 public sealed record ChatThreadSummary(ChatItem? Last, int Unread, int UnreadMentions, int WaitingForMe, bool Resolved);
@@ -15,7 +15,7 @@ public sealed record ChatThreadSummary(ChatItem? Last, int Unread, int UnreadMen
 public sealed record ChatPerson(Guid UserId, string Name);
 
 /// <summary>One line of a thread as it reads now, after edits and removals.</summary>
-public sealed record ChatItem(ChatMessage Message, string Body, bool Edited, bool Removed, bool RemovedByAdmin, string RedactReason, bool NeedsReply, bool Mine, IReadOnlyList<string> History);
+public sealed record ChatItem(ChatMessage Message, string Body, bool Edited, bool Removed, bool RemovedByAdmin, string RedactReason, bool NeedsReply, bool Mine, IReadOnlyList<string> History, bool FromSupplier = false);
 
 public sealed record ChatThreadView(IReadOnlyList<ChatItem> Items, bool Resolved, DateTime? ResolvedAt, int Unread, int NeedingReply);
 
@@ -40,9 +40,18 @@ public static class ChatRules
     {
         ChatSide.Office => true,
         ChatSide.Vessel => message.Channel != ChatChannel.OfficeOnly && message.VesselId is not null && message.VesselId == viewer.VesselId,
-        ChatSide.Supplier => message.Channel == ChatChannel.Shared,
+        ChatSide.Supplier => message.Channel == ChatChannel.Shared && viewer.SupplierId is not null && message.Topic == SupplierTopic(viewer.SupplierId),
         _ => false,
     };
+
+    /// <summary>
+    /// The thread a supplier shares with the buyer on a record. Each supplier has a thread of its own, so what the buyer says to one supplier on an RFQ is never read by another.
+    /// A supplier reads and writes only this thread, and only on the shared channel.
+    /// </summary>
+    public static string SupplierTopic(Guid? supplierId) => supplierId is { } id ? $"supplier:{id}" : "supplier:";
+
+    /// <summary>The supplier a thread belongs to, or null when it is not a supplier thread.</summary>
+    public static Guid? SupplierOfTopic(string topic) => topic.StartsWith("supplier:", StringComparison.Ordinal) && Guid.TryParse(topic.AsSpan("supplier:".Length), out var id) ? id : null;
 
     /// <summary>The office may write on any channel; the vessel's crew only internally; an outside party only on the shared channel.</summary>
     public static bool CanPost(ChatSide side, ChatChannel channel) => side switch
