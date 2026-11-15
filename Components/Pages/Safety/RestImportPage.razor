@@ -1,0 +1,127 @@
+@page "/rest/import"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject RestHoursService Hours
+@inject RestImportService Import
+
+<PageTitle>Import hours of rest · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Vessel" Title="Import hours of rest history"
+            Subtitle="Bring earlier hours in from a CSV in the same format as the daily export (Seafarer, Date, Work periods). Seafarers are matched by name to the crew aboard, and every day goes through the same checks as a day typed in. A day already recorded the same is left alone; a different one gets a correction beside it, never an overwrite.">
+    <Actions>
+        <a href="/rest" class="btn btn-secondary">Hours of rest</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="3" />
+}
+else if (_me is null || _me.VesselId is null || !(_me.IsMaster || _me.IsCrewAdmin))
+{
+    <EmptyState Title="Not available" Message="History is imported onboard by the Master or a crew admin." />
+}
+else
+{
+    <div class="space-y-5">
+        <div class="card p-4 text-sm">
+            <h2 class="mb-2 text-base font-semibold text-ink">1. Choose the file</h2>
+            <InputFile OnChange="OnFileAsync" accept=".csv" class="text-sm" disabled="@_busy" />
+            <p class="mt-2 text-xs text-muted">Up to @RestImport.MaxRows rows and 5 MB. The first row names the columns. Dates as 2026-10-31. Work periods as <span class="font-mono">00:00-04:00,16:00-20:00</span>, or empty for a day without work.</p>
+        </div>
+
+        @if (_plan is not null)
+        {
+            <div class="card p-4 text-sm">
+                <h2 class="mb-2 text-base font-semibold text-ink">2. Check what it would do</h2>
+                @if (_plan.FileProblem is not null) { <p class="text-rose-600">@_plan.FileProblem</p> }
+                else
+                {
+                    <p class="mb-3">
+                        <span class="chip" data-tone="success">@_plan.Count(RestImportStatus.New) new days</span>
+                        <span class="chip" data-tone="warning">@_plan.Count(RestImportStatus.Correction) corrections</span>
+                        <span class="chip">@_plan.Count(RestImportStatus.Same) already recorded</span>
+                        <span class="chip" data-tone="danger">@_plan.Count(RestImportStatus.Problem) problems</span>
+                    </p>
+                    @if (_plan.Count(RestImportStatus.Problem) > 0)
+                    {
+                        <table class="mb-3 w-full text-left">
+                            <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Row</th><th>Seafarer</th><th>Date</th><th>Problem</th></tr></thead>
+                            <tbody>
+                                @foreach (var r in _plan.Rows.Where(r => r.Status == RestImportStatus.Problem).Take(50))
+                                {
+                                    <tr class="border-t border-line/60"><td class="py-1">@r.Line</td><td>@r.Name</td><td>@(r.Date?.ToString("yyyy-MM-dd"))</td><td>@r.Problem</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                        @if (_plan.Count(RestImportStatus.Problem) > 50) { <p class="mb-3 text-xs text-muted">Only the first 50 problems are shown.</p> }
+                    }
+                    @if (_plan.ToRecord.Any() && !_done)
+                    {
+                        <button class="btn btn-primary" disabled="@_busy" @onclick="ApplyAsync">Import @_plan.ToRecord.Count() days</button>
+                        <span class="ml-2 text-xs text-muted">Rows with problems are skipped.</span>
+                    }
+                }
+            </div>
+        }
+
+        @if (_notice is not null) { <div class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_notice</div> }
+        @if (_error is not null) { <div class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = default!;
+    private CrewMember? _me;
+    private bool _loaded, _busy, _done;
+    private string _csv = "";
+    private RestImportPlan? _plan;
+    private string? _error, _notice;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        try { _me = await Hours.CrewOfUserAsync(_companyId, _actor.UserId); } catch (InvalidOperationException) { _me = null; }
+        _loaded = true;
+    }
+
+    private async Task OnFileAsync(InputFileChangeEventArgs e)
+    {
+        _error = _notice = null;
+        _plan = null;
+        _done = false;
+        _busy = true;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(5 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            _csv = await reader.ReadToEndAsync();
+            _plan = await Import.PreviewAsync(_companyId, _me!.VesselId!.Value, _actor, _csv);
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        catch (IOException) { _error = "The file is larger than 5 MB."; }
+        finally { _busy = false; }
+    }
+
+    private async Task ApplyAsync()
+    {
+        _error = _notice = null;
+        _busy = true;
+        try
+        {
+            var (plan, recorded) = await Import.ApplyAsync(_companyId, _me!.VesselId!.Value, _actor, _csv);
+            _plan = plan;
+            _done = true;
+            _notice = $"{recorded} days imported. The hours now show in the sheets and are checked against the rules like any other day.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

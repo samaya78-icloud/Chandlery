@@ -95,6 +95,8 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<Incident> Incidents => Set<Incident>();
     public DbSet<IncidentPerson> IncidentPersons => Set<IncidentPerson>();
     public DbSet<IncidentSupplement> IncidentSupplements => Set<IncidentSupplement>();
+    public DbSet<IncidentFile> IncidentFiles => Set<IncidentFile>();
+    public DbSet<PermitFile> PermitFiles => Set<PermitFile>();
     public DbSet<IncidentEvent> IncidentEvents => Set<IncidentEvent>();
     public DbSet<IncidentInvestigation> IncidentInvestigations => Set<IncidentInvestigation>();
     public DbSet<IncidentExposure> IncidentExposures => Set<IncidentExposure>();
@@ -966,6 +968,16 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.Property(s => s.ByName).HasMaxLength(120);
             b.HasIndex(s => s.IncidentId);
         });
+        modelBuilder.Entity<IncidentFile>(b =>
+        {
+            ConfigureRecordFile(b);
+            b.HasIndex(f => f.IncidentId);
+        });
+        modelBuilder.Entity<PermitFile>(b =>
+        {
+            ConfigureRecordFile(b);
+            b.HasIndex(f => f.PermitId);
+        });
         modelBuilder.Entity<IncidentEvent>(b =>
         {
             b.Property(e => e.Text).HasMaxLength(2000);
@@ -1749,7 +1761,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement ? IncidentOf(entry) : entry.Entity is DrillParticipant or DrillNote ? DrillOf(entry) : entry.Entity is MeetingAttendee or MeetingItem or MeetingNote ? MeetingOf(entry) : entry.Entity is PermitAnswer or PermitPerson or PermitGasReading or PermitEntry or PermitEvent ? PermitOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement or IncidentFile ? IncidentOf(entry) : entry.Entity is DrillParticipant or DrillNote ? DrillOf(entry) : entry.Entity is MeetingAttendee or MeetingItem or MeetingNote ? MeetingOf(entry) : entry.Entity is PermitAnswer or PermitPerson or PermitGasReading or PermitEntry or PermitEvent or PermitFile ? PermitOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -1856,6 +1868,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A part of a permit was changed without loading the permit; load it with its answers, persons, readings, entries and events.");
         return parent;
+    }
+
+    private static void ConfigureRecordFile<T>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<T> b) where T : RecordFile
+    {
+        b.Property(f => f.FileName).HasMaxLength(260);
+        b.Property(f => f.ContentType).HasMaxLength(100);
+        b.Property(f => f.Sha256).HasMaxLength(64);
+        b.Property(f => f.StoredKey).HasMaxLength(120);
+        b.Property(f => f.Caption).HasMaxLength(300);
+        b.Property(f => f.ByName).HasMaxLength(120);
+        b.Property(f => f.HeldBy).HasMaxLength(10);
     }
 
     /// <summary>An attendee, an item or a note of a meeting is its own table but part of the meeting: changing one moves the meeting's version, so the change travels.</summary>

@@ -48,6 +48,7 @@ builder.Services.AddScoped<PmsImportService>();
 builder.Services.AddScoped<TankService>();
 builder.Services.AddScoped<TankInspectionService>();
 builder.Services.AddScoped<RestHoursService>();
+builder.Services.AddScoped<RestImportService>();
 builder.Services.AddScoped<RestReviewService>();
 builder.Services.AddScoped<WorkArrangementService>();
 builder.Services.AddScoped<RestFleetService>();
@@ -58,6 +59,7 @@ builder.Services.AddScoped<FileAttachmentService>();
 builder.Services.AddScoped<DrillService>();
 builder.Services.AddScoped<MeetingService>();
 builder.Services.AddScoped<PermitService>();
+builder.Services.AddScoped<RecordFileService>();
 builder.Services.AddScoped<DrillFleetService>();
 builder.Services.AddScoped<DrillRestService>();
 builder.Services.AddScoped<RiskAssessmentService>();
@@ -667,6 +669,22 @@ app.MapGet("/files/chat/{fileId:guid}", async (Guid fileId, bool? download, Http
     if (file.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
     return download == true ? Results.File(file.Content, file.ContentType, file.FileName) : Results.File(file.Content, file.ContentType);
 }).RequireAuthorization();
+
+// Photos and statements kept with an incident report or a permit: whoever may see the record. The bytes are on the device that took them; the other side is told so.
+app.MapGet("/files/records/{kind}/{ownerId:guid}/{fileId:guid}", async (string kind, Guid ownerId, Guid fileId, bool? download, HttpContext http, RecordFileService records) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.NotFound();
+    (Chandlery.Models.RecordFile File, Stream? Content)? found;
+    try { found = await records.OpenAsync(companyId, kind, ownerId, fileId, Actor.From(http.User)); }
+    catch (InvalidOperationException) { return Results.NotFound(); }
+    if (found is null) return Results.NotFound();
+    if (found.Value.Content is null) return Results.Text("This file is held on the vessel and has not been sent ashore yet.", statusCode: StatusCodes.Status409Conflict);
+    http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    if (found.Value.File.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
+    return download == true
+        ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
+        : Results.File(found.Value.Content, found.Value.File.ContentType);
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 // Files kept with a project (a yard's quotation): only the office user of the company that owns them. Same safety headers as requisition files.
 app.MapGet("/files/project/{fileId:guid}", async (Guid fileId, bool? download, HttpContext http, ProjectPlanningService planning) =>

@@ -148,6 +148,7 @@ public class Permit
     public List<PermitGasReading> Readings { get; set; } = [];
     public List<PermitEntry> Entries { get; set; } = [];
     public List<PermitEvent> Events { get; set; } = [];
+    public List<PermitFile> Files { get; set; } = [];
 }
 
 /// <summary>A checklist item as it stood on this permit, with the answer. The wording is copied, so the permit never changes with the template.</summary>

@@ -280,7 +280,7 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
     // ---- loading and appending ----
 
     private static IQueryable<Permit> Full(ChandleryDbContext db) =>
-        db.Permits.Include(p => p.Answers).Include(p => p.Persons).Include(p => p.Readings).Include(p => p.Entries).Include(p => p.Events).AsSplitQuery();
+        db.Permits.Include(p => p.Answers).Include(p => p.Persons).Include(p => p.Readings).Include(p => p.Entries).Include(p => p.Events).Include(p => p.Files).AsSplitQuery();
 
     private static async Task<Permit> LoadAsync(ChandleryDbContext db, Guid companyId, Guid permitId) =>
         await Full(db).FirstOrDefaultAsync(p => p.Id == permitId && p.CompanyId == companyId) ?? throw new InvalidOperationException("Permit not found.");
@@ -599,6 +599,26 @@ public class PermitService(IDbContextFactory<ChandleryDbContext> factory, Workli
         Add(db, permit, PermitEventKind.Suspended, who.Name, who.Crew!.Id, reason.Trim());
         await db.SaveChangesAsync();
         return permit;
+    }
+
+    /// <summary>
+    /// Keeps a photo or a statement with a permit, onboard, by the people who work it (the person in charge, the attendant, the issuer, the Master). The bytes are in this device's file
+    /// store already (see <see cref="RecordFileService"/>); this adds the record, which travels with the permit. Not on a permit that is closed, cancelled or withdrawn.
+    /// </summary>
+    public async Task<PermitFile> AddFileAsync(Guid companyId, Guid permitId, Actor actor, PermitFile file)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        var permit = await LoadAsync(db, companyId, permitId);
+        if (who.IsOffice) throw new InvalidOperationException("Files are kept with a permit onboard, where the file is taken.");
+        if (!Works(who, permit)) throw new InvalidOperationException("Files are added by the person in charge, the attendant, the issuer or the Master.");
+        if (StateOf(permit) is PermitState.Completed or PermitState.Cancelled or PermitState.Withdrawn) throw new InvalidOperationException("A closed permit cannot be changed.");
+        if (permit.Files.Count >= RecordFileRules.MaxPerRecord) throw new InvalidOperationException($"A permit keeps up to {RecordFileRules.MaxPerRecord} files.");
+        (file.Id, file.PermitId, file.ByName, file.ByCrewId, file.At, file.HeldBy) = (Guid.CreateVersion7(), permit.Id, who.Name, who.Crew?.Id, Now, "Vessel");
+        db.PermitFiles.Add(file);
+        await db.SaveChangesAsync();
+        return file;
     }
 
     /// <summary>Resumes suspended work: by an issuer or the Master, with the gas reading in date where one is needed.</summary>

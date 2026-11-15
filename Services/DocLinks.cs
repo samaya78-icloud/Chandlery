@@ -12,7 +12,10 @@ public enum DocKind
     Vessel,
     Item,
     Department,
-    Project
+    Project,
+    RiskAssessment,
+    TankInspection,
+    WorklistTask
 }
 
 /// <summary>One place that knows where each kind of record lives.</summary>
@@ -30,6 +33,9 @@ public static class DocLinks
         DocKind.Item => $"/company/items/{id}",
         DocKind.Department => $"/company/departments/{id}",
         DocKind.Project => $"/projects/{id}",
+        DocKind.RiskAssessment => $"/risk/{id}",
+        DocKind.TankInspection => $"/tanks/inspections/{id}",
+        DocKind.WorklistTask => $"/worklist/{id}",
         _ => "/"
     };
 }

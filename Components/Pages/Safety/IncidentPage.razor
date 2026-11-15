@@ -289,6 +289,8 @@ else
                 </div>
             }
 
+            <RecordFilesPanel Kind="incident" OwnerId="Id" CompanyId="_companyId" Files="_d.Incident.Files" CanAdd="@(_d.Can.Edit || _d.Can.Supplement)" Added="LoadAsync" />
+
             @if (_d.Can.Supplement)
             {
                 <div class="card p-4 text-sm">

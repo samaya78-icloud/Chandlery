@@ -1,0 +1,68 @@
+@using Chandlery.Models
+@inject RecordFileService Records
+
+@if (Files.Any() || CanAdd)
+{
+    <div class="card p-4 text-sm">
+        <h2 class="mb-3 text-base font-semibold text-ink">Photos and statements</h2>
+        @if (!Files.Any()) { <p class="text-muted">No file is kept with this record.</p> }
+        <ul class="divide-y divide-line/60">
+            @foreach (var f in Views)
+            {
+                <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
+                    @if (f.Here) { <a class="link font-medium" href="/files/records/@Kind/@OwnerId/@f.Id" target="_blank" rel="noopener">@f.FileName</a> }
+                    else { <span class="font-medium">@f.FileName</span> }
+                    <span class="text-muted">@(f.Caption == "" ? "" : f.Caption + " · ")@(f.SizeBytes / 1024) KB · @f.ByName · @f.At.ToString("d MMM yyyy HH:mm")</span>
+                    @if (!f.Here) { <span class="chip" data-tone="warning" title="The file stays on the device that took it until the sync engine can send files. The record and its checksum are here.">held on the @f.HeldBy.ToLowerInvariant(), not sent yet</span> }
+                </li>
+            }
+        </ul>
+        @if (CanAdd)
+        {
+            <div class="mt-4 flex flex-wrap items-end gap-3 border-t border-line pt-3">
+                <label class="min-w-56 flex-1">What it shows (optional)<input class="input mt-1 w-full" maxlength="300" @bind="_caption" /></label>
+                <InputFile OnChange="OnFileAsync" accept="@AttachmentRules.AcceptList" class="text-sm" disabled="@_busy" />
+            </div>
+            <p class="mt-1 text-xs text-muted">Photos (PNG, JPG, WEBP, GIF) and PDF statements, up to 10 MB each and @RecordFileRules.MaxPerRecord files. The file stays on this device until the sync engine can send files.</p>
+        }
+        @if (_error is not null) { <p class="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-rose-600">@_error</p> }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Kind { get; set; } = "";
+    [Parameter, EditorRequired] public Guid OwnerId { get; set; }
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public IEnumerable<RecordFile> Files { get; set; } = [];
+    [Parameter] public bool CanAdd { get; set; }
+    [Parameter] public EventCallback Added { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private string _caption = "";
+    private string? _error;
+    private bool _busy;
+
+    private IEnumerable<RecordFileView> Views => Files.OrderBy(f => f.At).Select(f => RecordFileView.Of(f, RecordFileRules.ThisSide));
+
+    private async Task OnFileAsync(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var state = await AuthStateTask!;
+            await using var stream = e.File.OpenReadStream(AttachmentRules.MaxBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            var upload = new PendingAttachment { FileName = e.File.Name, Data = buffer.ToArray() };
+            var actor = Actor.From(state.User);
+            if (Kind == "incident") await Records.AddToIncidentAsync(CompanyId, OwnerId, actor, upload, _caption);
+            else await Records.AddToPermitAsync(CompanyId, OwnerId, actor, upload, _caption);
+            _caption = "";
+            await Added.InvokeAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        catch (IOException) { _error = "The file is larger than 10 MB."; }
+        finally { _busy = false; }
+    }
+}
