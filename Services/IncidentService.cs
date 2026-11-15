@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -264,6 +264,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
 
         incident.SubmittedAt = DateTime.UtcNow;
         await RescoreAsync(db, incident);
+        await ChatService.NoteAsync(db, companyId, ChatModules.Incident, incident.Id, incident.VesselId, $"Report submitted by {who.Name}");
         await db.SaveChangesAsync();
         return incident;
     }
@@ -282,6 +283,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         if (!CanEditText(who, incident)) throw new InvalidOperationException(who.IsOffice ? "A supplement is added by the side that owns the report; the office adds to the investigation." : "Only the reporter or the Master adds to a report.");
         var supplement = new IncidentSupplement { Id = Guid.CreateVersion7(), IncidentId = incident.Id, Text = text, ByName = who.Name, ByCrewId = who.Crew?.Id, At = DateTime.UtcNow };
         db.IncidentSupplements.Add(supplement);
+        await ChatService.NoteAsync(db, companyId, ChatModules.Incident, incident.Id, incident.VesselId, $"Supplement added to the report by {who.Name}");
         await db.SaveChangesAsync();
         return supplement;
     }
@@ -310,6 +312,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
             await RescoreAsync(db, incident);
         }
         var ev = NewEvent(db, incident, IncidentEventKind.Reviewed, comment, who, SyncStages.Vessel);
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -326,6 +329,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         if ((text ?? "").Trim().Length < 3) throw new InvalidOperationException("Write the findings.");
         if (await StatusOfAsync(db, incident) is IncidentStatus.Draft or IncidentStatus.Withdrawn or IncidentStatus.Closed) throw new InvalidOperationException("Findings are added to a submitted report that is still open.");
         var ev = NewEvent(db, incident, IncidentEventKind.VesselFindings, text!, who, SyncStages.Vessel);
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -344,6 +348,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         if (status == IncidentStatus.Withdrawn) throw new InvalidOperationException("The report was withdrawn already.");
         if (status == IncidentStatus.Closed) throw new InvalidOperationException("A closed report cannot be withdrawn. Reopen it first.");
         var ev = NewEvent(db, incident, IncidentEventKind.Withdrawn, reason, who, Stage(db));
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -359,6 +364,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         if (incident.SubmittedAt is null || status is IncidentStatus.Withdrawn or IncidentStatus.Closed) throw new InvalidOperationException("An investigation is opened on a submitted report that is still open.");
         if (facts.Events.Any(e => e.Kind == IncidentEventKind.InvestigationOpened) || facts.Investigation is not null) throw new InvalidOperationException("An investigation is open already.");
         var ev = NewEvent(db, incident, IncidentEventKind.InvestigationOpened, note, who, SyncStages.Office);
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -376,6 +382,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         if (facts.Events.Any(e => e.Kind is IncidentEventKind.InvestigationOpened or IncidentEventKind.NoInvestigationNeeded) || facts.Investigation is not null) throw new InvalidOperationException("An investigation was opened or waived already.");
         if ((reason ?? "").Trim().Length < 3) throw new InvalidOperationException("Say why no investigation is needed.");
         var ev = NewEvent(db, incident, IncidentEventKind.NoInvestigationNeeded, reason, who, SyncStages.Office);
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -423,6 +430,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         var (incident, who, _) = await OfficeFactsAsync(db, companyId, incidentId, actor);
         if ((text ?? "").Trim().Length < 3) throw new InvalidOperationException("Say who was told, and when.");
         var ev = NewEvent(db, incident, IncidentEventKind.NotificationRecorded, text!, who, SyncStages.Office);
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -436,6 +444,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         var blockers = IncidentRules.CloseBlockers(facts);
         if (blockers.Count > 0) throw new InvalidOperationException("It cannot be closed yet. " + string.Join(" ", blockers));
         var ev = NewEvent(db, incident, IncidentEventKind.Closed, note, who, SyncStages.Office);
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -448,6 +457,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         if (IncidentStatusRules.Of(facts) != IncidentStatus.Closed) throw new InvalidOperationException("Only a closed report is reopened.");
         if ((reason ?? "").Trim().Length < 3) throw new InvalidOperationException("Say why the report is reopened.");
         var ev = NewEvent(db, incident, IncidentEventKind.Reopened, reason, who, SyncStages.Office);
+        await NoteEventAsync(db, incident, ev);
         await db.SaveChangesAsync();
         return ev;
     }
@@ -788,6 +798,18 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         return tasksOf.ToDictionary(p => p.Key, p => p.Value.Count(open.Contains));
     }
 
+    private static Task NoteEventAsync(ChandleryDbContext db, Incident incident, IncidentEvent ev)
+        => ChatService.NoteAsync(db, incident.CompanyId, ChatModules.Incident, incident.Id, incident.VesselId, ev.Kind switch
+        {
+            IncidentEventKind.Reviewed => $"Reviewed by {ev.ByName} and sent to the office",
+            IncidentEventKind.InvestigationOpened => $"Investigation opened by {ev.ByName}",
+            IncidentEventKind.NoInvestigationNeeded => $"{ev.ByName} decided no investigation is needed",
+            IncidentEventKind.VesselFindings => $"Vessel's findings added by {ev.ByName}",
+            IncidentEventKind.NotificationRecorded => $"Notification recorded by {ev.ByName}",
+            IncidentEventKind.Closed => $"Closed by {ev.ByName}",
+            IncidentEventKind.Reopened => $"Reopened by {ev.ByName}",
+            _ => $"Withdrawn by {ev.ByName}" + (ev.Text == "" ? "" : $": {ev.Text}"),
+        });
     private static IncidentEvent NewEvent(ChandleryDbContext db, Incident incident, IncidentEventKind kind, string? text, Who who, string stage)
     {
         var ev = new IncidentEvent

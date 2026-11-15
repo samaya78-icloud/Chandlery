@@ -69,6 +69,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var who = await WhoAsync(db, companyId, actor);
         Validate(post, who);
         await RequireEnabledAsync(db, companyId, post.VesselId);
+        if (post.ModuleType == ChatModules.Incident && (await HiddenIncidentsAsync(db, companyId, who.Viewer, [post.RecordId])).Count > 0) throw new InvalidOperationException("This incident is not open to you.");
         if (!ChatRules.CanPost(who.Side, post.Channel)) throw new InvalidOperationException(who.Side == ChatSide.Vessel ? "Onboard, messages are internal." : "This channel is not open to you.");
         if (who.Side == ChatSide.Vessel && post.VesselId != who.Viewer.VesselId) throw new InvalidOperationException("You are not signed on to this vessel.");
 
@@ -262,6 +263,8 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var cutoff = DateTime.UtcNow.AddDays(-InboxDays);
         var recent = db.ChatMessages.Where(m => m.CompanyId == companyId && m.At >= cutoff).Select(m => m.RecordId).Distinct();
         var visible = (await db.ChatMessages.AsNoTracking().Where(m => m.CompanyId == companyId && recent.Contains(m.RecordId)).ToListAsync()).Where(m => ChatRules.Visible(m, who.Viewer)).ToList();
+        var hidden = await HiddenIncidentsAsync(db, companyId, who.Viewer, visible.Where(m => m.ModuleType == ChatModules.Incident).Select(m => m.RecordId));
+        visible = visible.Where(m => !(m.ModuleType == ChatModules.Incident && hidden.Contains(m.RecordId))).ToList();
         var reads = await db.ChatReads.AsNoTracking().Where(r => r.UserId == who.UserId).ToListAsync();
         var threads = visible.GroupBy(m => (m.ModuleType, m.RecordId, m.Topic)).ToList();
 
@@ -335,6 +338,10 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var projects = Of(ChatModules.Project);
         foreach (var x in await db.Projects.AsNoTracking().Where(x => projects.Contains(x.Id)).Select(x => new { x.Id, x.Code, x.Title }).ToListAsync())
             result[(ChatModules.Project, x.Id)] = new RecordInfo($"Project {x.Code} · {x.Title}", Href($"/projects/{x.Id}#conversation", $"/projects/{x.Id}#conversation"));
+
+        var incidents = Of(ChatModules.Incident);
+        foreach (var x in await db.Incidents.AsNoTracking().Where(x => incidents.Contains(x.Id)).Select(x => new { x.Id, x.Code }).ToListAsync())
+            result[(ChatModules.Incident, x.Id)] = new RecordInfo($"Incident {x.Code}", Href($"/incidents/{x.Id}#conversation", $"/incidents/{x.Id}#conversation"));
         return result;
     }
     /// <summary>Who this person is in a conversation (side, vessel, administrator), or null when they cannot take part.</summary>
@@ -359,8 +366,26 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- reading ----
 
     private static async Task<List<ChatMessage>> LoadAsync(ChandleryDbContext db, Guid companyId, string moduleType, Guid recordId, ChatViewer viewer)
-        => (await db.ChatMessages.AsNoTracking().Where(m => m.CompanyId == companyId && m.ModuleType == moduleType && m.RecordId == recordId).ToListAsync())
+    {
+        if (moduleType == ChatModules.Incident && (await HiddenIncidentsAsync(db, companyId, viewer, [recordId])).Count > 0) return [];
+        return (await db.ChatMessages.AsNoTracking().Where(m => m.CompanyId == companyId && m.ModuleType == moduleType && m.RecordId == recordId).ToListAsync())
             .Where(m => ChatRules.Visible(m, viewer)).ToList();
+    }
+
+    /// <summary>
+    /// The incidents this person may not read a conversation about. An incident is confidential: the office sees every one; onboard only the Master and the reporter do;
+    /// a supplier never does. A conversation on an incident follows the same rule, so it is not shown, counted or quoted to anyone else.
+    /// </summary>
+    private static async Task<HashSet<Guid>> HiddenIncidentsAsync(ChandleryDbContext db, Guid companyId, ChatViewer viewer, IEnumerable<Guid> incidentIds)
+    {
+        var ids = incidentIds.Distinct().ToList();
+        if (ids.Count == 0 || viewer.Side == ChatSide.Office) return [];
+        if (viewer.Side == ChatSide.Supplier) return ids.ToHashSet();
+        var allowed = await db.Incidents.AsNoTracking().Where(i => i.CompanyId == companyId && ids.Contains(i.Id) && i.VesselId == viewer.VesselId).Select(i => new { i.Id, i.ReporterCrewId }).ToListAsync();
+        if (viewer.IsMaster) return ids.Except(allowed.Select(a => a.Id)).ToHashSet();
+        var reporters = await db.CrewMembers.AsNoTracking().Where(c => c.UserId == viewer.UserId).Select(c => c.Id).ToListAsync();
+        return ids.Except(allowed.Where(a => a.ReporterCrewId is { } r && reporters.Contains(r)).Select(a => a.Id)).ToHashSet();
+    }
 
     /// <summary>One thread of a record (the main thread when <paramref name="topic"/> is empty), as the person reads it.</summary>
     public async Task<ChatThreadView> ThreadAsync(Guid companyId, Actor actor, string moduleType, Guid recordId, string topic = "")
