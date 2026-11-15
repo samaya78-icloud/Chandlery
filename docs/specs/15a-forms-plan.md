@@ -1,6 +1,6 @@
 ﻿# 15a. Forms: plan (implements spec 15 in stages)
 
-Status: **written 2026-11-15, not started.** Awaiting your go-ahead on the order and on the answers in section 1. Builds on patterns already proven: master data copied to every vessel (tank checklists, risk templates, incident causes), a document owned by one side with review as separate append-only events (tank inspections, risk assessments, incidents), state and checks worked out by pure functions shared by the screens, the sync filter and the tests, a module switch, two-database tests, a walkthrough and a mutation check at the end.
+Status: **F1 built 2026-11-15 (not yet committed); F2 to F7 not started.** Order and the answers in section 1 were accepted ("use your recommendations"). Builds on patterns already proven: master data copied to every vessel (tank checklists, risk templates, incident causes), a document owned by one side with review as separate append-only events (tank inspections, risk assessments, incidents), state and checks worked out by pure functions shared by the screens, the sync filter and the tests, a module switch, two-database tests, a walkthrough and a mutation check at the end.
 
 ## 1. Answers used for the open points (recommended in spec 15; change any and the plan follows)
 1. **Offline** means the vessel's installation draws and checks the form from the definition it holds; no call to shore is ever needed to fill a form. A device only needs the vessel's own network.
@@ -56,3 +56,10 @@ A vessel holds only the versions that apply to it (by vessel type and named vess
 1. Approve the stages (F1 to F7), or change the order (for example the converter earlier, to start on real forms sooner).
 2. Answers, or "use your recommendation", for section 1.
 3. **Three sample forms for F6**, with a note of which is the hardest one. Only the crankpin bearing report (PM05, grid-heavy) was opened while studying; the cargo gear report (MT07) and the change-of-command form (VT01) are suggestions from the catalogue and have not been looked at yet.
+
+## 8. F1 as built (2026-11-15)
+- **Code:** `Models/Forms.cs` (four tables), `Services/Forms/` (`FormExpression`, `FormDefinition`, `FormDefinitionRules`, `FormValueRules` with `Initial` for prefill, `FormRules` holding `FormStatusRules`, `FormApplicability`, `FormSchedule`, and `FormService`), migration `FormsFoundation`, module switch "Forms", reference `FRM`. Sync: `FormType` and `FormVersion` are master data (a draft, an office-only form and a form that does not apply never go down), `FormEntry` and `FormReview` are documents (an office-only entry stays ashore).
+- **Tests:** pure `FormRulesTests` (62) and two-database `FormSyncTests` (9, including the whole fill, submit, return, correct, accept walkthrough and the boundary checks); the nearby chat, nav and master-data suites still pass.
+- **Applicability uses vessel groups, not vessel types.** The vessel has no type field, and the group tree (Fleet, Tankers, Far East) already plays that part, so a form applies to groups (and everything beneath them) and named vessels.
+- **Known limit:** when a form stops applying to a vessel (a group is removed from the list), the vessel keeps the copy it already holds; it simply receives no new versions. Dropping it is a small addition for F2 (the type update can send a tombstone to the vessels that lost it).
+- **Left for later stages on purpose:** conversation lines on submit and review (F4, with `ChatModules.FormEntry`), Worklist tasks for exceptions (F4), photo files on a field (F3), the screens (F2 to F4).

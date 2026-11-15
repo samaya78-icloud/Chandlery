@@ -56,6 +56,7 @@ builder.Services.AddScoped<RestCapacityService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<FileAttachmentService>();
+builder.Services.AddScoped<FormService>();
 builder.Services.AddScoped<DrillService>();
 builder.Services.AddScoped<MeetingService>();
 builder.Services.AddScoped<PermitService>();

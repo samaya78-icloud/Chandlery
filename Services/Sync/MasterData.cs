@@ -32,6 +32,7 @@ public static class MasterData
         Of<Department>(), Of<Category>(), Of<WorklistListItem>(), Of<MachineryClass>(), Of<JobTemplate>(), Of<TankChecklistTemplate>(), Of<TankCriterion>(), Of<RaCategory>(), Of<RaMatrixLabel>(), Of<RaMatrixBand>(), Of<RaTemplate>(), Of<RaTemplateActivity>(), Of<RaTemplateHazard>(), Of<DepartmentCategory>(), Of<Item>(), Of<Uom>(), Of<UomConversion>(),
         Of<VesselPolicy>(), Of<VesselModuleSwitch>(),
         Of<RestRuleSet>(), Of<IncidentCause>(), Of<IncidentSettings>(), Of<DrillType>(), Of<DrillOverride>(), Of<MeetingType>(), Of<PermitType>(), Of<PermitChecklistItem>(), Of<PermitConflictPair>(), Of<PermitJobRule>(),
+        Of<FormType>(), Of<FormVersion>(),
     ];
 
     private static readonly Dictionary<string, MasterType> ByName = Types.ToDictionary(t => t.DocType);
@@ -213,6 +214,12 @@ public static class MasterData
                 return company == scope.CompanyId && (ReadGuid(d, "VesselId") is not { } ruleVessel || ruleVessel == scope.VesselId);
             case nameof(DrillOverride):      // a vessel's own drill rules, never another vessel's
                 return company == scope.CompanyId && ReadGuid(d, "VesselId") == scope.VesselId;
+            case nameof(FormType):      // only the forms that apply to this vessel, and never the office's own
+                return company == scope.CompanyId && d["OfficeOnly"]?.GetValue<bool>() != true
+                    && FormApplicability.AppliesTo(d["AppliesToGroups"]?.GetValue<string>(), d["AppliesToVessels"]?.GetValue<string>(), scope.VesselId, scope.Groups);
+            case nameof(FormVersion):      // a draft is the office's own; only a published or retired version of a form that applies goes down
+                return company == scope.CompanyId && d["OfficeOnly"]?.GetValue<bool>() != true && d["Status"]?.GetValue<string>() is nameof(FormVersionStatus.Published) or nameof(FormVersionStatus.Retired)
+                    && FormApplicability.AppliesTo(d["AppliesToGroups"]?.GetValue<string>(), d["AppliesToVessels"]?.GetValue<string>(), scope.VesselId, scope.Groups);
             default: return company == scope.CompanyId;
         }
     }

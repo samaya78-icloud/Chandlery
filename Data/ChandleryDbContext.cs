@@ -102,6 +102,10 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<IncidentExposure> IncidentExposures => Set<IncidentExposure>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<FileAttachment> FileAttachments => Set<FileAttachment>();
+    public DbSet<FormType> FormTypes => Set<FormType>();
+    public DbSet<FormVersion> FormVersions => Set<FormVersion>();
+    public DbSet<FormEntry> FormEntries => Set<FormEntry>();
+    public DbSet<FormReview> FormReviews => Set<FormReview>();
     public DbSet<ChatRead> ChatReads => Set<ChatRead>();
     public DbSet<IncidentCause> IncidentCauses => Set<IncidentCause>();
     public DbSet<IncidentSettings> IncidentSettingsRows => Set<IncidentSettings>();
@@ -1045,6 +1049,61 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasIndex(f => new { f.VesselId, f.OwnerStage });
             b.HasQueryFilter(f => CurrentCompanyId == null || f.CompanyId == CurrentCompanyId);
         });
+        // ---- forms (spec 15, F1): the catalogue is master data, an entry is a document owned by the side that fills it, a review is the office's append-only response ----
+        modelBuilder.Entity<FormType>(b =>
+        {
+            b.Property(t => t.Code).HasMaxLength(40);
+            b.Property(t => t.Title).HasMaxLength(160);
+            b.Property(t => t.Department).HasMaxLength(60);
+            b.Property(t => t.Periodicity).HasConversion<string>().HasMaxLength(20);
+            b.Property(t => t.Basis).HasConversion<string>().HasMaxLength(20);
+            b.Property(t => t.StartsOn).HasColumnType("date");
+            b.Property(t => t.AppliesToGroups).HasMaxLength(2000);
+            b.Property(t => t.AppliesToVessels).HasMaxLength(4000);
+            b.Property(t => t.CreatedByName).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(t => new { t.CompanyId, t.Code }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<FormVersion>(b =>
+        {
+            b.Property(v => v.Status).HasConversion<string>().HasMaxLength(20);
+            b.Property(v => v.Note).HasMaxLength(400);
+            b.Property(v => v.AppliesToGroups).HasMaxLength(2000);
+            b.Property(v => v.AppliesToVessels).HasMaxLength(4000);
+            b.Property(v => v.CreatedByName).HasMaxLength(120);
+            b.HasOne<Company>().WithMany().HasForeignKey(v => v.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<FormType>().WithMany().HasForeignKey(v => v.FormTypeId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(v => new { v.FormTypeId, v.Number }).IsUnique();
+            b.HasQueryFilter(v => CurrentCompanyId == null || v.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<FormEntry>(b =>
+        {
+            b.Property(e => e.FormCode).HasMaxLength(40);
+            b.Property(e => e.FormTitle).HasMaxLength(160);
+            b.Property(e => e.Code).HasMaxLength(40);
+            b.Property(e => e.FormDate).HasColumnType("date");
+            b.Property(e => e.CreatedByName).HasMaxLength(120);
+            b.Property(e => e.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(e => e.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<FormType>().WithMany().HasForeignKey(e => e.FormTypeId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<FormVersion>().WithMany().HasForeignKey(e => e.VersionId).OnDelete(DeleteBehavior.Restrict);   // the version always arrives before an entry filled on it
+            b.HasIndex(e => new { e.CompanyId, e.Code }).IsUnique();
+            b.HasIndex(e => new { e.VesselId, e.FormTypeId, e.FormDate });
+            b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<FormReview>(b =>
+        {
+            b.Property(r => r.Decision).HasConversion<string>().HasMaxLength(20);
+            b.Property(r => r.Comment).HasMaxLength(1000);
+            b.Property(r => r.ReviewerName).HasMaxLength(120);
+            b.Property(r => r.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(r => r.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(r => r.EntryId);   // no foreign key to the entry: a review can arrive before the entry it answers
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
         modelBuilder.Entity<ChatRead>(b =>
         {
             b.Property(r => r.ModuleType).HasMaxLength(40);
@@ -1826,6 +1885,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         TankInspection ti => ti.Code,
         RiskAssessment ra => ra.Code,
         Project pr => pr.Code,
+        FormEntry fe => fe.Code,
         _ => "",
     };
 

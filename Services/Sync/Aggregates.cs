@@ -70,6 +70,8 @@ public static class Aggregates
         new(nameof(ProjectItemDecision), typeof(ProjectItemDecision)),
         new(nameof(ChatMessage), typeof(ChatMessage)),
         new(nameof(FileAttachment), typeof(FileAttachment)),
+        new(nameof(FormEntry), typeof(FormEntry)),
+        new(nameof(FormReview), typeof(FormReview)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
@@ -77,7 +79,7 @@ public static class Aggregates
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
-        || clr == typeof(ChatMessage) || clr == typeof(FileAttachment)
+        || clr == typeof(ChatMessage) || clr == typeof(FileAttachment) || clr == typeof(FormReview)
         || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation) || clr == typeof(IncidentExposure) || clr == typeof(DrillComment) || clr == typeof(MeetingComment) || clr == typeof(PermitComment)
         || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink) || clr == typeof(ProjectItemRequest) || clr == typeof(ProjectItemDecision)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
@@ -157,6 +159,8 @@ public static class Aggregates
         ProjectItemDecision pd => pd.OwnerStage,
         ChatMessage cm => cm.OwnerStage,
         FileAttachment fa => fa.OwnerStage,
+        FormEntry fe => fe.OwnerStage,
+        FormReview fr => fr.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -207,6 +211,8 @@ public static class Aggregates
         else if (root is ProjectItemDecision itemDecision) itemDecision.OwnerStage = stage;
         else if (root is ChatMessage chatMessage) chatMessage.OwnerStage = stage;
         else if (root is FileAttachment fileAttachment) fileAttachment.OwnerStage = stage;
+        else if (root is FormEntry formEntry) formEntry.OwnerStage = stage;
+        else if (root is FormReview formReview) formReview.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

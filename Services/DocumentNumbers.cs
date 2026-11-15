@@ -31,6 +31,7 @@ public static class DocumentNumbers
         DocType.Drill => "DR",
         DocType.Meeting => "MT",
         DocType.Permit => "PTW",
+        DocType.Form => "FRM",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 
