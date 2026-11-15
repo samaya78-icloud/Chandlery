@@ -14,6 +14,8 @@ public record FormReportRow(FormEntry Entry, FormStatus Status, string Vessel);
 /// <summary>A deficiency or a finding found on a form, as a Worklist task on the vessel.</summary>
 public record NewFormAction(string Title, string Description = "", WorklistPriority Priority = WorklistPriority.Normal, DateTime? Target = null, string? Assignee = null);
 
+public record FormFleetDueRow(Guid VesselId, string Vessel, FormDueRow Due);
+
 public record FormYearRow(FormType Type, FormYearCell[] Months);
 
 /// <summary>
@@ -121,6 +123,22 @@ public class FormReports(IDbContextFactory<ChandleryDbContext> factory, FormServ
                 foreach (var column in FormExport.Columns(def, values))
                     if (columns.All(c => c.Key != column.Key)) columns.Add(column);
         return (type, columns, rows.Select(r => FormExport.Row(columns, r.Entry, r.Vessel, r.Status)).ToList());
+    }
+
+    // ---- what is due ----
+
+    /// <summary>
+    /// What is due across the fleet, vessel by vessel (the office's forms included), the most pressing first: overdue, then due soon, then open, then not scheduled
+    /// (voyage and ad hoc forms, which are started by hand).
+    /// </summary>
+    public async Task<List<FormFleetDueRow>> FleetDueAsync(Guid companyId, DateOnly today)
+    {
+        var rows = new List<FormFleetDueRow>();
+        foreach (var (vesselId, name) in await forms.EnabledVesselsAsync(companyId))
+            foreach (var due in await forms.DueAsync(companyId, vesselId, today, includeOfficeOnly: true))
+                rows.Add(new FormFleetDueRow(vesselId, name, due));
+        static int Rank(FormDueStatus s) => s switch { FormDueStatus.Overdue => 0, FormDueStatus.DueSoon => 1, FormDueStatus.Open => 2, FormDueStatus.NotScheduled => 3, _ => 4 };
+        return rows.OrderBy(r => Rank(r.Due.Due.Status)).ThenBy(r => r.Due.Due.DueOn ?? DateOnly.MaxValue).ThenBy(r => r.Vessel).ThenBy(r => r.Due.Type.Code).ToList();
     }
 
     // ---- the year ----

@@ -1,0 +1,99 @@
+@page "/forms/due"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject FormService Svc
+@inject FormReports Reports
+@inject NavigationManager Nav
+
+<PageTitle>Forms due · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Forms" Title="Forms due across the fleet" Subtitle="What each vessel owes, the most pressing first. Voyage and ad hoc forms are started by hand.">
+    <Actions><a href="/forms/review" class="btn btn-secondary">Submitted forms</a></Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_all.Count == 0)
+{
+    <EmptyState Title="Nothing to show" Message="No form is published for a vessel that has Forms switched on." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    <div class="mb-4 flex flex-wrap gap-3 text-sm">
+        <label class="text-xs text-muted">Show
+            <select class="select mt-1" @bind="_show">
+                <option value="attention">Overdue and due in 7 days</option>
+                <option value="overdue">Overdue only</option>
+                <option value="all">Everything</option>
+            </select></label>
+        <label class="text-xs text-muted">Vessel
+            <select class="select mt-1" @bind="_vessel"><option value="">All vessels</option>@foreach (var v in _all.Select(r => (r.VesselId, r.Vessel)).Distinct()) { <option value="@v.VesselId">@v.Vessel</option> }</select></label>
+    </div>
+
+    <div class="card overflow-x-auto text-sm">
+        <table class="w-full">
+            <thead><tr class="border-b border-line/60 text-left text-xs text-muted"><th class="px-4 py-2">Vessel</th><th>Form</th><th>How often</th><th>Status</th><th>Due</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var row in Shown)
+                {
+                    <tr class="border-b border-line/40">
+                        <td class="px-4 py-2">@row.Vessel</td>
+                        <td><span class="font-mono text-xs font-semibold">@row.Due.Type.Code</span> <span class="ml-1">@row.Due.Type.Title</span>@if (row.Due.Type.OfficeOnly) { <span class="chip chip-plain ml-2" data-tone="neutral">office only</span> }</td>
+                        <td class="text-xs text-muted">@FormTypesPage.PeriodicityName(row.Due.Type.Periodicity)</td>
+                        <td><StatusChip Value="@row.Due.Due.Status" />@if (row.Due.Due.MissedPeriods > 0) { <span class="ml-2 text-xs text-rose-700">@row.Due.Due.MissedPeriods missed</span> }</td>
+                        <td class="text-xs text-muted">@(row.Due.Due.DueOn?.ToString("dd MMM yyyy") ?? "by hand")</td>
+                        <td class="px-4 py-2 text-right"><button class="btn btn-secondary btn-sm" @onclick="() => StartAsync(row)" disabled="@_busy" title="Fill it in for the vessel, from the office">Start for the vessel</button></td>
+                    </tr>
+                }
+                @if (!Shown.Any()) { <tr><td colspan="6" class="px-4 py-4 text-muted">Nothing is due.</td></tr> }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _busy;
+    private string? _error;
+    private string _show = "attention", _vessel = "";
+    private List<FormFleetDueRow> _all = [];
+
+    private IEnumerable<FormFleetDueRow> Shown => _all
+        .Where(r => _vessel == "" || r.VesselId.ToString() == _vessel)
+        .Where(r => _show switch
+        {
+            "all" => true,
+            "overdue" => r.Due.Due.Status == FormDueStatus.Overdue,
+            _ => r.Due.Due.Status is FormDueStatus.Overdue or FormDueStatus.DueSoon,
+        });
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        if (!NodeContext.Current.IsVessel) _all = await Reports.FleetDueAsync(_companyId, DateOnly.FromDateTime(DateTime.UtcNow));
+        _loaded = true;
+    }
+
+    private async Task StartAsync(FormFleetDueRow row)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var entry = await Svc.StartAsync(_companyId, row.VesselId, row.Due.Type.Id, DateTime.UtcNow.Date, _actor);
+            Nav.NavigateTo($"/forms/entry/{entry.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

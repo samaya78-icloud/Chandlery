@@ -142,6 +142,8 @@ public class FormReviewTests : IAsyncLifetime
 
     public Task DisposeAsync() => _s.DisposeAsync();
 
+    private async Task<T> OnVessel<T>(Func<ChandleryDbContext, Task<T>> read) { await using var db = await _s.VesselFactory.CreateDbContextAsync(); return await read(db); }
+
     private async Task SwitchOnAsync(params string[] modules)
     {
         await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
@@ -293,6 +295,45 @@ public class FormReviewTests : IAsyncLifetime
         Assert.Empty((await _reports.ExportAsync(_s.CompanyId, type.Id, Guid.NewGuid()))!.Value.Rows);
         Assert.Empty((await _reports.ExportAsync(_s.CompanyId, type.Id, year: Today.Year - 3))!.Value.Rows);
         Assert.Null(await _reports.ExportAsync(_s.CompanyId, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task TheFleetDueListPutsWhatIsOverdueFirst_ShowsFormsStartedByHand_AndTheOfficesOwnForms()
+    {
+        await SwitchOnAsync(PolicyModules.Forms);
+        var monthly = await PublishedAsync("PM05");
+        var voyage = await _shore.CreateTypeAsync(_s.CompanyId, new NewFormType("VT01", "Change of command", "Deck", FormPeriodicity.Voyage), _s.User);
+        await _shore.PublishAsync(_s.CompanyId, (await _shore.CreateDraftAsync(_s.CompanyId, voyage.Id, FormSamples.Crankpin, "", _s.User)).Id, _s.User);
+        var office = await _shore.CreateTypeAsync(_s.CompanyId, new NewFormType("TP01", "Class survey", "Technical", FormPeriodicity.ThirdParty, OfficeOnly: true), _s.User);
+        await _shore.PublishAsync(_s.CompanyId, (await _shore.CreateDraftAsync(_s.CompanyId, office.Id, FormSamples.Crankpin, "", _s.User)).Id, _s.User);
+        await _s.SettleUntilQuietAsync();
+        var today = DateOnly.FromDateTime(Today);
+
+        var fleet = await _reports.FleetDueAsync(_s.CompanyId, today);
+        Assert.Equal(new[] { "PM05", "TP01", "VT01" }, fleet.Select(r => r.Due.Type.Code).Order());
+        Assert.Equal("PM05", fleet[0].Due.Type.Code);                                                       // overdue first
+        Assert.Equal(FormDueStatus.Overdue, fleet[0].Due.Due.Status);
+        Assert.All(fleet.Where(r => r.Due.Type.Code != "PM05"), r => Assert.Equal(FormDueStatus.NotScheduled, r.Due.Due.Status));
+        Assert.All(fleet, r => Assert.Equal(_s.VesselId, r.VesselId));
+
+        // The vessel never sees the office's own form; the plain due list leaves it out too.
+        Assert.DoesNotContain(await _vessel.DueAsync(_s.CompanyId, _s.VesselId, today), r => r.Type.Code == "TP01");
+        Assert.DoesNotContain(await _shore.DueAsync(_s.CompanyId, _s.VesselId, today), r => r.Type.Code == "TP01");
+        Assert.Contains(await _shore.DueAsync(_s.CompanyId, _s.VesselId, today, includeOfficeOnly: true), r => r.Type.Code == "TP01");
+
+        // The office starts a form for the vessel by hand; it is marked as filled ashore, and a voyage form needs no schedule.
+        var byHand = await _shore.StartAsync(_s.CompanyId, _s.VesselId, voyage.Id, Today, _s.User);
+        Assert.True(byHand.FilledAshore);
+        var own = await _shore.StartAsync(_s.CompanyId, _s.VesselId, office.Id, Today, _s.User);
+        Assert.True(own.OfficeOnly);
+        await _s.SettleUntilQuietAsync();
+        Assert.False(await OnVessel(db => db.FormEntries.AnyAsync(e => e.Id == own.Id)));                  // it never leaves the office
+        Assert.True(await OnVessel(db => db.FormEntries.AnyAsync(e => e.Id == byHand.Id)));
+
+        // A submitted monthly form for this month moves it down the list.
+        await SubmittedAsync(monthly, Today);
+        var after = await _reports.FleetDueAsync(_s.CompanyId, today);
+        Assert.NotEqual(FormDueStatus.Overdue, after.Single(r => r.Due.Type.Code == "PM05").Due.Due.Status);
     }
 
     [Fact]

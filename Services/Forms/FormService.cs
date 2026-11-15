@@ -211,19 +211,19 @@ public class FormService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>The form types that apply to a vessel, each with the version a new entry would be filled on (the highest published one). Forms with no published version are left out.</summary>
-    public async Task<List<(FormType Type, FormVersion Version)>> ApplicableAsync(Guid companyId, Guid vesselId)
+    public async Task<List<(FormType Type, FormVersion Version)>> ApplicableAsync(Guid companyId, Guid vesselId, bool includeOfficeOnly = false)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        return await ApplicableAsync(db, companyId, vesselId);
+        return await ApplicableAsync(db, companyId, vesselId, includeOfficeOnly);
     }
 
-    private static async Task<List<(FormType Type, FormVersion Version)>> ApplicableAsync(ChandleryDbContext db, Guid companyId, Guid vesselId)
+    private static async Task<List<(FormType Type, FormVersion Version)>> ApplicableAsync(ChandleryDbContext db, Guid companyId, Guid vesselId, bool includeOfficeOnly = false)
     {
         var vessel = await db.Vessels.AsNoTracking().Where(v => v.Id == vesselId && v.CompanyId == companyId).Select(v => new { v.GroupId }).FirstOrDefaultAsync();
         if (vessel is null) return [];
         var chain = await GroupChainAsync(db, vessel.GroupId);
-        var types = (await db.FormTypes.AsNoTracking().Where(t => t.CompanyId == companyId && t.IsActive && !t.OfficeOnly).OrderBy(t => t.Code).ToListAsync())
+        var types = (await db.FormTypes.AsNoTracking().Where(t => t.CompanyId == companyId && t.IsActive && (includeOfficeOnly || !t.OfficeOnly)).OrderBy(t => t.Code).ToListAsync())
             .Where(t => FormApplicability.AppliesTo(t.AppliesToGroups, t.AppliesToVessels, vesselId, chain)).ToList();
         var ids = types.Select(t => t.Id).ToList();
         var published = (await db.FormVersions.AsNoTracking().Where(v => ids.Contains(v.FormTypeId) && v.Status == FormVersionStatus.Published).ToListAsync())
@@ -232,11 +232,11 @@ public class FormService(IDbContextFactory<ChandleryDbContext> factory)
     }
 
     /// <summary>What is due for a vessel, form by form, worked out by <see cref="FormSchedule"/> from the entries that have been submitted.</summary>
-    public async Task<List<FormDueRow>> DueAsync(Guid companyId, Guid vesselId, DateOnly today)
+    public async Task<List<FormDueRow>> DueAsync(Guid companyId, Guid vesselId, DateOnly today, bool includeOfficeOnly = false)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
-        var applicable = await ApplicableAsync(db, companyId, vesselId);
+        var applicable = await ApplicableAsync(db, companyId, vesselId, includeOfficeOnly);
         var typeIds = applicable.Select(a => a.Type.Id).ToList();
         var dates = (await db.FormEntries.AsNoTracking().Where(e => e.VesselId == vesselId && typeIds.Contains(e.FormTypeId) && e.SubmissionCount > 0).Select(e => new { e.FormTypeId, e.FormDate }).ToListAsync())
             .GroupBy(e => e.FormTypeId).ToDictionary(g => g.Key, g => g.Select(e => DateOnly.FromDateTime(e.FormDate)).ToList());

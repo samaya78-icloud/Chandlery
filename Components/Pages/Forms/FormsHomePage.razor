@@ -1,4 +1,4 @@
-@page "/forms"
+﻿@page "/forms"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -9,6 +9,7 @@
 
 <PageHeader Eyebrow="Forms" Title="Forms" Subtitle="What is due, what is still to finish, and what has been sent.">
     <Actions>
+        @if (!NodeContext.Current.IsVessel) { <a href="/forms/due" class="btn btn-secondary">Due across the fleet</a> }
         @if (_isAdmin) { <a href="/forms/types" class="btn btn-secondary">Design forms</a> }
     </Actions>
 </PageHeader>
@@ -58,11 +59,14 @@ else
                 @foreach (var row in _due)
                 {
                     <tr class="border-b border-line/40">
-                        <td class="px-4 py-2"><span class="font-mono text-xs font-semibold">@row.Type.Code</span> <span class="ml-1">@row.Type.Title</span></td>
+                        <td class="px-4 py-2"><span class="font-mono text-xs font-semibold">@row.Type.Code</span> <span class="ml-1">@row.Type.Title</span>@if (row.Type.OfficeOnly) { <span class="chip chip-plain ml-2" data-tone="neutral">office only</span> }</td>
                         <td class="text-xs text-muted">@FormTypesPage.PeriodicityName(row.Type.Periodicity)</td>
                         <td><StatusChip Value="@row.Due.Status" />@if (row.Due.MissedPeriods > 0) { <span class="ml-2 text-xs text-rose-700">@row.Due.MissedPeriods missed</span> }</td>
-                        <td class="text-xs text-muted">@(row.Due.DueOn?.ToString("dd MMM yyyy") ?? "—")</td>
-                        <td class="px-4 py-2 text-right"><button class="btn btn-primary btn-sm" @onclick="() => StartAsync(row)" disabled="@_busy">Start</button></td>
+                        <td class="text-xs text-muted">@(row.Due.DueOn?.ToString("dd MMM yyyy") ?? (row.Due.Status == FormDueStatus.NotScheduled ? "by hand" : "—"))</td>
+                        <td class="px-4 py-2 text-right">
+                            @if (ToFinish.FirstOrDefault(r => r.Entry.FormTypeId == row.Type.Id) is { } open) { <a href="/forms/entry/@open.Entry.Id" class="btn btn-secondary btn-sm">Continue</a> }
+                            else { <button class="btn btn-primary btn-sm" @onclick="() => StartAsync(row)" disabled="@_busy">Start</button> }
+                        </td>
                     </tr>
                 }
                 @if (_due.Count == 0) { <tr><td colspan="5" class="px-4 py-4 text-muted">No form has been published for this vessel yet.</td></tr> }
@@ -102,7 +106,7 @@ else
     private List<FormDueRow> _due = [];
     private List<FormEntryRow> _entries = [];
 
-    private List<FormEntryRow> ToFinish => _entries.Where(r => r.Status is FormStatus.Draft or FormStatus.Returned && !r.Entry.OfficeOnly).ToList();
+    private List<FormEntryRow> ToFinish => _entries.Where(r => r.Status is FormStatus.Draft or FormStatus.Returned).ToList();
 
     protected override async Task OnInitializedAsync()
     {
@@ -117,7 +121,7 @@ else
 
     private async Task LoadAsync()
     {
-        _due = await Svc.DueAsync(_companyId, _vesselId, DateOnly.FromDateTime(DateTime.UtcNow));
+        _due = await Svc.DueAsync(_companyId, _vesselId, DateOnly.FromDateTime(DateTime.UtcNow), includeOfficeOnly: !NodeContext.Current.IsVessel);
         _entries = (await Svc.ListAsync(_companyId, _vesselId)).Take(60).ToList();
     }
 
