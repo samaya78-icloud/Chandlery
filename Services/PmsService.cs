@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -364,6 +364,8 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
             IsImported = input.IsImported, AuthorUserId = actor.UserId, AuthorName = actor.Name, At = DateTime.UtcNow,
         };
         db.JobCompletions.Add(completion);
+        if (!input.IsImported)
+            await ChatService.NoteAsync(db, companyId, ChatModules.PmsJob, job.Id, job.VesselId, $"Done on {completion.DoneDate:dd MMM yyyy} by {completion.PerformedBy}" + (byInspection ? " (by tank inspection)" : "") + (completion.Comments == "" ? "" : $": {completion.Comments}"));
         await db.SaveChangesAsync();
         await PmsProjection.RefreshJobAsync(db, job.Id);
         return completion;
@@ -385,6 +387,7 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
             Note = (note ?? "").Trim(), AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.JobVerifications.Add(verification);
+        await ChatService.NoteAsync(db, companyId, ChatModules.PmsJob, job.Id, job.VesselId, $"Completion verified by {actor.Name}" + (verification.Note == "" ? "" : $": {verification.Note}"));
         await db.SaveChangesAsync();
         return verification;
     }
@@ -489,6 +492,7 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
             LastDoneAtRequest = job.LastDoneDate, Reason = reason.Trim(), IsCritical = job.IsCritical, RiskAssessmentId = riskAssessmentId, RiskAssessmentLabel = riskLabel, RequestedByName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.JobDeferralRequests.Add(request);
+        await ChatService.NoteAsync(db, companyId, ChatModules.PmsJob, jobId, job.VesselId, $"{actor.Name} asked to put the job off from {request.CurrentDueDate:dd MMM yyyy} to {requested:dd MMM yyyy}: {request.Reason}");
         await db.SaveChangesAsync();
         return request;
     }
@@ -533,6 +537,9 @@ public class PmsService(IDbContextFactory<ChandleryDbContext> factory)
             DecidedByName = actor.Name, DecidedByRole = role, IsCritical = request.IsCritical, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.JobDeferralDecisions.Add(decision);
+        await ChatService.NoteAsync(db, companyId, ChatModules.PmsJob, job.Id, request.VesselId, approve
+            ? $"Deferral approved by {actor.Name} ({role}) until {granted:dd MMM yyyy}" + (decision.Comment == "" ? "" : $": {decision.Comment}")
+            : $"Deferral refused by {actor.Name} ({role}): {decision.Comment}");
         await db.SaveChangesAsync();
         await PmsProjection.RefreshJobAsync(db, job.Id);
         return decision;

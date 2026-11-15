@@ -1,7 +1,8 @@
-@page "/supplier/rfqs"
+﻿@page "/supplier/rfqs"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject ChatService Chat
 @inject NavigationManager Navigation
 
 <PageTitle>RFQs · Chandlery</PageTitle>
@@ -67,7 +68,7 @@ else
                 {
                     var rfqId = row.Rfq.Id;
                     <tr class="cursor-pointer border-b border-slate-50 last:border-0 hover:bg-slate-50" @onclick='() => Navigation.NavigateTo($"/supplier/rfqs/{rfqId}")'>
-                        <td class="px-4 py-3 font-medium text-slate-800">@row.Rfq.RfqNumber</td>
+                        <td class="px-4 py-3 font-medium text-slate-800">@row.Rfq.RfqNumber @if (_unread.GetValueOrDefault(rfqId) > 0) { <span class="chip" data-tone="warning">@_unread[rfqId] new</span> }</td>
                         <td class="px-4 py-3 text-slate-600">@row.Rfq.Vessel</td>
                         <td class="px-4 py-3 text-slate-600">@row.Rfq.Type</td>
                         <td class="px-4 py-3 text-slate-600">@row.Rfq.CreatedDate.ToString("dd-MMM-yyyy")</td>
@@ -119,14 +120,21 @@ else
     {
         var authState = await AuthStateTask!;
         _supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _actor = Actor.From(authState.User);
 
         var supplier = await Procurement.GetSupplierAsync(_supplierId);
         _emails = supplier?.NotificationEmails ?? "";
         await Load();
     }
 
-    private async Task Load() =>
+    private Dictionary<Guid, int> _unread = new();
+    private Actor _actor = Actor.System;
+
+    private async Task Load()
+    {
         _page = await Procurement.GetSupplierRfqPageAsync(_supplierId, _tab, _search, _pageNo, PageSize);
+        _unread = await Chat.SupplierUnreadAsync(_actor, _supplierId, ChatModules.Rfq, _page.Rows.Select(r => r.Rfq.Id));
+    }
 
     private async Task SelectTab(SupplierRfqTab tab)
     {

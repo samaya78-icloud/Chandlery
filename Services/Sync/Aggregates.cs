@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Text.Json.Nodes;
 using Chandlery.Data;
 using Chandlery.Models;
@@ -68,6 +68,8 @@ public static class Aggregates
         new(nameof(ProjectLink), typeof(ProjectLink)),
         new(nameof(ProjectItemRequest), typeof(ProjectItemRequest)),
         new(nameof(ProjectItemDecision), typeof(ProjectItemDecision)),
+        new(nameof(ChatMessage), typeof(ChatMessage)),
+        new(nameof(FileAttachment), typeof(FileAttachment)),
     ];
 
     /// <summary>Documents that are history: never changed or removed once written (a task only in the columns each side works out for itself).</summary>
@@ -75,6 +77,7 @@ public static class Aggregates
         || clr == typeof(RunningHoursReading) || clr == typeof(JobCompletion) || clr == typeof(JobVerification)
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
+        || clr == typeof(ChatMessage) || clr == typeof(FileAttachment)
         || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation) || clr == typeof(IncidentExposure) || clr == typeof(DrillComment) || clr == typeof(MeetingComment) || clr == typeof(PermitComment)
         || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink) || clr == typeof(ProjectItemRequest) || clr == typeof(ProjectItemDecision)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
@@ -152,6 +155,8 @@ public static class Aggregates
         ProjectLink pl => pl.OwnerStage,
         ProjectItemRequest pq => pq.OwnerStage,
         ProjectItemDecision pd => pd.OwnerStage,
+        ChatMessage cm => cm.OwnerStage,
+        FileAttachment fa => fa.OwnerStage,
         _ => SyncStages.Office,
     };
 
@@ -200,6 +205,8 @@ public static class Aggregates
         else if (root is ProjectLink projectLink) projectLink.OwnerStage = stage;
         else if (root is ProjectItemRequest itemRequest) itemRequest.OwnerStage = stage;
         else if (root is ProjectItemDecision itemDecision) itemDecision.OwnerStage = stage;
+        else if (root is ChatMessage chatMessage) chatMessage.OwnerStage = stage;
+        else if (root is FileAttachment fileAttachment) fileAttachment.OwnerStage = stage;
     }
 
     /// <summary>True when the only changes to this saved root are columns each side keeps for itself.</summary>

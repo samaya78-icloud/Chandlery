@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -182,6 +182,7 @@ public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext>
         a.SubmissionCount++;
         a.SubmittedAt = DateTime.UtcNow;
         (a.HighestResidualFactor, a.HighestResidualBand) = RaChecks.HighestResidual(a.Hazards);
+        await ChatService.NoteAsync(db, companyId, ChatModules.RiskAssessment, a.Id, a.VesselId, $"{(a.SubmissionCount == 1 ? "Submitted" : "Submitted again")} by {actor.Name} for sign-off");
         await db.SaveChangesAsync();
         return await FollowUpAsync(db, companyId, a, actor);
     }
@@ -211,6 +212,13 @@ public partial class RiskAssessmentService(IDbContextFactory<ChandleryDbContext>
             Comment = (comment ?? "").Trim(), ReviewerName = actor.Name, ReviewerRank = (rank ?? "").Trim(), AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.RaSignOffs.Add(signOff);
+        await ChatService.NoteAsync(db, companyId, ChatModules.RiskAssessment, a.Id, a.VesselId,
+            decision switch
+            {
+                RaDecision.Started => $"Review started by {actor.Name}",
+                RaDecision.Signed => $"Signed by {actor.Name}" + (signOff.Comment == "" ? "" : $": {signOff.Comment}"),
+                _ => $"Returned to its writer by {actor.Name}: {signOff.Comment}",
+            });
         await db.SaveChangesAsync();
         if (decision == RaDecision.Signed) await RemindAsync(db, companyId, a, signOff.At, actor);
         return signOff;

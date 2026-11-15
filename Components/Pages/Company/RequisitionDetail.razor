@@ -1,4 +1,4 @@
-@page "/company/requisitions/{RequisitionId:guid}"
+﻿@page "/company/requisitions/{RequisitionId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -237,6 +237,10 @@ else if (_reqn is not null)
             </button>
         </div>
     }
+
+    <div class="mb-6 print:hidden">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.Requisition" RecordId="_reqn.Id" VesselId="_reqn.VesselId" Title="Conversation" />
+    </div>
 
     <AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.Requisition" EntityId="_reqn.Id" Version="_auditVersion" />
 }

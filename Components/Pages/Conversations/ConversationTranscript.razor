@@ -1,0 +1,90 @@
+﻿@page "/conversations/transcript/{ModuleType}/{RecordId:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject ChatService Chat
+
+<PageTitle>Conversation transcript · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_threads.Count == 0)
+{
+    <EmptyState Title="Nothing to print" Message="There are no messages on this record that you may read." />
+}
+else
+{
+    <div class="mb-4 flex items-center gap-3 print:hidden">
+        <h1 class="font-display text-xl font-extrabold text-ink">Conversation transcript</h1>
+        <button class="btn btn-secondary ml-auto" onclick="window.print()">Print or save as PDF</button>
+    </div>
+
+    <div class="space-y-6 text-sm">
+        <header>
+            <p class="text-xs uppercase tracking-wide text-muted">@ChatModules.Label(ModuleType)</p>
+            <h2 class="font-display text-lg font-extrabold text-ink">@_label</h2>
+            <p class="text-xs text-muted">Printed @DateTime.Now.ToString("dd MMM yyyy HH:mm") by @_actor.Name</p>
+        </header>
+
+        @foreach (var thread in _threads)
+        {
+            <section>
+                @if (thread.Title.Length > 0) { <h3 class="mb-2 font-semibold text-ink">@thread.Title</h3> }
+                <ol class="space-y-2">
+                    @foreach (var item in thread.View.Items)
+                    {
+                        var m = item.Message;
+                        <li class="break-inside-avoid border-l-2 border-line pl-3">
+                            @if (m.Kind == ChatKind.System)
+                            {
+                                <span class="text-xs text-muted">@item.Body · @m.At.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
+                            }
+                            else
+                            {
+                                <div class="text-xs text-muted"><span class="font-semibold text-ink">@m.AuthorName</span> · @m.At.ToLocalTime().ToString("dd MMM yyyy HH:mm")@(item.Edited && !item.Removed ? " · edited" : "")@(m.Channel == ChatChannel.Internal ? "" : " · " + ChatRules.ChannelLabel(m.Channel).Split(" (")[0])</div>
+                                <p class="whitespace-pre-line text-ink-2">@(item.Removed ? (item.RemovedByAdmin ? "Message removed by an administrator" : "Message removed") : item.Body)</p>
+                                @if (!item.Removed && item.Files is { Count: > 0 } files)
+                                {
+                                    <p class="text-xs text-muted">Attached: @string.Join(", ", files.Select(f => f.FileName))</p>
+                                }
+                            }
+                        </li>
+                    }
+                </ol>
+            </section>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string ModuleType { get; set; } = "";
+    [Parameter] public Guid RecordId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Thread(string Title, ChatThreadView View);
+
+    private bool _loaded;
+    private Actor _actor = Actor.System;
+    private string _label = "";
+    private List<Thread> _threads = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        var companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        try
+        {
+            _label = await Chat.LabelAsync(companyId, _actor, ModuleType, RecordId);
+            foreach (var topic in await Chat.TopicsAsync(companyId, _actor, ModuleType, RecordId))
+            {
+                var view = await Chat.ThreadAsync(companyId, _actor, ModuleType, RecordId, topic);
+                if (view.Items.Count > 0) _threads.Add(new Thread(await Chat.TopicTitleAsync(topic), view));
+            }
+        }
+        catch (InvalidOperationException) { _threads = []; }
+        _loaded = true;
+    }
+}

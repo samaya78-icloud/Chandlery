@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -329,6 +329,10 @@ public class ApprovalService(IDbContextFactory<ChandleryDbContext> factory)
                 $"APPROVED ({levelNames.Name(current)}){commentText}; now waiting for {levelNames.Name(CurrentLevel(approvals)!.Value)}");
         }
 
+        await ChatService.NoteAsync(db, companyId, ChatModules.PurchaseOrder, po.Id, po.VesselId,
+            !approve ? $"Rejected ({levelNames.Name(current)}){commentText}"
+            : po.Status == PoStatus.Approved ? $"Approved ({levelNames.Name(current)}); fully approved"
+            : $"Approved ({levelNames.Name(current)}); waiting for {levelNames.Name(CurrentLevel(approvals)!.Value)}");
         await db.SaveChangesAsync();
     }
 }

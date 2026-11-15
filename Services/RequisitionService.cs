@@ -1,4 +1,4 @@
-using Chandlery.Services.Sync;
+﻿using Chandlery.Services.Sync;
 using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
@@ -261,6 +261,7 @@ public class RequisitionService(IDbContextFactory<ChandleryDbContext> factory, A
 
         requisition.Status = RequisitionStatus.Cancelled;
         AuditLog.Add(db, companyId, AuditEntityTypes.Requisition, requisition.Id, actor, "CANCELLED Requisition");
+        await ChatService.NoteAsync(db, companyId, ChatModules.Requisition, requisition.Id, requisition.VesselId, $"Requisition cancelled by {actor.Name}");
         await db.SaveChangesAsync();
     }
 }
