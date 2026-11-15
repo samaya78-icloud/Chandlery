@@ -15,7 +15,7 @@ public sealed record ChatThreadSummary(ChatItem? Last, int Unread, int UnreadMen
 public sealed record ChatPerson(Guid UserId, string Name);
 
 /// <summary>One line of a thread as it reads now, after edits and removals.</summary>
-public sealed record ChatItem(ChatMessage Message, string Body, bool Edited, bool Removed, bool RemovedByAdmin, string RedactReason, bool NeedsReply, bool Mine, IReadOnlyList<string> History, bool FromSupplier = false);
+public sealed record ChatItem(ChatMessage Message, string Body, bool Edited, bool Removed, bool RemovedByAdmin, string RedactReason, bool NeedsReply, bool Mine, IReadOnlyList<string> History, bool FromSupplier = false, IReadOnlyList<FileView>? Files = null);
 
 public sealed record ChatThreadView(IReadOnlyList<ChatItem> Items, bool Resolved, DateTime? ResolvedAt, int Unread, int NeedingReply);
 

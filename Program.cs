@@ -54,6 +54,7 @@ builder.Services.AddScoped<RestFleetService>();
 builder.Services.AddScoped<RestCapacityService>();
 builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<ChatService>();
+builder.Services.AddScoped<FileAttachmentService>();
 builder.Services.AddScoped<DrillService>();
 builder.Services.AddScoped<MeetingService>();
 builder.Services.AddScoped<PermitService>();
@@ -655,6 +656,16 @@ app.MapGet("/files/attachments/{attachmentId:guid}", async (Guid attachmentId, b
     return download == true
         ? Results.File(found.Value.Content, found.Value.File.ContentType, found.Value.File.FileName)
         : Results.File(found.Value.Content, found.Value.File.ContentType);
+}).RequireAuthorization();
+
+// Files kept with a chat message: only a person who may read the message, and not once it is removed. Same safety headers as the other files.
+app.MapGet("/files/chat/{fileId:guid}", async (Guid fileId, bool? download, HttpContext http, ChatService chat) =>
+{
+    var file = await chat.OpenFileAsync(Actor.From(http.User), fileId);
+    if (file is null) return Results.NotFound();
+    http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    if (file.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
+    return download == true ? Results.File(file.Content, file.ContentType, file.FileName) : Results.File(file.Content, file.ContentType);
 }).RequireAuthorization();
 
 // Files kept with a project (a yard's quotation): only the office user of the company that owns them. Same safety headers as requisition files.

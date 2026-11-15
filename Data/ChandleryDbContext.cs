@@ -1,4 +1,4 @@
-using Chandlery.Services.Sync;
+﻿using Chandlery.Services.Sync;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -99,6 +99,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<IncidentInvestigation> IncidentInvestigations => Set<IncidentInvestigation>();
     public DbSet<IncidentExposure> IncidentExposures => Set<IncidentExposure>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<FileAttachment> FileAttachments => Set<FileAttachment>();
     public DbSet<ChatRead> ChatReads => Set<ChatRead>();
     public DbSet<IncidentCause> IncidentCauses => Set<IncidentCause>();
     public DbSet<IncidentSettings> IncidentSettingsRows => Set<IncidentSettings>();
@@ -1017,6 +1018,20 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasIndex(m => new { m.ModuleType, m.RecordId, m.At });
             b.HasIndex(m => new { m.VesselId, m.OwnerStage });
             b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<FileAttachment>(b =>
+        {
+            b.Property(f => f.OwnerType).HasMaxLength(40);
+            b.Property(f => f.FileName).HasMaxLength(200);
+            b.Property(f => f.ContentType).HasMaxLength(100);
+            b.Property(f => f.Sha256).HasMaxLength(64);
+            b.Property(f => f.UploadedByName).HasMaxLength(120);
+            b.Property(f => f.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(f => f.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(f => f.VesselId).OnDelete(DeleteBehavior.Restrict);   // no foreign key from OwnerId: a file can arrive before the record that owns it
+            b.HasIndex(f => new { f.OwnerType, f.OwnerId });
+            b.HasIndex(f => new { f.VesselId, f.OwnerStage });
+            b.HasQueryFilter(f => CurrentCompanyId == null || f.CompanyId == CurrentCompanyId);
         });
         modelBuilder.Entity<ChatRead>(b =>
         {

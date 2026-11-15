@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using Chandlery.Data;
 using Chandlery.Models;
 using Marine.Sync;
@@ -154,6 +154,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         JobDeferralDecision { IsCritical: true } => Lane.Urgent,
         TankInspection { HasBadRating: true, SubmissionCount: > 0 } => Lane.Urgent,                  // a Bad rating reaches the office at once
         Incident { IsUrgent: true, SubmittedAt: not null } => Lane.Urgent,                           // a serious report reaches the office at once
+        FileAttachment => Lane.Bulk,                // a photo never holds up the documents that matter
         ChatMessage chat when ChatRules.MentionsOffice(chat.Mentions) => Lane.Urgent,                // a message that names the office is not left behind routine documents
         WorklistEntry { Type: WorklistEntryType.Created or WorklistEntryType.Priority } entry when SaysUrgent(entry.Payload) => Lane.Urgent,
         _ => Lane.Transaction,
@@ -174,6 +175,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
         if (aggregate.Clr == typeof(PurchaseOrder)) return MasterData.ReadGuid(payload, nameof(PurchaseOrder.VesselId));
         if (aggregate.Clr == typeof(Rfq)) return MasterData.ReadGuid(payload, nameof(Rfq.VesselId));
         if (aggregate.Clr == typeof(WorklistTask)) return MasterData.ReadGuid(payload, nameof(WorklistTask.VesselId));
+        if (aggregate.Clr == typeof(FileAttachment)) return payload["KeepAshore"]?.GetValue<bool>() == true ? null : MasterData.ReadGuid(payload, nameof(FileAttachment.VesselId));   // a file follows its owner: office-only owners and records without a vessel stay ashore
         if (aggregate.Clr == typeof(ChatMessage)) return ChatRules.SyncVessel(MasterData.ReadGuid(payload, nameof(ChatMessage.VesselId)), ChatRules.ChannelOf(payload));   // office-only messages and records without a vessel stay ashore
         if (aggregate.Clr == typeof(MachineryItem) || aggregate.Clr == typeof(PlannedJob) || aggregate.Clr == typeof(RunningHoursReading) || aggregate.Clr == typeof(JobCompletion)
             || aggregate.Clr == typeof(JobDeferralRequest) || aggregate.Clr == typeof(JobDeferralDecision) || aggregate.Clr == typeof(PlanChangeRequest) || aggregate.Clr == typeof(PlanChangeDecision) || aggregate.Clr == typeof(MachinerySpare)
@@ -429,6 +431,7 @@ public sealed class SyncPublisher(IDbContextFactory<ChandleryDbContext> factory,
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.ProjectLinks.IgnoreQueryFilters().Where(l => l.VesselId == scope.VesselId && l.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.ProjectItemRequests.IgnoreQueryFilters().Where(r => r.VesselId == scope.VesselId && r.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.ProjectItemDecisions.IgnoreQueryFilters().Where(d => d.VesselId == scope.VesselId && d.OwnerStage == SyncStages.Office), ct);
+            queued += await BaselineOwnedAsync(db, hub, nodeId, db.FileAttachments.IgnoreQueryFilters().Where(f => f.VesselId == scope.VesselId && f.OwnerStage == SyncStages.Office && !f.KeepAshore), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.ChatMessages.IgnoreQueryFilters().Where(m => m.VesselId == scope.VesselId && m.OwnerStage == SyncStages.Office && m.Channel != ChatChannel.OfficeOnly), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.MachinerySpares.IgnoreQueryFilters().Where(m => m.VesselId == scope.VesselId && m.OwnerStage == SyncStages.Office), ct);
             queued += await BaselineOwnedAsync(db, hub, nodeId, db.RunningHoursReadings.IgnoreQueryFilters().Where(r => r.VesselId == scope.VesselId && r.OwnerStage == SyncStages.Office), ct);

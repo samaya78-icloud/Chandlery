@@ -45,6 +45,10 @@ else
                             {
                                 <div class="text-xs text-muted"><span class="font-semibold text-ink">@m.AuthorName</span> · @m.At.ToLocalTime().ToString("dd MMM yyyy HH:mm")@(item.Edited && !item.Removed ? " · edited" : "")@(m.Channel == ChatChannel.Internal ? "" : " · " + ChatRules.ChannelLabel(m.Channel).Split(" (")[0])</div>
                                 <p class="whitespace-pre-line text-ink-2">@(item.Removed ? (item.RemovedByAdmin ? "Message removed by an administrator" : "Message removed") : item.Body)</p>
+                                @if (!item.Removed && item.Files is { Count: > 0 } files)
+                                {
+                                    <p class="text-xs text-muted">Attached: @string.Join(", ", files.Select(f => f.FileName))</p>
+                                }
                             }
                         </li>
                     }

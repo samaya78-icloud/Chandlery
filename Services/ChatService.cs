@@ -5,7 +5,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Chandlery.Services;
 
 /// <summary>What a person writes: the record the conversation belongs to, which vessel that record belongs to (null when it has none), and the text.</summary>
-public sealed record ChatPost(string ModuleType, Guid RecordId, Guid? VesselId, ChatChannel Channel, string Body, string Topic = "", Guid? ReplyToId = null);
+/// <summary>A message to write. <paramref name="Files"/> are photos or PDFs kept with it (a message may be only files).</summary>
+public sealed record ChatPost(string ModuleType, Guid RecordId, Guid? VesselId, ChatChannel Channel, string Body, string Topic = "", Guid? ReplyToId = null, IReadOnlyList<PendingAttachment>? Files = null);
 
 /// <summary>One thread in a person's inbox: which record, how new it is, and what was said last.</summary>
 public sealed record ChatInboxRow(string ModuleType, Guid RecordId, string Topic, Guid? VesselId, string VesselName, string Label, string? Href, DateTime LastAt, string LastAuthor,
@@ -109,6 +110,8 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var message = New(db, companyId, who, post.ModuleType, post.RecordId, post.VesselId, TopicFor(who.Viewer, post.Topic), ChatKind.Message, post.Channel, body, null, post.ReplyToId,
             ChatRules.ParseMentions(body, who.Side == ChatSide.Supplier ? [] : await PeopleAsync(db, companyId)));
         db.ChatMessages.Add(message);
+        if (post.Files is { Count: > 0 } files)
+            FileAttachmentService.Add(db, companyId, post.VesselId, FileAttachmentService.ChatOwner, message.Id, post.Channel == ChatChannel.OfficeOnly, files, who.UserId, who.Name);
         await db.SaveChangesAsync();
         return message;
     }
@@ -117,7 +120,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
     {
         if (!ChatModules.All.Contains(post.ModuleType)) throw new InvalidOperationException("Unknown kind of record.");
         if (post.RecordId == Guid.Empty) throw new InvalidOperationException("Name the record the conversation is about.");
-        if (string.IsNullOrWhiteSpace(post.Body)) throw new InvalidOperationException("Write something first.");
+        if (string.IsNullOrWhiteSpace(post.Body) && post.Files is not { Count: > 0 }) throw new InvalidOperationException("Write something first.");
         if (post.Body.Trim().Length > ChatRules.MaxBodyLength) throw new InvalidOperationException($"A message is at most {ChatRules.MaxBodyLength} characters.");
         if (post.Topic.Trim().Length > 80) throw new InvalidOperationException("A topic is at most 80 characters.");
         if (who.Side == ChatSide.Vessel && post.VesselId is null) throw new InvalidOperationException("This record is not a vessel's.");
@@ -310,7 +313,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
             var info = records.GetValueOrDefault((g.Key.ModuleType, g.Key.RecordId));
             var label = (info?.Label ?? g.Key.ModuleType) + (g.Key.Topic.Length == 0 ? "" : ChatRules.SupplierOfTopic(g.Key.Topic) is { } supplierId ? $" · with {supplierNames.GetValueOrDefault(supplierId, "the supplier")}" : $" · {g.Key.Topic}");
             rows.Add(new ChatInboxRow(g.Key.ModuleType, g.Key.RecordId, g.Key.Topic, vessel, vessel is { } v ? vessels.GetValueOrDefault(v, "") : "", label, info?.Href, s.Last.Message.At,
-                s.Last.Message.Kind == ChatKind.System ? "" : s.Last.Message.AuthorName, s.Last.Body, s.Unread, s.UnreadMentions, s.WaitingForMe, s.Resolved));
+                s.Last.Message.Kind == ChatKind.System ? "" : s.Last.Message.AuthorName, s.Last.Body.Length == 0 ? "Sent an attachment" : s.Last.Body, s.Unread, s.UnreadMentions, s.WaitingForMe, s.Resolved));
         }
         return rows.OrderByDescending(r => r.LastAt).ToList();
     }
@@ -374,6 +377,26 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var reads = (await db.ChatReads.AsNoTracking().IgnoreQueryFilters().Where(r => r.UserId == userId && r.ModuleType == moduleType && r.Topic == topic && ids.Contains(r.RecordId))
             .Select(r => new { r.RecordId, r.LastReadAt }).ToListAsync()).ToDictionary(r => r.RecordId, r => r.LastReadAt);
         return messages.GroupBy(m => m.RecordId).Select(g => (g.Key, Count: g.Count(m => !reads.TryGetValue(g.Key, out var seen) || m.At > seen))).Where(x => x.Count > 0).ToDictionary(x => x.Key, x => x.Count);
+    }
+
+    /// <summary>
+    /// A file attached to a message, if this person may read that message and it has not been removed: the same rules as the words, so a photo on an office-only message,
+    /// on another supplier's thread or on an incident one may not read is never handed over. Null when there is nothing this person may open.
+    /// </summary>
+    public async Task<FileAttachment?> OpenFileAsync(Actor actor, Guid fileId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var file = await db.FileAttachments.AsNoTracking().IgnoreQueryFilters().FirstOrDefaultAsync(f => f.Id == fileId && f.OwnerType == FileAttachmentService.ChatOwner);
+        if (file is null) return null;
+        db.CurrentCompanyId = file.CompanyId;
+        ChatViewer viewer;
+        try { viewer = (await WhoAsync(db, file.CompanyId, actor)).Viewer; }
+        catch (InvalidOperationException) { return null; }
+        var message = await db.ChatMessages.AsNoTracking().FirstOrDefaultAsync(m => m.Id == file.OwnerId);
+        if (message is null || !ChatRules.Visible(message, viewer)) return null;
+        var thread = (await LoadAsync(db, file.CompanyId, message.ModuleType, message.RecordId, viewer)).Where(m => m.Topic == message.Topic).ToList();
+        var item = ChatRules.Replay(thread, viewer).Items.FirstOrDefault(i => i.Message.Id == message.Id);
+        return item is null || item.Removed ? null : file;
     }
 
     /// <summary>What a record is called in a conversation (its number and title), or the kind of record when it is not named.</summary>
@@ -533,7 +556,8 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         var view = ChatRules.Replay(thread, who.Viewer, read?.LastReadAt);
         var authors = view.Items.Select(i => i.Message.AuthorUserId).OfType<Guid>().Distinct().ToList();
         var fromSuppliers = authors.Count == 0 ? [] : (await db.Users.AsNoTracking().IgnoreQueryFilters().Where(u => authors.Contains(u.Id) && u.SupplierId != null).Select(u => u.Id).ToListAsync()).ToHashSet();
-        return view with { Items = view.Items.Select(i => i with { FromSupplier = i.Message.AuthorUserId is { } a && fromSuppliers.Contains(a) }).ToList() };
+        var files = await FileAttachmentService.ListAsync(db, FileAttachmentService.ChatOwner, view.Items.Where(i => !i.Removed).Select(i => i.Message.Id));
+        return view with { Items = view.Items.Select(i => i with { FromSupplier = i.Message.AuthorUserId is { } a && fromSuppliers.Contains(a), Files = files.GetValueOrDefault(i.Message.Id) }).ToList() };
     }
 
     /// <summary>The topics of a record that have messages the person can see, with the main thread (empty) first.</summary>

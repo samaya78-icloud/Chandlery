@@ -127,7 +127,7 @@ public static class VesselRules
         typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine), typeof(PoApproval), typeof(PurchaseOrder), typeof(PoLine),
         typeof(Incident), typeof(IncidentPerson), typeof(IncidentSupplement), typeof(IncidentEvent), typeof(IncidentExposure),
         typeof(Drill), typeof(DrillParticipant), typeof(DrillNote), typeof(Meeting), typeof(MeetingAttendee), typeof(MeetingItem), typeof(MeetingNote), typeof(Permit), typeof(PermitAnswer), typeof(PermitPerson), typeof(PermitGasReading), typeof(PermitEntry), typeof(PermitEvent),      // the office's drill types, overrides and comments are received, not written, onboard      // the office's investigations, causes and settings are received, not written, onboard
-        typeof(ChatMessage), typeof(ChatRead),      // conversations: each side writes its own messages; the read marks stay local
+        typeof(ChatMessage), typeof(ChatRead), typeof(FileAttachment),      // conversations: each side writes its own messages; the read marks stay local
         typeof(RestEntry), typeof(RestSignOff), typeof(RestBreachNote), typeof(VesselDayStatus), typeof(WorkArrangementSignOff),      // the office's WorkArrangementTable is received, not written, onboard
     ];
 

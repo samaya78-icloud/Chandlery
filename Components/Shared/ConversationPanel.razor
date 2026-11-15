@@ -68,7 +68,23 @@
                         }
                         else
                         {
-                            <p class="mt-1 whitespace-pre-line text-sm text-ink-2">@WithMentions(item.Body)</p>
+                            @if (item.Body.Length > 0) { <p class="mt-1 whitespace-pre-line text-sm text-ink-2">@WithMentions(item.Body)</p> }
+                            @if (item.Files is { Count: > 0 } attached)
+                            {
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                    @foreach (var f in attached)
+                                    {
+                                        @if (f.IsImage)
+                                        {
+                                            <a href="/files/chat/@f.Id" target="_blank" rel="noopener" title="@f.FileName"><img src="/files/chat/@f.Id" alt="@f.FileName" loading="lazy" class="max-h-40 rounded-lg border border-line" /></a>
+                                        }
+                                        else
+                                        {
+                                            <a href="/files/chat/@f.Id" target="_blank" rel="noopener" class="chip chip-plain" data-tone="neutral">@f.FileName · @FileSize(f.SizeBytes)</a>
+                                        }
+                                    }
+                                </div>
+                            }
                             <div class="mt-1 flex flex-wrap gap-x-3 text-xs">
                                 <button class="link" @onclick="() => StartReply(item)">Reply</button>
                                 @if (!item.NeedsReply && _viewer.Side != ChatSide.Supplier) { <button class="link" @onclick="() => NeedsReplyAsync(m.Id)">Needs a reply</button> }
@@ -91,6 +107,15 @@
         }
 
         <div class="space-y-2 border-t border-line pt-4 text-sm">
+            @if (_picked.Count > 0)
+            {
+                <ul class="flex flex-wrap gap-2 text-xs">
+                    @foreach (var file in _picked)
+                    {
+                        <li class="chip chip-plain" data-tone="neutral">@file.FileName · @FileSize(file.Data.Length) <button class="link ml-1" @onclick="() => _picked.Remove(file)">remove</button></li>
+                    }
+                </ul>
+            }
             @if (_replyTo is { } replying)
             {
                 <p class="flex items-center gap-2 text-xs text-muted">Replying to @replying.Message.AuthorName <button class="link" @onclick="() => _replyTo = null">cancel</button></p>
@@ -103,7 +128,10 @@
                         @foreach (var c in _channels) { <option value="@c">@ChatRules.ChannelLabel(c)</option> }
                     </select>
                 }
-                <button class="btn btn-primary" disabled="@(string.IsNullOrWhiteSpace(_text))" @onclick="SendAsync">Send</button>
+                <label class="btn btn-secondary btn-sm cursor-pointer">Attach
+                    <InputFile OnChange="PickAsync" multiple accept="@FileRules.AcceptList" class="hidden" />
+                </label>
+                <button class="btn btn-primary" disabled="@(string.IsNullOrWhiteSpace(_text) && _picked.Count == 0)" @onclick="SendAsync">Send</button>
                 @if (_viewer.Side == ChatSide.Supplier) { <span class="text-xs text-muted">Read by the buyer's office and vessel.</span> }
                 else if (OnlyChannel == ChatChannel.Shared) { <span class="text-xs text-muted">Everything here is read by the supplier.</span> }
             </div>
@@ -138,6 +166,7 @@
     private Guid? _editing, _redacting;
     private ChatItem? _replyTo;
     private string? _error;
+    private readonly List<PendingAttachment> _picked = [];
     private Timer? _timer;
     private bool _disposed, _started;
 
@@ -190,8 +219,9 @@
 
     private Task SendAsync() => Run(async () =>
     {
-        await Chat.PostAsync(CompanyId, Actor, new ChatPost(ModuleType, RecordId, VesselId, _channel, _text, Topic, _replyTo?.Message.Id));
+        await Chat.PostAsync(CompanyId, Actor, new ChatPost(ModuleType, RecordId, VesselId, _channel, _text, Topic, _replyTo?.Message.Id, _picked.ToList()));
         _text = "";
+        _picked.Clear();
         _replyTo = null;
     });
 
@@ -200,6 +230,29 @@
     private Task RedactAsync(Guid id) => Run(async () => { await Chat.RedactAsync(CompanyId, Actor, id, _reason); _redacting = null; });
     private Task NeedsReplyAsync(Guid id) => Run(() => Chat.NeedsReplyAsync(CompanyId, Actor, id));
     private Task ToggleResolvedAsync() => Run(() => Chat.SetResolvedAsync(CompanyId, Actor, ModuleType, RecordId, Topic, !_view!.Resolved));
+
+    /// <summary>Takes what the person chose: each file is read (a camera photo is large; it is shrunk when the message is sent) and checked at once, so a wrong file is refused here.</summary>
+    private async Task PickAsync(InputFileChangeEventArgs e)
+    {
+        _error = null;
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(FileRules.MaxPerOwner))
+            {
+                if (_picked.Count >= FileRules.MaxPerOwner) throw new InvalidOperationException($"You can attach up to {FileRules.MaxPerOwner} files to a message.");
+                await using var stream = file.OpenReadStream(FileRules.MaxPickedBytes);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                var data = memory.ToArray();
+                FileRules.Check(file.Name, data);
+                _picked.Add(new PendingAttachment { FileName = file.Name, Data = data });
+            }
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        catch (IOException) { _error = $"A file is larger than {FileRules.MaxPickedBytes / (1024 * 1024)} MB."; }
+    }
+
+    private static string FileSize(long bytes) => bytes >= 1_000_000 ? $"{bytes / 1_000_000d:0.0} MB" : $"{Math.Max(1, bytes / 1000)} KB";
 
     private void StartReply(ChatItem item) { _replyTo = item; _error = null; }
     private void StartRedact(Guid id) { _redacting = id; _reason = ""; _error = null; }
