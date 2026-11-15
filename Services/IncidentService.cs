@@ -287,6 +287,26 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
     }
 
     /// <summary>
+    /// Keeps a photo or a statement with a report, onboard, by whoever may write the report's text (the reporter, the Master). The bytes are in this device's file store already (see
+    /// <see cref="RecordFileService"/>); this adds the record, which travels with the report. Not on a closed or withdrawn report.
+    /// </summary>
+    public async Task<IncidentFile> AddFileAsync(Guid companyId, Guid incidentId, Actor actor, IncidentFile file)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        var incident = await db.Incidents.Include(i => i.Persons).Include(i => i.Supplements).Include(i => i.Files).FirstOrDefaultAsync(i => i.Id == incidentId && i.CompanyId == companyId) ?? throw new InvalidOperationException("Report not found.");
+        if (who.IsOffice) throw new InvalidOperationException("Files are kept with a report onboard, where the file is taken.");
+        if (await StatusOfAsync(db, incident) is IncidentStatus.Withdrawn or IncidentStatus.Closed) throw new InvalidOperationException("This report is closed or withdrawn.");
+        if (!CanEditText(who, incident)) throw new InvalidOperationException("Only the reporter or the Master adds to a report.");
+        if (incident.Files.Count >= RecordFileRules.MaxPerRecord) throw new InvalidOperationException($"A report keeps up to {RecordFileRules.MaxPerRecord} files.");
+        (file.Id, file.IncidentId, file.ByName, file.ByCrewId, file.At, file.HeldBy) = (Guid.CreateVersion7(), incident.Id, who.Name, who.Crew?.Id, DateTime.UtcNow, "Vessel");
+        db.IncidentFiles.Add(file);
+        await db.SaveChangesAsync();
+        return file;
+    }
+
+    /// <summary>
     /// The Master's review: the facts are complete, the severity is confirmed (and may be changed here), and the report goes to the office. After it the reporter's text is locked.
     /// </summary>
     public async Task<IncidentEvent> ReviewAsync(Guid companyId, Guid incidentId, Actor actor, string comment, (int Actual, int Potential, int Likelihood)? severity = null)
@@ -502,7 +522,7 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var who = await WhoAsync(db, companyId, actor);
-        var incident = await db.Incidents.AsNoTracking().Include(i => i.Persons).Include(i => i.Supplements).FirstOrDefaultAsync(i => i.Id == incidentId && i.CompanyId == companyId);
+        var incident = await db.Incidents.AsNoTracking().Include(i => i.Persons).Include(i => i.Supplements).Include(i => i.Files).FirstOrDefaultAsync(i => i.Id == incidentId && i.CompanyId == companyId);
         if (incident is null || !CanSee(who, incident)) return null;
 
         var events = await db.IncidentEvents.AsNoTracking().Where(e => e.IncidentId == incidentId).OrderBy(e => e.At).ThenBy(e => e.Id).ToListAsync();

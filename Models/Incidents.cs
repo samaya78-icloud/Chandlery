@@ -93,6 +93,7 @@ public class Incident
 
     public List<IncidentPerson> Persons { get; set; } = [];
     public List<IncidentSupplement> Supplements { get; set; } = [];
+    public List<IncidentFile> Files { get; set; } = [];
 }
 
 /// <summary>A person in a report. The name is kept as text beside the optional crew link, so removing a crew record never damages the history.</summary>

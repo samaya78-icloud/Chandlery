@@ -74,6 +74,8 @@ else
                 }
             </div>
 
+            <RecordFilesPanel Kind="permit" OwnerId="Id" CompanyId="_companyId" Files="p.Files" CanAdd="@(NodeContext.Current.IsVessel && _d.State is not (PermitState.Completed or PermitState.Cancelled or PermitState.Withdrawn))" Added="LoadAsync" />
+
             <div class="card p-4 text-sm">
                 <h2 class="mb-1 text-base font-semibold text-ink">1. Checklist</h2>
                 @if (!_d.Can.Answer) { <p class="mb-3 text-xs text-muted">@(_d.State == PermitState.Requested ? "Only the person in charge, an issuer or the Master answers the checklist." : "The checklist is as it was when the permit was issued.")</p> }
