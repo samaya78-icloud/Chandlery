@@ -1,7 +1,8 @@
-@page "/supplier/purchase-orders"
+﻿@page "/supplier/purchase-orders"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject ChatService Chat
 @inject DeliveryService Deliveries
 @inject DispatchService DispatchSvc
 
@@ -22,7 +23,7 @@ else
             <div class="card">
                 <div class="flex items-center justify-between border-b border-slate-100 p-4">
                     <div>
-                        <p class="font-semibold text-slate-800">@po.PoNumber</p>
+                        <p class="font-semibold text-slate-800">@po.PoNumber @if (_unread.GetValueOrDefault(po.Id) > 0) { <span class="chip" data-tone="warning">@_unread[po.Id] new</span> }</p>
                         <p class="text-xs text-slate-400">
                             @(po.IsSpot ? "Spot PO" : $"RFQ {rfq?.RfqNumber}")
                             @if (po.SupplierRef != "") { <span>&middot; Your ref @po.SupplierRef</span> }
@@ -99,6 +100,7 @@ else
     private Dictionary<Guid, DispatchView> _dispatch = new();
     private Guid _supplierId;
     private string _userName = "";
+    private Dictionary<Guid, int> _unread = new();
 
     private async Task Acknowledge(Guid poId)
     {
@@ -113,6 +115,7 @@ else
         _supplierId = supplierId;
         _userName = authState.User.Identity?.Name ?? "";
         _pos = await Procurement.GetPurchaseOrdersForSupplierAsync(supplierId);
+        _unread = await Chat.SupplierUnreadAsync(Actor.From(authState.User), supplierId, ChatModules.PurchaseOrder, _pos.Select(p => p.Id));
         _dispatch = await DispatchSvc.ForSupplierAsync(supplierId, _pos.Select(p => p.Id));
         _deliveriesByPo = await Deliveries.GetForSupplierPosAsync(supplierId, _pos.Select(p => p.Id));
 

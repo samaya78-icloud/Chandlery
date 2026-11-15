@@ -1,4 +1,4 @@
-using Chandlery.Data;
+﻿using Chandlery.Data;
 using Chandlery.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -394,6 +394,8 @@ public partial class ProjectService(IDbContextFactory<ChandleryDbContext> factor
             ByUserId = actor.UserId, ByName = actor.Name, At = DateTime.UtcNow,
         };
         db.ProjectStatusEvents.Add(record);
+        await ChatService.NoteAsync(db, companyId, ChatModules.Project, id, project.VesselId,
+            $"Project {Past(kind)} by {actor.Name}" + (kind is ProjectEventKind.Started or ProjectEventKind.Completed ? $" ({record.Date:dd MMM yyyy})" : "") + (record.Note == "" ? "" : $": {record.Note}"));
         if (kind == ProjectEventKind.Approved)
         {
             db.ProjectBudgetApprovals.Add(new ProjectBudgetApproval
@@ -463,7 +465,7 @@ public partial class ProjectService(IDbContextFactory<ChandleryDbContext> factor
         db.CurrentCompanyId = companyId;
         RequireOffice(db);
         await RequireManagerAsync(db, companyId, actor);
-        var (_, status) = await LoadEditableAsync(db, companyId, projectId);
+        var (submitted, status) = await LoadEditableAsync(db, companyId, projectId);
         if (status != ProjectStatus.Planning) throw new InvalidOperationException("Only a project being planned can be submitted for approval.");
         if (await db.ProjectApprovalRequests.AnyAsync(r => r.ProjectId == projectId && r.Kind == ProjectRequestKind.Budget && r.Status == ProjectRequestStatus.Pending))
             throw new InvalidOperationException("This budget is already with the approvers.");
@@ -482,6 +484,7 @@ public partial class ProjectService(IDbContextFactory<ChandleryDbContext> factor
             request.ClosedAt = request.SubmittedAt;
             await RecordCoreAsync(db, companyId, projectId, ProjectEventKind.Approved, DateTime.UtcNow, "No approval rules apply to this budget.", actor, throughMatrix: true);
         }
+        else await ChatService.NoteAsync(db, companyId, ChatModules.Project, projectId, submitted.VesselId, $"Budget of {Money.Format(request.AmountUsd, "USD")} submitted for approval by {actor.Name}");
         await db.SaveChangesAsync();
         return request;
     }
@@ -637,6 +640,9 @@ public partial class ProjectService(IDbContextFactory<ChandleryDbContext> factor
             else
                 await ApplyVariationAsync(db, project, request);
         }
+        await ChatService.NoteAsync(db, companyId, ChatModules.Project, request.ProjectId, await db.Projects.AsNoTracking().Where(p => p.Id == request.ProjectId).Select(p => p.VesselId).FirstAsync(),
+            (request.Kind == ProjectRequestKind.Budget ? "Budget" : request.Kind == ProjectRequestKind.Extension ? "Extension" : "Variation") + " request " +
+            (!approve ? $"rejected by {actor.Name}: {comment}" : request.Status == ProjectRequestStatus.Approved ? $"approved by {actor.Name}" : $"approved by {actor.Name}; waiting for the next approver"));
         await db.SaveChangesAsync();
     }
 

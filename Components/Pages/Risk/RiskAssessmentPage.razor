@@ -1,4 +1,4 @@
-@page "/risk/{Id:guid}"
+﻿@page "/risk/{Id:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -230,6 +230,10 @@ else
     }
 
     <LinkedTasks CompanyId="_companyId" LinkType="riskassessment" TargetId="a.Id" />
+
+    <div class="mt-6">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.RiskAssessment" RecordId="a.Id" VesselId="a.VesselId" Title="Conversation" />
+    </div>
 }
 
 @code {

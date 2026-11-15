@@ -1,4 +1,4 @@
-@page "/supplier/purchase-orders/{PoId:guid}/document"
+﻿@page "/supplier/purchase-orders/{PoId:guid}/document"
 @attribute [Authorize(Roles = "SupplierAdmin,SupplierUser")]
 @rendermode InteractiveServer
 @inject PoDocumentService Documents
@@ -21,6 +21,10 @@ else if (_doc is not null)
     </PageHeader>
 
     <PoDocumentView Doc="_doc" />
+
+    <div class="mt-6 print:hidden">
+        <ConversationPanel CompanyId="_doc.Po.CompanyId" Actor="_actor" ModuleType="@ChatModules.PurchaseOrder" RecordId="_doc.Po.Id" VesselId="_doc.Po.VesselId" OnlyChannel="ChatChannel.Shared" Title="Questions and replies" />
+    </div>
 }
 
 @code {
@@ -28,12 +32,14 @@ else if (_doc is not null)
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
     private PoDocument? _doc;
+    private Actor _actor = Actor.System;
     private bool _loaded;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateTask!;
         var supplierId = Guid.Parse(authState.User.FindFirst("SupplierId")!.Value);
+        _actor = Actor.From(authState.User);
         _doc = await Documents.GetForSupplierAsync(supplierId, PoId);
         _loaded = true;
     }

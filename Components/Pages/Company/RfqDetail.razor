@@ -1,4 +1,4 @@
-@page "/company/rfqs/{RfqId:guid}"
+﻿@page "/company/rfqs/{RfqId:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
@@ -385,6 +385,18 @@ else
                     class="mt-3 btn btn-primary btn-sm">
                 Send to @_toInvite.Count supplier(s)
             </button>
+        </div>
+    }
+
+    <div class="mt-8 print:hidden">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.Rfq" RecordId="_rfq.Id" VesselId="_rfq.VesselId" Title="Conversation" />
+    </div>
+
+    @foreach (var invited in _rfq.InvitedSupplierIds)
+    {
+        <div class="mt-4 print:hidden">
+            <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.Rfq" RecordId="_rfq.Id" VesselId="_rfq.VesselId" Topic="@ChatRules.SupplierTopic(invited)"
+                               OnlyChannel="ChatChannel.Shared" Title="@($"With {_suppliersById.GetValueOrDefault(invited)?.Name ?? "the supplier"}")" />
         </div>
     }
 

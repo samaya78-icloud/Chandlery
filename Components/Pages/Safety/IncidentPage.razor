@@ -1,4 +1,4 @@
-@page "/incidents/{Id:guid}"
+﻿@page "/incidents/{Id:guid}"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -324,6 +324,13 @@ else
             @if (_notice is not null) { <div class="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">@_notice</div> }
         </div>
     </div>
+
+    @if (_d.Incident.SubmittedAt is not null)
+    {
+        <div class="mt-5 print:hidden">
+            <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.Incident" RecordId="_d.Incident.Id" VesselId="_d.Incident.VesselId" Title="Conversation" />
+        </div>
+    }
 }
 
 @code {
