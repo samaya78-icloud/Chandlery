@@ -55,11 +55,17 @@ public static class ImageShrinker
 {
     private const int KeepAsIsBytes = 350_000;
 
+    private static SKBitmap Decode(string fileName, byte[] data)
+    {
+        try { return SKBitmap.Decode(data) ?? throw new InvalidOperationException($"{fileName} cannot be read as a picture."); }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { throw new InvalidOperationException($"{fileName} cannot be read as a picture."); }   // a damaged file, or one that only looks like a picture
+    }
+
     public static (byte[] Data, string FileName, string ContentType) Shrink(string fileName, string contentType, byte[] data)
     {
         if (!FileRules.IsImage(contentType)) return (data, fileName, contentType);
 
-        using var bitmap = SKBitmap.Decode(data) ?? throw new InvalidOperationException($"{fileName} cannot be read as a picture.");
+        using var bitmap = Decode(fileName, data);
         var longest = Math.Max(bitmap.Width, bitmap.Height);
         if (contentType == "image/jpeg" && longest <= FileRules.LongestSidePixels && data.Length <= KeepAsIsBytes) return (data, fileName, contentType);
 
