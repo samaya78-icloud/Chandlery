@@ -10,7 +10,7 @@ One platform used by ship managers and their vessels. The **office (shore)** and
 |---|------|----------------|
 | 01 | [Platform foundation](01-platform-foundation.md) | Identity, numbering, ownership rules, shared services, module contract, deployment profiles, migration of today's Chandlery |
 | 02 | [Vessel groups and policy](02-vessel-groups-and-policy.md) | 3-level vessel groups, department/catalog permissions, onboard direct-purchase rules, scopes |
-| 03 | [Sync engine](03-sync-engine.md) | Standalone generic data and file sync, multi-database, satellite-aware transports, console |
+| 03 | [Sync engine](03-sync-engine.md) | Standalone generic data and file sync, multi-database, satellite-aware transports, console. Hardening plan as a standalone product: [03a](03a-sync-hardening-plan.md) (draft) |
 | 04 | [Chandlery onboard](04-chandlery-onboard.md) | Vessel-side requisitions, RFQs, POs, deliveries, and how they sync |
 | 05 | [Worklist](05-worklist.md) | Recorded tasks with progress history |
 | 06 | [Risk assessment](06-risk-assessment.md) | Templates, assessments, review cycle, risk matrix |
