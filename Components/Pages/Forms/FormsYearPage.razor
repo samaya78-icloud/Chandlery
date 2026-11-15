@@ -1,0 +1,87 @@
+@page "/forms/year"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject FormService Svc
+@inject FormReports Reports
+
+<PageTitle>Forms, the year · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Forms" Title="The year at a glance" Subtitle="For each form, how many were filled in each month, and the least settled state among them.">
+    <Actions><a href="@(NodeContext.Current.IsVessel ? "/forms" : "/forms/review")" class="btn btn-secondary">Back</a></Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Forms are switched off" Message="The module has not been switched on for any vessel." />
+}
+else
+{
+    <div class="mb-4 flex flex-wrap gap-3 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label class="text-xs text-muted">Vessel
+                <select class="select mt-1" @bind="_vesselId" @bind:after="LoadAsync">@foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }</select></label>
+        }
+        <label class="text-xs text-muted">Year
+            <select class="select mt-1" @bind="_year" @bind:after="LoadAsync">@foreach (var y in Enumerable.Range(DateTime.UtcNow.Year - 4, 5).Reverse()) { <option value="@y">@y</option> }</select></label>
+    </div>
+
+    <div class="card overflow-x-auto text-sm">
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-line/60 text-left text-xs text-muted">
+                    <th class="px-4 py-2">Form</th>
+                    @for (var m = 1; m <= 12; m++) { <th class="px-1 text-center">@System.Globalization.CultureInfo.InvariantCulture.DateTimeFormat.GetAbbreviatedMonthName(m)</th> }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _rows)
+                {
+                    <tr class="border-b border-line/40">
+                        <td class="px-4 py-2"><span class="font-mono text-xs font-semibold">@row.Type.Code</span> <span class="ml-1">@row.Type.Title</span></td>
+                        @foreach (var cell in row.Months)
+                        {
+                            <td class="px-1 text-center">
+                                @if (cell.Count > 0) { <span class="chip" data-tone="@Tone(cell.Worst)" title="@cell.Worst">@cell.Count</span> }
+                                else { <span class="text-muted">·</span> }
+                            </td>
+                        }
+                    </tr>
+                }
+                @if (_rows.Count == 0) { <tr><td colspan="13" class="px-4 py-4 text-muted">No form applies to this vessel yet.</td></tr> }
+            </tbody>
+        </table>
+    </div>
+    <p class="mt-2 text-xs text-muted">Green: all accepted. Blue: sent, waiting for the office. Amber: still being filled in. Red: sent back.</p>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private int _year = DateTime.UtcNow.Year;
+    private bool _loaded;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<FormYearRow> _rows = [];
+
+    private static string Tone(FormStatus? s) => s switch
+    {
+        FormStatus.Returned => "danger", FormStatus.Draft => "warning", FormStatus.Submitted or FormStatus.InReview => "info", _ => "success",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) { _vesselId = _vessels[0].Id; await LoadAsync(); }
+        _loaded = true;
+    }
+
+    private async Task LoadAsync() => _rows = await Reports.YearAsync(_companyId, _vesselId, _year);
+}

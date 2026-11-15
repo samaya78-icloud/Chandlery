@@ -1,0 +1,123 @@
+@page "/forms/review"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject FormService Svc
+@inject FormReports Reports
+
+<PageTitle>Forms to review · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Forms" Title="Submitted forms" Subtitle="What the vessels have sent, what is waiting for a decision, and the files to take away.">
+    <Actions>
+        <a href="/forms/year" class="btn btn-secondary">Year view</a>
+        @if (_isAdmin) { <a href="/forms/types" class="btn btn-secondary">Design forms</a> }
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Forms are switched off" Message="The module has not been switched on for any vessel." />
+}
+else
+{
+    <div class="card mb-4 grid gap-3 p-4 text-sm md:grid-cols-4">
+        <label class="text-xs text-muted">Vessel
+            <select class="select mt-1" @bind="_vessel" @bind:after="LoadAsync"><option value="">All vessels</option>@foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option>}</select></label>
+        <label class="text-xs text-muted">Form
+            <select class="select mt-1" @bind="_type" @bind:after="LoadAsync"><option value="">All forms</option>@foreach (var t in _types) { <option value="@t.Id">@t.Code · @t.Title</option>}</select></label>
+        <label class="text-xs text-muted">Department
+            <select class="select mt-1" @bind="_department" @bind:after="LoadAsync"><option value="">All</option>@foreach (var d in _departments) { <option value="@d">@d</option>}</select></label>
+        <label class="text-xs text-muted">State
+            <select class="select mt-1" @bind="_state" @bind:after="LoadAsync">
+                <option value="waiting">Waiting for review</option>
+                <option value="">Any submitted</option>
+                @foreach (var s in new[] { FormStatus.Submitted, FormStatus.InReview, FormStatus.Returned, FormStatus.Reviewed }) { <option value="@s">@s</option> }
+            </select></label>
+        <label class="text-xs text-muted">Year
+            <select class="select mt-1" @bind="_year" @bind:after="LoadAsync"><option value="0">Any</option>@foreach (var y in Years) { <option value="@y">@y</option>}</select></label>
+        <label class="text-xs text-muted">Month
+            <select class="select mt-1" @bind="_month" @bind:after="LoadAsync" disabled="@(_year == 0)">
+                <option value="0">Any</option>
+                @for (var m = 1; m <= 12; m++) { <option value="@m">@System.Globalization.CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(m)</option> }
+            </select></label>
+        <label class="text-xs text-muted md:col-span-2">Word in the reference, title or answers
+            <input class="input mt-1" @bind="_keyword" @bind:event="onchange" @bind:after="LoadAsync" placeholder="e.g. crankpin, No. 3, leak" /></label>
+    </div>
+
+    @if (_type != "")
+    {
+        <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+            <span class="text-xs text-muted">Take this form's entries away:</span>
+            <a class="btn btn-secondary btn-sm" href="@ExportLink("xlsx")">Excel</a>
+            <a class="btn btn-secondary btn-sm" href="@ExportLink("csv")">CSV</a>
+        </div>
+    }
+
+    <div class="card overflow-x-auto text-sm">
+        <table class="w-full">
+            <thead><tr class="border-b border-line/60 text-left text-xs text-muted"><th class="px-4 py-2">Reference</th><th>Vessel</th><th>Form</th><th>Date</th><th>Submitted</th><th>State</th><th>Exceptions</th></tr></thead>
+            <tbody>
+                @foreach (var row in _rows)
+                {
+                    <tr class="border-b border-line/40 hover:bg-surface-2">
+                        <td class="px-4 py-2"><a href="/forms/entry/@row.Entry.Id" class="link font-mono text-xs">@row.Entry.Code</a></td>
+                        <td>@row.Vessel</td>
+                        <td>@row.Entry.FormCode <span class="text-muted">@row.Entry.FormTitle</span></td>
+                        <td class="text-xs text-muted">@row.Entry.FormDate.ToString("dd MMM yyyy")</td>
+                        <td class="text-xs text-muted">@(row.Entry.SubmittedAt?.ToLocalTime().ToString("dd MMM HH:mm") ?? "—")</td>
+                        <td><StatusChip Value="@row.Status" /></td>
+                        <td>@if (row.Entry.ExceptionCount > 0) { <span class="chip" data-tone="warning">@row.Entry.ExceptionCount</span> }</td>
+                    </tr>
+                }
+                @if (_rows.Count == 0) { <tr><td colspan="7" class="px-4 py-4 text-muted">Nothing matches.</td></tr> }
+            </tbody>
+        </table>
+    </div>
+    @if (_rows.Count >= FormReports.MaxRows) { <p class="mt-2 text-xs text-muted">Showing the newest @FormReports.MaxRows. Narrow the list to see others.</p> }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private bool _loaded, _isAdmin;
+    private string _vessel = "", _type = "", _department = "", _state = "waiting", _keyword = "";
+    private int _year, _month;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<FormType> _types = [];
+    private List<string> _departments = [];
+    private List<FormReportRow> _rows = [];
+
+    private IEnumerable<int> Years => Enumerable.Range(DateTime.UtcNow.Year - 4, 5).Reverse();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _isAdmin = state.User.IsInRole("CompanyAdmin");
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0)
+        {
+            _types = await Svc.TypesAsync(_companyId);
+            _departments = await Reports.DepartmentsAsync(_companyId);
+            await LoadAsync();
+        }
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_year == 0) _month = 0;
+        var waiting = _state == "waiting";
+        FormStatus? status = !waiting && Enum.TryParse<FormStatus>(_state, out var s) ? s : null;
+        _rows = await Reports.SearchAsync(_companyId, new FormFilter(
+            Guid.TryParse(_vessel, out var vessel) ? vessel : null, Guid.TryParse(_type, out var type) ? type : null,
+            _department == "" ? null : _department, _year == 0 ? null : _year, _month == 0 ? null : _month, status, _keyword, waiting));
+    }
+
+    private string ExportLink(string ext) => $"/forms/export/{_type}.{ext}?{(Guid.TryParse(_vessel, out var v) ? "vessel=" + v + "&" : "")}{(_year == 0 ? "" : "year=" + _year)}";
+}

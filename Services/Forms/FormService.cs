@@ -15,7 +15,7 @@ public record FormEntryRow(FormEntry Entry, FormStatus Status);
 
 public record FormDueRow(FormType Type, FormVersion Version, FormDue Due);
 
-public record FormCounts(int Overdue, int DueSoon, int ToFinish);
+public record FormCounts(int Overdue, int DueSoon, int ToFinish, int ToReview = 0);
 
 /// <summary>
 /// Forms: the office designs a form type and publishes versions of it, a vessel starts an entry on the current version, fills it in, submits it, and the office
@@ -431,7 +431,20 @@ public class FormService(IDbContextFactory<ChandleryDbContext> factory)
             due += rows.Count(d => d.Due.Status == FormDueStatus.DueSoon);
             toFinish += (await ListAsync(companyId, vesselId)).Count(r => r.Status is FormStatus.Draft or FormStatus.Returned && !r.Entry.OfficeOnly);
         }
-        return new FormCounts(overdue, due, toFinish);
+        return new FormCounts(overdue, due, toFinish, await AwaitingReviewAsync(companyId));
+    }
+
+    /// <summary>Entries the vessels have submitted that the office has not yet accepted or returned (submitted, or review started).</summary>
+    public async Task<int> AwaitingReviewAsync(Guid companyId)
+    {
+        var vessels = (await EnabledVesselsAsync(companyId)).Select(v => v.Id).ToList();
+        if (vessels.Count == 0) return 0;
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var entries = await db.FormEntries.AsNoTracking().Where(e => e.CompanyId == companyId && vessels.Contains(e.VesselId) && e.SubmissionCount > 0).ToListAsync();
+        var ids = entries.Select(e => e.Id).ToList();
+        var reviews = (await db.FormReviews.AsNoTracking().Where(r => ids.Contains(r.EntryId)).ToListAsync()).ToLookup(r => r.EntryId);
+        return entries.Count(e => FormStatusRules.Of(e.SubmissionCount, reviews[e.Id]) is FormStatus.Submitted or FormStatus.InReview);
     }
 
     /// <summary>For a vessel's menu: the forms that are overdue plus the entries still to finish (drafts and those sent back).</summary>

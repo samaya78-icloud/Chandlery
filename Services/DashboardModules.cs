@@ -60,12 +60,14 @@ public class DashboardModuleService(
 
         if (await forms.CountsAsync(companyId, DateOnly.FromDateTime(DateTime.UtcNow)) is { } formCounts)
         {
-            modules.Add(new("forms", "Forms", "/forms",
-            [
+            var formStats = new List<ModuleStat>
+            {
                 new("Overdue", formCounts.Overdue.ToString("N0"), "/forms", Hot(formCounts.Overdue, "danger"), "Forms past their due date", formCounts.Overdue, "forms overdue"),
                 new("Due in 7 days", formCounts.DueSoon.ToString("N0"), "/forms", Hot(formCounts.DueSoon, "warning")),
                 new("To finish", formCounts.ToFinish.ToString("N0"), "/forms", Hot(formCounts.ToFinish, "warning"), "Drafts and those sent back", formCounts.ToFinish, "forms to finish"),
-            ]));
+            };
+            if (!isVessel) formStats.Add(new("To review", formCounts.ToReview.ToString("N0"), "/forms/review", Hot(formCounts.ToReview, "warning"), "Sent by the vessels, waiting for a decision", formCounts.ToReview, "forms to review"));
+            modules.Add(new("forms", "Forms", isVessel ? "/forms" : "/forms/review", formStats));
         }
 
         if (await tanks.CountsAsync(companyId) is { } t)

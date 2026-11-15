@@ -4,6 +4,8 @@
 @rendermode InteractiveServer
 @using System.Text.Json.Nodes
 @inject FormService Svc
+@inject FormReports Reports
+@inject NavigationManager Nav
 
 <PageTitle>@(_detail?.Entry.Code ?? "Form") · Chandlery</PageTitle>
 
@@ -22,7 +24,9 @@ else
 
     <PageHeader Eyebrow="@entry.Code" Title="@($"{entry.FormCode} · {entry.FormTitle}")" Subtitle="@($"Version {entry.VersionNumber} · {entry.FormDate:dd MMM yyyy}{(entry.FilledAshore ? " · filled ashore" : "")}")">
         <Actions>
-            <a href="/forms" class="btn btn-secondary">All forms</a>
+            <a href="@(_office ? "/forms/review" : "/forms")" class="btn btn-secondary">@(_office ? "Forms to review" : "All forms")</a>
+            @if (entry.SubmissionCount > 0) { <a href="/forms/entry/@entry.Id/pdf" target="_blank" class="btn btn-secondary">Print / PDF</a> }
+            @if (_detail.Status == FormStatus.Reviewed) { <button class="btn btn-secondary" @onclick="CorrectAsync" disabled="@_busy">Correct it</button> }
             @if (_editable)
             {
                 <button class="btn btn-secondary" @onclick="SaveNowAsync" disabled="@_busy">Save</button>
@@ -73,7 +77,57 @@ else
     {
         <div class="card mt-5 p-4 text-sm">
             <h2 class="mb-2 font-display text-base font-extrabold text-ink">Exceptions</h2>
-            <ul class="space-y-1 text-xs">@foreach (var e in check.Exceptions) { <li>@e.Message</li> }</ul>
+            <ul class="space-y-1 text-xs">
+                @foreach (var e in check.Exceptions)
+                {
+                    <li class="flex flex-wrap items-center gap-2">@e.Message
+                        @if (_office && entry.SubmissionCount > 0) { <button type="button" class="btn btn-ghost btn-sm" @onclick="() => RaiseFrom(e.Message)">Raise an action</button> }
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+
+    @if (_office && (_detail.Status is FormStatus.Submitted or FormStatus.InReview))
+    {
+        <div class="card mt-5 p-4 text-sm">
+            <h2 class="mb-2 font-display text-base font-extrabold text-ink">Review</h2>
+            <textarea class="textarea" rows="2" placeholder="Comment (needed to return it for correction)" @bind="_comment"></textarea>
+            <div class="mt-3 flex flex-wrap gap-2">
+                @if (_detail.Status == FormStatus.Submitted) { <button class="btn btn-secondary" @onclick="() => ReviewAsync(ReviewDecision.Started)" disabled="@_busy">Start review</button> }
+                <button class="btn btn-primary" @onclick="() => ReviewAsync(ReviewDecision.Accepted)" disabled="@_busy">Accept</button>
+                <button class="btn btn-secondary" @onclick="() => ReviewAsync(ReviewDecision.Returned)" disabled="@_busy">Return for correction</button>
+            </div>
+        </div>
+    }
+
+    @if (_office && entry.SubmissionCount > 0)
+    {
+        <div class="card mt-5 p-4 text-sm">
+            <h2 class="mb-2 font-display text-base font-extrabold text-ink">Action items</h2>
+            @if (_actions.Count == 0) { <p class="text-xs text-muted">No tasks have been raised from this form.</p> }
+            else
+            {
+                <ul class="mb-3 space-y-1">
+                    @foreach (var t in _actions)
+                    {
+                        <li class="flex flex-wrap items-center gap-2"><a href="/worklist/@t.Id" class="link font-mono font-semibold">@t.Code</a><span>@t.Title</span><StatusChip Value="@t.Status" /></li>
+                    }
+                </ul>
+            }
+            @if (_actionOpen)
+            {
+                <div class="grid gap-2 md:grid-cols-2">
+                    <input class="input md:col-span-2" placeholder="Title" @bind="_actionTitle" />
+                    <textarea class="textarea md:col-span-2" rows="2" placeholder="What has to be done" @bind="_actionText"></textarea>
+                    <label class="text-xs text-muted">Target date <input type="date" class="input mt-1" @bind="_actionTarget" /></label>
+                </div>
+                <div class="mt-3 flex gap-2">
+                    <button class="btn btn-primary btn-sm" @onclick="AddActionAsync" disabled="@_busy">Raise as a task</button>
+                    <button class="btn btn-ghost btn-sm" @onclick="() => _actionOpen = false">Cancel</button>
+                </div>
+            }
+            else { <button class="btn btn-secondary btn-sm" @onclick="() => RaiseFrom(string.Empty)">Raise an action</button> }
         </div>
     }
 
@@ -108,6 +162,12 @@ else
     private FormCheck? _check;
     private DateTime _date;
     private DateTime? _savedAt;
+    private bool _office;
+    private string _comment = "";
+    private List<WorklistTask> _actions = [];
+    private bool _actionOpen;
+    private string _actionTitle = "", _actionText = "";
+    private DateTime? _actionTarget;
 
     /// <summary>A draft or returned entry, held by this side, can be changed.</summary>
     private bool _editable => _detail is { } d && FormStatusRules.IsEditable(d.Status) && d.Entry.OwnerStage == (NodeContext.Current.IsVessel ? SyncStages.Vessel : SyncStages.Office);
@@ -117,6 +177,7 @@ else
         var state = await AuthStateTask!;
         _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(state.User);
+        _office = !NodeContext.Current.IsVessel;
         await LoadAsync();
         _loaded = true;
     }
@@ -128,6 +189,60 @@ else
         _values = JsonNode.Parse(_detail.Entry.Values) as JsonObject ?? [];
         _date = _detail.Entry.FormDate;
         _check = _detail.Definition is null ? null : FormValueRules.Check(_detail.Definition, _values, DateOnly.FromDateTime(DateTime.UtcNow), false);
+        _actions = _office && _detail.Entry.SubmissionCount > 0 ? await Reports.ActionsAsync(_companyId, Id) : [];
+    }
+
+    private async Task ReviewAsync(ReviewDecision decision)
+    {
+        _error = _notice = null;
+        _busy = true;
+        try
+        {
+            await Svc.ReviewAsync(_companyId, Id, decision, _comment, _actor);
+            _comment = "";
+            await LoadAsync();
+            _notice = decision switch { ReviewDecision.Started => "Review started.", ReviewDecision.Accepted => "Accepted. The form is locked.", _ => "Returned to the vessel for correction." };
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task CorrectAsync()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            var entry = _detail!.Entry;
+            var corrected = await Svc.StartAsync(_companyId, entry.VesselId, entry.FormTypeId, DateTime.UtcNow.Date > entry.FormDate ? entry.FormDate : DateTime.UtcNow.Date, _actor, entry.Id);
+            Nav.NavigateTo($"/forms/entry/{corrected.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void RaiseFrom(string text)
+    {
+        _actionOpen = true;
+        _actionTitle = text.Length > 90 ? text[..90] : text;
+        _actionText = text;
+    }
+
+    private async Task AddActionAsync()
+    {
+        _error = _notice = null;
+        _busy = true;
+        try
+        {
+            var task = await Reports.AddActionAsync(_companyId, Id, new NewFormAction(_actionTitle, _actionText, Target: _actionTarget), _actor);
+            _actionOpen = false;
+            _actionTitle = _actionText = "";
+            _actionTarget = null;
+            await LoadAsync();
+            _notice = $"Task {task.Code} raised on the vessel's worklist.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
     }
 
     private async Task<Guid?> AddPhotoAsync(PendingAttachment file) => await Svc.AddPhotoAsync(_companyId, Id, file, _actor);

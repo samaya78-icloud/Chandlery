@@ -57,6 +57,7 @@ builder.Services.AddScoped<IncidentService>();
 builder.Services.AddScoped<ChatService>();
 builder.Services.AddScoped<FileAttachmentService>();
 builder.Services.AddScoped<FormService>();
+builder.Services.AddScoped<FormReports>();
 builder.Services.AddScoped<DrillService>();
 builder.Services.AddScoped<MeetingService>();
 builder.Services.AddScoped<PermitService>();
@@ -680,6 +681,35 @@ app.MapGet("/files/forms/{fileId:guid}", async (Guid fileId, bool? download, Htt
     http.Response.Headers["X-Content-Type-Options"] = "nosniff";
     if (file.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
     return download == true ? Results.File(file.Content, file.ContentType, file.FileName) : Results.File(file.Content, file.ContentType);
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// One form entry as a PDF.
+app.MapGet("/forms/entry/{entryId:guid}/pdf", async (Guid entryId, HttpContext http, FormService forms, FormReports reports, IDbContextFactory<ChandleryDbContext> factory) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var detail = await forms.GetAsync(companyId, entryId);
+    if (detail is null) return Results.NotFound();
+    await using var db = await factory.CreateDbContextAsync();
+    db.CurrentCompanyId = companyId;
+    var company = await db.Companies.IgnoreQueryFilters().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
+    var vessel = await db.Vessels.Where(v => v.Id == detail.Entry.VesselId).Select(v => v.Name).FirstOrDefaultAsync() ?? "";
+    return Results.File(FormPdf.Build(detail, vessel, company, await reports.ActionsAsync(companyId, entryId)), "application/pdf", FormPdf.FileName(detail.Entry));
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// The entries of one form as a spreadsheet: /forms/export/{typeId}.xlsx or .csv (?vessel=guid, ?year=2026). One column per field.
+app.MapGet("/forms/export/{typeId:guid}.{ext}", async (Guid typeId, string ext, Guid? vessel, int? year, HttpContext http, FormReports reports) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    if (ext is not ("csv" or "xlsx")) return Results.NotFound();
+    var table = await reports.ExportAsync(companyId, typeId, vessel, year);
+    if (table is not { } t) return Results.NotFound();
+    var name = $"{new string(t.Type.Code.Select(c => char.IsLetterOrDigit(c) || c == '-' ? c : '-').ToArray())}-entries{(year is { } y ? "-" + y : "")}";
+    if (ext == "csv")
+    {
+        var utf8 = new System.Text.UTF8Encoding(true);   // a BOM, so Excel reads accents correctly
+        return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(FormExport.Csv(t.Columns, t.Rows))).ToArray(), "text/csv", name + ".csv");
+    }
+    return Results.File(FormExport.Xlsx(t.Type.Code, t.Columns, t.Rows), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", name + ".xlsx");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 // Photos and statements kept with an incident report or a permit: whoever may see the record. The bytes are on the device that took them; the other side is told so.

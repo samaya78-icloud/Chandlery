@@ -200,6 +200,7 @@ public class NavCatalogService(
         List<NavEntry> formItems = [];
         if (await forms.IsEnabledForCompanyAsync(companyId))
         {
+            if (!isVessel) formItems.Add(new("/forms/review", "Submitted forms", "forms", await forms.AwaitingReviewAsync(companyId)));
             formItems.Add(new("/forms", "Forms", "forms", isVessel ? await forms.AttentionAsync(companyId, DateOnly.FromDateTime(DateTime.UtcNow)) : 0));
             if (!isVessel) admin.Add(new("/forms/types", "Forms", "forms"));
         }
