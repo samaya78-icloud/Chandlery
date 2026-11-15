@@ -1,4 +1,4 @@
-@using System.Text.Json.Nodes
+﻿@using System.Text.Json.Nodes
 @* One answer of a form, drawn by its type. Shared by the builder's preview and (later) the vessel's fill screen. Typed text is kept as typed; the checking is FormValueRules' job. *@
 @if (Calculated)
 {
@@ -50,7 +50,25 @@ else
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" disabled="@Disabled" checked="@(Value is JsonValue v && v.TryGetValue<bool>(out var on) && on)" @onchange="e => ValueChanged.InvokeAsync(JsonValue.Create(e.Value is true))" /> Yes</label>
             break;
         case FormFieldTypes.Photo:
-            <span class="text-xs text-muted">Pictures are added by the person filling the form.</span>
+            <div class="space-y-2">
+                <div class="flex flex-wrap gap-2">
+                    @foreach (var id in PhotoIds)
+                    {
+                        <div class="relative">
+                            <a href="/files/forms/@id" target="_blank"><img src="/files/forms/@id" alt="picture" class="h-20 w-20 rounded-lg border border-line/60 object-cover" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'text-xs text-muted',textContent:'(file)'}))" /></a>
+                            @if (!Disabled) { <button type="button" class="absolute -right-1 -top-1 rounded-full bg-surface px-1 text-xs text-rose-700 shadow" title="Remove" @onclick="() => RemovePhotoAsync(id)">✕</button> }
+                        </div>
+                    }
+                </div>
+                @if (!Disabled && AddPhoto is not null && PhotoIds.Count < FileRules.MaxPerOwner)
+                {
+                    <label class="btn btn-secondary btn-sm cursor-pointer">+ Picture
+                        <InputFile OnChange="PickAsync" accept="@FileRules.AcceptList" capture="environment" class="hidden" />
+                    </label>
+                }
+                @if (_photoError is not null) { <p class="text-xs text-rose-700">@_photoError</p> }
+                @if (AddPhoto is null && !Disabled) { <span class="text-xs text-muted">Pictures are added on the screen where the form is filled in.</span> }
+            </div>
             break;
         case FormFieldTypes.Signature:
             @if (Value is JsonObject signed)
@@ -84,7 +102,41 @@ else
     [Parameter] public bool Calculated { get; set; }
     [Parameter] public string? CalcText { get; set; }
 
+    /// <summary>Keeps a picked picture and returns its id. When not given, pictures cannot be added here (the builder's preview).</summary>
+    [Parameter] public Func<PendingAttachment, Task<Guid?>>? AddPhoto { get; set; }
+
     private string _signer = "";
+    private string? _photoError;
+
+    private List<string> PhotoIds => Value is JsonArray array ? array.Select(n => n?.ToString() ?? "").Where(s => s != "").ToList() : [];
+
+    private Task RemovePhotoAsync(string id)
+    {
+        var rest = PhotoIds.Where(p => p != id).ToList();
+        return ValueChanged.InvokeAsync(rest.Count == 0 ? null : new JsonArray(rest.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()));
+    }
+
+    private async Task PickAsync(InputFileChangeEventArgs e)
+    {
+        _photoError = null;
+        try
+        {
+            var ids = PhotoIds;
+            foreach (var file in e.GetMultipleFiles(FileRules.MaxPerOwner))
+            {
+                if (ids.Count >= FileRules.MaxPerOwner) throw new InvalidOperationException($"A field can hold up to {FileRules.MaxPerOwner} pictures.");
+                await using var stream = file.OpenReadStream(FileRules.MaxPickedBytes);
+                using var memory = new MemoryStream();
+                await stream.CopyToAsync(memory);
+                var data = memory.ToArray();
+                FileRules.Check(file.Name, data);
+                if (await AddPhoto!(new PendingAttachment { FileName = file.Name, Data = data }) is { } id) ids.Add(id.ToString());
+            }
+            await ValueChanged.InvokeAsync(ids.Count == 0 ? null : new JsonArray(ids.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()));
+        }
+        catch (InvalidOperationException ex) { _photoError = ex.Message; }
+        catch (IOException) { _photoError = $"A file is larger than {FileRules.MaxPickedBytes / (1024 * 1024)} MB."; }
+    }
 
     private string Text => Value is JsonValue v ? (v.TryGetValue<string>(out var s) ? s : v.ToString()) : "";
 

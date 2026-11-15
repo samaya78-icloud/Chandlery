@@ -671,6 +671,17 @@ app.MapGet("/files/chat/{fileId:guid}", async (Guid fileId, bool? download, Http
     return download == true ? Results.File(file.Content, file.ContentType, file.FileName) : Results.File(file.Content, file.ContentType);
 }).RequireAuthorization();
 
+// Pictures kept with a form entry: a person of the company, on the side that holds the entry.
+app.MapGet("/files/forms/{fileId:guid}", async (Guid fileId, bool? download, HttpContext http, FormService forms) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.NotFound();
+    var file = await forms.OpenPhotoAsync(companyId, fileId);
+    if (file is null) return Results.NotFound();
+    http.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    if (file.ContentType != "application/pdf") http.Response.Headers["Content-Security-Policy"] = "sandbox";
+    return download == true ? Results.File(file.Content, file.ContentType, file.FileName) : Results.File(file.Content, file.ContentType);
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
 // Photos and statements kept with an incident report or a permit: whoever may see the record. The bytes are on the device that took them; the other side is told so.
 app.MapGet("/files/records/{kind}/{ownerId:guid}/{fileId:guid}", async (string kind, Guid ownerId, Guid fileId, bool? download, HttpContext http, RecordFileService records) =>
 {

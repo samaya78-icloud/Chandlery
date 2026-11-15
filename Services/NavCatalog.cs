@@ -197,8 +197,12 @@ public class NavCatalogService(
             if (!isVessel && await projects.MayManageAsync(companyId, userId)) projectItems.Add(new("/projects/new", "New project", "project"));
         }
 
-        if (!isVessel && await forms.IsEnabledForCompanyAsync(companyId))
-            admin.Add(new("/forms/types", "Forms", "forms"));
+        List<NavEntry> formItems = [];
+        if (await forms.IsEnabledForCompanyAsync(companyId))
+        {
+            formItems.Add(new("/forms", "Forms", "forms", isVessel ? await forms.AttentionAsync(companyId, DateOnly.FromDateTime(DateTime.UtcNow)) : 0));
+            if (!isVessel) admin.Add(new("/forms/types", "Forms", "forms"));
+        }
 
         var groups = new List<NavGroup> { new(isVessel ? "Onboard" : "Work", isVessel ? onboard : work) };
         if (maintenance.Count > 0) groups.Add(new("Maintenance", maintenance, "pms planned maintenance"));
@@ -206,6 +210,7 @@ public class NavCatalogService(
         if (riskItems.Count > 0) groups.Add(new("Risk assessment", riskItems, "risk ra hazard"));
         if (safety.Count > 0) groups.Add(new("Safety", safety, "hours of rest rest hours incident accident near miss report lessons drill drills fire abandon muster"));
         if (projectItems.Count > 0) groups.Add(new("Projects", projectItems, "drydock yard technical project"));
+        if (formItems.Count > 0) groups.Add(new("Forms", formItems, "form checklist report inspection"));
         if (!isVessel)
         {
             groups.Add(new("Procurement", procurement));

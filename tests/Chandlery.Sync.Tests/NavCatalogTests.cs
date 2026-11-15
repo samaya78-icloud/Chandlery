@@ -84,7 +84,9 @@ public class NavCatalogTests : IAsyncLifetime
         await SwitchOnAsync(PolicyModules.Forms);
         Assert.Contains("Forms", Pages(await _catalog.GetAsync(admin, isVessel: false), "Admin"));
         Assert.DoesNotContain("Admin", Titles(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync()), isVessel: false)));      // the designer is not for everyone
-        Assert.DoesNotContain("Forms", Pages(await _catalog.GetAsync(admin, isVessel: true), "Onboard"));                                           // and not onboard; the vessel fills forms in F3
+        Assert.DoesNotContain("Forms", Pages(await _catalog.GetAsync(admin, isVessel: true), "Onboard"));
+        Assert.Equal(["Forms"], Pages(await _catalog.GetAsync(admin, isVessel: false), "Forms"));                                                   // the fill screen has its own group, for the vessel and for the office
+        Assert.Equal(["Forms"], Pages(await _catalog.GetAsync(Person("CompanyUser"), isVessel: true), "Forms"));                                           // and not onboard; the vessel fills forms in F3
     }
 
     [Fact]

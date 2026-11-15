@@ -1,0 +1,174 @@
+@page "/forms/entry/{Id:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using System.Text.Json.Nodes
+@inject FormService Svc
+
+<PageTitle>@(_detail?.Entry.Code ?? "Form") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_detail is null)
+{
+    <EmptyState Title="Form not found" Message="It may belong to another vessel, or forms are switched off." />
+}
+else
+{
+    var entry = _detail.Entry;
+    var lastReturn = _detail.Reviews.LastOrDefault(r => r.Decision == ReviewDecision.Returned && r.ForSubmission == entry.SubmissionCount);
+
+    <PageHeader Eyebrow="@entry.Code" Title="@($"{entry.FormCode} · {entry.FormTitle}")" Subtitle="@($"Version {entry.VersionNumber} · {entry.FormDate:dd MMM yyyy}{(entry.FilledAshore ? " · filled ashore" : "")}")">
+        <Actions>
+            <a href="/forms" class="btn btn-secondary">All forms</a>
+            @if (_editable)
+            {
+                <button class="btn btn-secondary" @onclick="SaveNowAsync" disabled="@_busy">Save</button>
+                <button class="btn btn-primary" @onclick="SubmitAsync" disabled="@_busy">Submit</button>
+            }
+        </Actions>
+    </PageHeader>
+
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @if (_notice is not null) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div> }
+    @if (lastReturn is not null && _editable)
+    {
+        <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800"><span class="font-semibold">Returned by @lastReturn.ReviewerName:</span> @lastReturn.Comment</div>
+    }
+    @if (!_editable)
+    {
+        <div class="mb-4 rounded-xl border border-line bg-surface-2/60 px-4 py-3 text-sm text-ink-2">
+            @if (_detail.Status == FormStatus.Reviewed) { <span>This form has been reviewed and is locked. To correct it, start a new one for the same date.</span> }
+            else if (_detail.Status is FormStatus.Submitted or FormStatus.InReview) { <span>This form has been sent to the office. It can be changed again only if the office returns it.</span> }
+            else { <span>This form is being filled in @(entry.OwnerStage == SyncStages.Vessel ? "onboard" : "by the office").</span> }
+        </div>
+    }
+
+    <div class="mb-5 flex flex-wrap items-center gap-2">
+        <StatusChip Value="@_detail.Status" />
+        @if (entry.ExceptionCount > 0 || (_check?.Exceptions.Count ?? 0) > 0) { <span class="chip" data-tone="warning">@(_editable ? _check!.Exceptions.Count : entry.ExceptionCount) exception(s)</span> }
+        @if (entry.SubmissionCount > 1) { <span class="chip chip-plain" data-tone="neutral">submitted @entry.SubmissionCount times</span> }
+        @if (_editable && _savedAt is { } saved) { <span class="text-xs text-muted">Saved @saved.ToLocalTime().ToString("HH:mm")</span> }
+        @if (entry.CorrectsEntryId is not null) { <a class="link text-sm" href="/forms/entry/@entry.CorrectsEntryId">corrects an earlier form</a> }
+    </div>
+
+    @if (_editable)
+    {
+        <div class="card mb-5 p-4 text-sm"><label class="block max-w-xs text-xs text-muted">The form is about the date
+            <input type="date" class="input mt-1" max="@DateTime.UtcNow.ToString("yyyy-MM-dd")" @bind="_date" @bind:after="SaveNowAsync" /></label></div>
+    }
+
+    @if (_detail.Definition is null)
+    {
+        <EmptyState Title="This version cannot be shown" Message="Its definition cannot be read. Ask the office to check it." />
+    }
+    else
+    {
+        <FormRenderer Definition="_detail.Definition" Values="_values" ReadOnly="!_editable" ForSubmit="_showRequired" OnChanged="ChangedAsync" AddPhoto="AddPhotoAsync" />
+    }
+
+    @if (_check is { Exceptions.Count: > 0 } check)
+    {
+        <div class="card mt-5 p-4 text-sm">
+            <h2 class="mb-2 font-display text-base font-extrabold text-ink">Exceptions</h2>
+            <ul class="space-y-1 text-xs">@foreach (var e in check.Exceptions) { <li>@e.Message</li> }</ul>
+        </div>
+    }
+
+    @if (_detail.Reviews.Count > 0)
+    {
+        <div class="card mt-5 p-4 text-sm">
+            <h2 class="mb-2 font-display text-base font-extrabold text-ink">Review</h2>
+            <ul class="space-y-1 text-xs">
+                @foreach (var r in _detail.Reviews)
+                {
+                    <li><span class="font-semibold">@r.ReviewerName</span> · @r.At.ToLocalTime().ToString("dd MMM HH:mm") · @r.Decision.ToString().ToLowerInvariant() (submission @r.ForSubmission)@(r.Comment == "" ? "" : ": " + r.Comment)</li>
+                }
+            </ul>
+        </div>
+    }
+
+    <div id="conversation" class="mt-6">
+        <ConversationPanel CompanyId="_companyId" Actor="_actor" ModuleType="@ChatModules.FormEntry" RecordId="entry.Id" VesselId="entry.VesselId" Title="Conversation" />
+    </div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _busy, _showRequired;
+    private string? _error, _notice;
+    private FormEntryDetail? _detail;
+    private JsonObject _values = [];
+    private FormCheck? _check;
+    private DateTime _date;
+    private DateTime? _savedAt;
+
+    /// <summary>A draft or returned entry, held by this side, can be changed.</summary>
+    private bool _editable => _detail is { } d && FormStatusRules.IsEditable(d.Status) && d.Entry.OwnerStage == (NodeContext.Current.IsVessel ? SyncStages.Vessel : SyncStages.Office);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _detail = await Svc.GetAsync(_companyId, Id);
+        if (_detail is null) return;
+        _values = JsonNode.Parse(_detail.Entry.Values) as JsonObject ?? [];
+        _date = _detail.Entry.FormDate;
+        _check = _detail.Definition is null ? null : FormValueRules.Check(_detail.Definition, _values, DateOnly.FromDateTime(DateTime.UtcNow), false);
+    }
+
+    private async Task<Guid?> AddPhotoAsync(PendingAttachment file) => await Svc.AddPhotoAsync(_companyId, Id, file, _actor);
+
+    /// <summary>Every change is kept as it is made, so nothing typed is lost if the device is put down.</summary>
+    private async Task ChangedAsync(FormCheck check)
+    {
+        _check = check;
+        if (!_editable) return;
+        try { await Svc.SaveAsync(_companyId, Id, _values, _date); _savedAt = DateTime.UtcNow; _error = null; }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task SaveNowAsync()
+    {
+        _error = _notice = null;
+        _busy = true;
+        try
+        {
+            var check = await Svc.SaveAsync(_companyId, Id, _values, _date);
+            _savedAt = DateTime.UtcNow;
+            _notice = check.Problems.Count == 0 ? "Saved." : $"Saved. {check.Problems.Count} answer(s) could not be kept: {string.Join(" ", check.Problems.Take(2).Select(p => p.ToString()))}";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = _notice = null;
+        _showRequired = true;
+        _busy = true;
+        try
+        {
+            await Svc.SaveAsync(_companyId, Id, _values, _date);
+            var check = await Svc.SubmitAsync(_companyId, Id, _actor);
+            _showRequired = false;
+            await LoadAsync();
+            _notice = check.Exceptions.Count == 0 ? "Submitted. The office will look at it." : $"Submitted with {check.Exceptions.Count} exception(s). The office will look at it.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

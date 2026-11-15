@@ -25,12 +25,15 @@ public class FormSyncTests : IAsyncLifetime
     private async Task<T> OnShore<T>(Func<ChandleryDbContext, Task<T>> read) { await using var db = await _s.ShoreFactory.CreateDbContextAsync(); return await read(db); }
     private async Task<T> OnVessel<T>(Func<ChandleryDbContext, Task<T>> read) { await using var db = await _s.VesselFactory.CreateDbContextAsync(); return await read(db); }
 
-    private async Task SwitchOnAsync(params Guid[] vessels)
+    private async Task SwitchOnAsync(params Guid[] vessels) => await SwitchOnAsync(vessels, PolicyModules.Forms);
+
+    private async Task SwitchOnAsync(Guid[] vessels, params string[] modules)
     {
         await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
         {
             foreach (var vessel in vessels.Length == 0 ? [_s.VesselId] : vessels)
-                db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = vessel, Module = PolicyModules.Forms, Enabled = true });
+                foreach (var module in modules)
+                    db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = vessel, Module = module, Enabled = true });
             await db.SaveChangesAsync();
         }
         await _s.SettleUntilQuietAsync();
@@ -262,6 +265,118 @@ public class FormSyncTests : IAsyncLifetime
         Assert.Contains("already a form", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.CreateTypeAsync(_s.CompanyId, new NewFormType("PM05", "Again", "", FormPeriodicity.None), _s.User))).Message);
         Assert.Contains("first period starts", (await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.CreateTypeAsync(_s.CompanyId, new NewFormType("PM07", "No start", "", FormPeriodicity.Weekly), _s.User))).Message);
         Assert.NotNull(await _shore.CreateTypeAsync(_s.CompanyId, new NewFormType("VY1", "Voyage report", "Operations", FormPeriodicity.Voyage), _s.User));       // a voyage form has no calendar
+    }
+
+    private static byte[] Picture(int size = 60)
+    {
+        using var bitmap = new SkiaSharp.SKBitmap(size, size);
+        bitmap.Erase(SkiaSharp.SKColors.SteelBlue);
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        return image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 90).ToArray();
+    }
+
+    [Fact]
+    public async Task APictureTakenOnboardIsKeptWithTheEntry_ReachesTheOffice_AndIsLockedWithIt()
+    {
+        await SwitchOnAsync();
+        var (type, _) = await PublishedAsync();
+        await _s.SettleUntilQuietAsync();
+        var entry = await _vessel.StartAsync(_s.CompanyId, _s.VesselId, type.Id, Today, _s.User);
+
+        var id = await _vessel.AddPhotoAsync(_s.CompanyId, entry.Id, new PendingAttachment { FileName = "pump.png", Data = Picture() }, _s.User);
+        var onboard = await _vessel.OpenPhotoAsync(_s.CompanyId, id);
+        Assert.Equal(("image/jpeg", entry.Id, FormService.FormOwner), (onboard!.ContentType, onboard.OwnerId, onboard.OwnerType));      // shrunk like every picture
+        await _s.SettleUntilQuietAsync();
+        var ashore = await _shore.OpenPhotoAsync(_s.CompanyId, id);
+        Assert.Equal(onboard.Sha256, ashore!.Sha256);                                                                                     // the same bytes arrived
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.AddPhotoAsync(_s.CompanyId, entry.Id, new PendingAttachment { FileName = "x.png", Data = [1, 2, 3, 4] }, _s.User));
+        Assert.Contains("not the kind of file", refused.Message);                                                                         // a file is checked by what it is
+
+        await _vessel.SaveAsync(_s.CompanyId, entry.Id, Fill());
+        await _vessel.SubmitAsync(_s.CompanyId, entry.Id, _s.User);
+        Assert.Contains("cannot be changed", (await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.AddPhotoAsync(_s.CompanyId, entry.Id, new PendingAttachment { FileName = "late.png", Data = Picture() }, _s.User))).Message);
+        Assert.Null(await _vessel.OpenPhotoAsync(Guid.NewGuid(), id));                                                                    // another company cannot open it
+    }
+
+    [Fact]
+    public async Task PicturesOnAPhotoFieldAreKeptAsAnswers_AndAnOfficeOnlyEntrysPicturesNeverLeaveTheOffice()
+    {
+        const string definition = """{ "schema": 1, "title": "Photo", "sections": [ { "id": "s", "layout": "fields", "fields": [ { "id": "shot", "label": "Shot", "type": "photo", "required": true } ] } ] }""";
+        await SwitchOnAsync();
+        var (type, _) = await PublishedAsync("PH1", definition);
+        var (shoreType, _) = await PublishedAsync("PH2", definition, officeOnly: true);
+        await _s.SettleUntilQuietAsync();
+
+        var entry = await _vessel.StartAsync(_s.CompanyId, _s.VesselId, type.Id, Today, _s.User);
+        var id = await _vessel.AddPhotoAsync(_s.CompanyId, entry.Id, new PendingAttachment { FileName = "a.png", Data = Picture() }, _s.User);
+        await _vessel.SaveAsync(_s.CompanyId, entry.Id, FormSamples.Values($$"""{ "shot": ["{{id}}"] }"""));
+        Assert.True((await _vessel.SubmitAsync(_s.CompanyId, entry.Id, _s.User)).Ok);
+        Assert.Contains("Shot is required", (await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            var second = await _vessel.StartAsync(_s.CompanyId, _s.VesselId, type.Id, Today.AddDays(-1), _s.User);
+            await _vessel.SubmitAsync(_s.CompanyId, second.Id, _s.User);
+        })).Message);
+
+        var shoreEntry = await _shore.StartAsync(_s.CompanyId, _s.VesselId, shoreType.Id, Today, _s.User);
+        var shoreFile = await _shore.AddPhotoAsync(_s.CompanyId, shoreEntry.Id, new PendingAttachment { FileName = "b.png", Data = Picture() }, _s.User);
+        await _s.SettleUntilQuietAsync();
+        Assert.NotNull(await _shore.OpenPhotoAsync(_s.CompanyId, shoreFile));
+        Assert.False(await OnVessel(db => db.FileAttachments.AnyAsync(f => f.Id == shoreFile)));                                          // it stays ashore with its entry
+        Assert.True(await OnVessel(db => db.FileAttachments.AnyAsync(f => f.Id == id)));
+    }
+
+    [Fact]
+    public async Task SubmittingAndReviewingLeaveLinesInTheEntrysConversation_OnBothSides()
+    {
+        await SwitchOnAsync([_s.VesselId], PolicyModules.Forms, PolicyModules.Conversations);
+        var (type, _) = await PublishedAsync();
+        await _s.SettleUntilQuietAsync();
+        var entry = await _vessel.StartAsync(_s.CompanyId, _s.VesselId, type.Id, Today, _s.User);
+        await _vessel.SaveAsync(_s.CompanyId, entry.Id, Fill());
+        await _vessel.SubmitAsync(_s.CompanyId, entry.Id, _s.User);
+        await _s.SettleUntilQuietAsync();
+        await _shore.ReviewAsync(_s.CompanyId, entry.Id, ReviewDecision.Returned, "Recheck the pressure.", _s.User);
+        await _s.SettleUntilQuietAsync();
+
+        foreach (var side in new[] { _s.ShoreFactory, _s.VesselFactory })
+        {
+            await using var db = await side.CreateDbContextAsync();
+            var lines = (await db.ChatMessages.Where(m => m.ModuleType == ChatModules.FormEntry && m.RecordId == entry.Id && m.Kind == ChatKind.System).ToListAsync()).OrderBy(m => m.At).Select(m => m.Body).ToList();
+            Assert.Equal(2, lines.Count);
+            Assert.Contains("Submitted by", lines[0]);
+            Assert.Contains("2 exception(s)", lines[0]);
+            Assert.Contains("Returned to the vessel by", lines[1]);
+        }
+    }
+
+    [Fact]
+    public async Task TheMenuCountIsWhatIsOverdueAndWhatIsStillToFinish()
+    {
+        await SwitchOnAsync();
+        var (type, _) = await PublishedAsync();
+        await _s.SettleUntilQuietAsync();
+        var today = DateOnly.FromDateTime(Today);
+        Assert.Equal(1, await _vessel.AttentionAsync(_s.CompanyId, today));                         // nothing filled for the last months: the form is overdue
+
+        var entry = await _vessel.StartAsync(_s.CompanyId, _s.VesselId, type.Id, Today, _s.User);
+        Assert.Equal(2, await _vessel.AttentionAsync(_s.CompanyId, today));                         // the draft is still to finish; the earlier months are still missed
+        await _vessel.SaveAsync(_s.CompanyId, entry.Id, Fill());
+        await _vessel.SubmitAsync(_s.CompanyId, entry.Id, _s.User);
+        Assert.Equal(0, await _vessel.AttentionAsync(_s.CompanyId, today));                         // sent and this period is met, so the menu goes quiet (the missed months stay on the Forms page)
+    }
+
+    [Fact]
+    public async Task TheHomePageCardCountsWhatIsOverdueDueSoonAndToFinish_AndIsAbsentWhereFormsAreOff()
+    {
+        var today = DateOnly.FromDateTime(Today);
+        Assert.Null(await _shore.CountsAsync(_s.CompanyId, today));
+        await SwitchOnAsync();
+        var (type, _) = await PublishedAsync();
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal(new FormCounts(1, 0, 0), await _vessel.CountsAsync(_s.CompanyId, today));
+        await _vessel.StartAsync(_s.CompanyId, _s.VesselId, type.Id, Today, _s.User);
+        Assert.Equal(new FormCounts(1, 0, 1), await _vessel.CountsAsync(_s.CompanyId, today));
     }
 
     [Fact]

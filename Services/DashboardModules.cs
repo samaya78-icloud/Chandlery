@@ -24,7 +24,7 @@ public record AttentionItem(int Count, string Text, string Href, bool Urgent);
 /// <summary>Gathers the per-module numbers for the home page, so the cards and the attention strip read from the same place.</summary>
 public class DashboardModuleService(
     WorklistService worklist, PmsReportService pms, TankTrendService tanks, RiskAssessmentService risk,
-    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, DrillFleetService drillFleet, PermitService permits, ChatService chat)
+    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, DrillFleetService drillFleet, PermitService permits, ChatService chat, FormService forms)
 {
     private static string Hot(int n, string tone, string cold = "success") => n > 0 ? tone : cold;
 
@@ -55,6 +55,16 @@ public class DashboardModuleService(
                 new("Due in 7 days", p.DueThisWeek.ToString("N0"), planHref, Hot(p.DueThisWeek, "warning")),
                 new("Awaiting a decision", p.PendingDecisions.ToString("N0"), "/pms/approvals", Hot(p.PendingDecisions, "warning"), "Deferral requests", p.PendingDecisions, "deferral requests to decide"),
                 new("Hours out of date", p.HoursOutOfDate.ToString("N0"), isVessel ? "/pms/hours" : "/pms/reports", Hot(p.HoursOutOfDate, "info"), "No reading for over a week"),
+            ]));
+        }
+
+        if (await forms.CountsAsync(companyId, DateOnly.FromDateTime(DateTime.UtcNow)) is { } formCounts)
+        {
+            modules.Add(new("forms", "Forms", "/forms",
+            [
+                new("Overdue", formCounts.Overdue.ToString("N0"), "/forms", Hot(formCounts.Overdue, "danger"), "Forms past their due date", formCounts.Overdue, "forms overdue"),
+                new("Due in 7 days", formCounts.DueSoon.ToString("N0"), "/forms", Hot(formCounts.DueSoon, "warning")),
+                new("To finish", formCounts.ToFinish.ToString("N0"), "/forms", Hot(formCounts.ToFinish, "warning"), "Drafts and those sent back", formCounts.ToFinish, "forms to finish"),
             ]));
         }
 

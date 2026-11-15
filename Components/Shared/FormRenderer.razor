@@ -1,4 +1,4 @@
-@using System.Text.Json.Nodes
+﻿@using System.Text.Json.Nodes
 @using System.Globalization
 @* Draws a form from its definition and keeps the answers as typed. What is shown, what is calculated and what is wrong all come from FormValueRules, the same code the vessel, the office and the tests use. *@
 <div class="space-y-5">
@@ -20,7 +20,7 @@
                         <div class="@(field.Type == FormFieldTypes.LongText ? "md:col-span-2" : "")">
                             <label class="mb-1 block text-xs font-semibold text-muted">@field.Label@if (field.Required) { <span class="text-rose-600"> *</span> }@if (flagged) { <span class="chip ml-2" data-tone="danger">exception</span> }</label>
                             <FormControl Input="field" Disabled="ReadOnly" Calculated="calculated" CalcText="@Display(_check.Clean[field.Id])"
-                                         Value="@(calculated ? null : Values[field.Id])" ValueChanged="v => SetField(field.Id, v)" />
+                                         Value="@(calculated ? null : Values[field.Id])" ValueChanged="v => SetField(field.Id, v)" AddPhoto="AddPhoto" />
                             @foreach (var problem in problems) { <p class="mt-1 text-xs text-rose-700">@problem.Message</p> }
                         </div>
                     }
@@ -78,6 +78,9 @@
     [Parameter] public bool ForSubmit { get; set; }
     [Parameter] public DateOnly? Today { get; set; }
     [Parameter] public EventCallback<FormCheck> OnChanged { get; set; }
+
+    /// <summary>Keeps a picture taken for a photo field and returns its id. Left out where pictures cannot be kept (the builder's preview).</summary>
+    [Parameter] public Func<PendingAttachment, Task<Guid?>>? AddPhoto { get; set; }
 
     private FormCheck _check = new([], [], []);
 

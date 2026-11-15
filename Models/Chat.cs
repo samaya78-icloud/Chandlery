@@ -103,13 +103,14 @@ public static class ChatModules
     public const string RiskAssessment = "RiskAssessment";
     public const string Project = "Project";
     public const string Incident = "Incident";
+    public const string FormEntry = "FormEntry";
 
-    public static readonly string[] All = [Requisition, Rfq, PurchaseOrder, Delivery, Worklist, PmsJob, TankInspection, RiskAssessment, Project, Incident];
+    public static readonly string[] All = [Requisition, Rfq, PurchaseOrder, Delivery, Worklist, PmsJob, TankInspection, RiskAssessment, Project, Incident, FormEntry];
 
     /// <summary>What a person calls this kind of record.</summary>
     public static string Label(string moduleType) => moduleType switch
     {
         Requisition => "Requisitions", Rfq => "RFQs", PurchaseOrder => "Orders", Delivery => "Deliveries", Worklist => "Worklist tasks", PmsJob => "Maintenance jobs",
-        TankInspection => "Tank inspections", RiskAssessment => "Risk assessments", Project => "Projects", Incident => "Incidents", _ => moduleType,
+        TankInspection => "Tank inspections", RiskAssessment => "Risk assessments", Project => "Projects", Incident => "Incidents", FormEntry => "Forms", _ => moduleType,
     };
 }

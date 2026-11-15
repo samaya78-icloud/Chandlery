@@ -15,6 +15,8 @@ public record FormEntryRow(FormEntry Entry, FormStatus Status);
 
 public record FormDueRow(FormType Type, FormVersion Version, FormDue Due);
 
+public record FormCounts(int Overdue, int DueSoon, int ToFinish);
+
 /// <summary>
 /// Forms: the office designs a form type and publishes versions of it, a vessel starts an entry on the current version, fills it in, submits it, and the office
 /// reviews it (accept, or return for correction). A published version never changes; an entry is checked against the version it was filled on. Everything the
@@ -339,8 +341,11 @@ public class FormService(IDbContextFactory<ChandleryDbContext> factory)
         if (check.Problems.Count > 0)
             throw new InvalidOperationException($"{check.Problems.Count} answer(s) need attention: {string.Join(" ", check.Problems.Take(3).Select(p => p.ToString()))}{(check.Problems.Count > 3 ? " …" : "")}");
         entry.Values = check.Clean.ToJsonString();
+        var again = entry.SubmissionCount > 0;
         entry.SubmissionCount++;
         (entry.SubmittedAt, entry.UpdatedAt, entry.ExceptionCount) = (DateTime.UtcNow, DateTime.UtcNow, check.Exceptions.Count);
+        await ChatService.NoteAsync(db, companyId, ChatModules.FormEntry, entry.Id, entry.VesselId,
+            $"{(again ? "Submitted again" : "Submitted")} by {actor.Name}: {check.Exceptions.Count} exception(s)");
         await db.SaveChangesAsync();
         return check;
     }
@@ -367,8 +372,78 @@ public class FormService(IDbContextFactory<ChandleryDbContext> factory)
             Comment = (comment ?? "").Trim(), ReviewerName = actor.Name, AuthorUserId = actor.UserId, At = DateTime.UtcNow,
         };
         db.FormReviews.Add(review);
+        await ChatService.NoteAsync(db, companyId, ChatModules.FormEntry, entry.Id, entry.VesselId, decision switch
+        {
+            ReviewDecision.Started => $"Review started by {actor.Name}",
+            ReviewDecision.Accepted => $"Accepted by {actor.Name}" + (review.Comment == "" ? "" : $": {review.Comment}"),
+            _ => $"Returned to the vessel by {actor.Name}: {review.Comment}",
+        });
         await db.SaveChangesAsync();
         return review;
+    }
+
+    // ---- pictures ----
+
+    /// <summary>The most pictures one entry can carry: each travels inside the entry's record, so there has to be a limit.</summary>
+    public const int MaxPhotosPerEntry = 24;
+
+    /// <summary>The owner type of a file that belongs to a form entry.</summary>
+    public const string FormOwner = "FormEntry";
+
+    /// <summary>
+    /// Keeps a picture (or a small PDF) for an entry, shrunk like every picture, and returns its id for the person to put in a photo field. Only while the entry can still be
+    /// changed, and only by the side that holds it. The answer itself is saved by <see cref="SaveAsync"/>.
+    /// </summary>
+    public async Task<Guid> AddPhotoAsync(Guid companyId, Guid entryId, PendingAttachment file, Actor actor)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var (entry, _) = await LoadEditableAsync(db, companyId, entryId);
+        if (await db.FileAttachments.CountAsync(f => f.OwnerType == FormOwner && f.OwnerId == entryId) >= MaxPhotosPerEntry)
+            throw new InvalidOperationException($"An entry can carry up to {MaxPhotosPerEntry} pictures.");
+        var kept = FileAttachmentService.Add(db, companyId, entry.VesselId, FormOwner, entry.Id, entry.OfficeOnly, [file], actor.UserId, actor.Name);
+        await db.SaveChangesAsync();
+        return kept[0].Id;
+    }
+
+    /// <summary>A picture of an entry with its bytes, when it belongs to the company and its entry is held here. Null otherwise.</summary>
+    public async Task<FileAttachment?> OpenPhotoAsync(Guid companyId, Guid fileId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var file = await db.FileAttachments.AsNoTracking().FirstOrDefaultAsync(f => f.Id == fileId && f.OwnerType == FormOwner && f.CompanyId == companyId);
+        if (file is null) return null;
+        return await db.FormEntries.AnyAsync(e => e.Id == file.OwnerId) ? file : null;
+    }
+
+    // ---- what needs a hand ----
+
+    /// <summary>What the home page card shows, or null when forms are on for no vessel.</summary>
+    public async Task<FormCounts?> CountsAsync(Guid companyId, DateOnly today)
+    {
+        var vessels = await EnabledVesselsAsync(companyId);
+        if (vessels.Count == 0) return null;
+        int overdue = 0, toFinish = 0, due = 0;
+        foreach (var (vesselId, _) in vessels)
+        {
+            var rows = await DueAsync(companyId, vesselId, today);
+            overdue += rows.Count(d => d.Due.Status == FormDueStatus.Overdue);
+            due += rows.Count(d => d.Due.Status == FormDueStatus.DueSoon);
+            toFinish += (await ListAsync(companyId, vesselId)).Count(r => r.Status is FormStatus.Draft or FormStatus.Returned && !r.Entry.OfficeOnly);
+        }
+        return new FormCounts(overdue, due, toFinish);
+    }
+
+    /// <summary>For a vessel's menu: the forms that are overdue plus the entries still to finish (drafts and those sent back).</summary>
+    public async Task<int> AttentionAsync(Guid companyId, DateOnly today)
+    {
+        var count = 0;
+        foreach (var (vesselId, _) in await EnabledVesselsAsync(companyId))
+        {
+            count += (await DueAsync(companyId, vesselId, today)).Count(d => d.Due.Status == FormDueStatus.Overdue);
+            count += (await ListAsync(companyId, vesselId)).Count(r => r.Status is FormStatus.Draft or FormStatus.Returned && !r.Entry.OfficeOnly);
+        }
+        return count;
     }
 
     // ---- reading ----

@@ -1,4 +1,4 @@
-<span class="chip" data-tone="@_tone">@_label</span>
+﻿<span class="chip" data-tone="@_tone">@_label</span>
 
 @code {
     /// <summary>Any status enum used in the app (RfqStatus, PoStatus, RequisitionStatus, DeliveryStatus, ApprovalDecision, Urgency, RfqType...).</summary>
@@ -96,6 +96,17 @@
         TankHealth.Clean => ("No exceptions", "success"),
         TankHealth.Exceptions => ("Exceptions", "warning"),
         TankHealth.Bad => ("Bad rating", "danger"),
+
+        FormStatus.Draft => ("Draft", "neutral"),
+        FormStatus.Submitted => ("Submitted", "info"),
+        FormStatus.InReview => ("In review", "warning"),
+        FormStatus.Returned => ("Returned", "danger"),
+        FormStatus.Reviewed => ("Reviewed", "success"),
+        FormDueStatus.Overdue => ("Overdue", "danger"),
+        FormDueStatus.DueSoon => ("Due soon", "warning"),
+        FormDueStatus.Open => ("On schedule", "success"),
+        FormDueStatus.Done => ("Done", "success"),
+        FormDueStatus.NotScheduled => ("As needed", "neutral"),
 
         null => ("", "neutral"),
         _ => (Humanize(value.ToString() ?? ""), "neutral")
