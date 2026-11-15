@@ -313,7 +313,7 @@ public class ChatTests : IAsyncLifetime
         var other = Guid.NewGuid();
         await _vessel.PostAsync(_s.CompanyId, As(_chief), Post("one"));
         await _vessel.PostAsync(_s.CompanyId, As(_chief), Post("two"));
-        await _vessel.PostAsync(_s.CompanyId, As(_chief), new ChatPost(ChatModules.Incident, other, _s.VesselId, ChatChannel.Internal, "three"));
+        await _vessel.PostAsync(_s.CompanyId, As(_chief), new ChatPost(ChatModules.Worklist, other, _s.VesselId, ChatChannel.Internal, "three"));
         await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
         {
             db.ChatMessages.Add(new ChatMessage
