@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Chandlery.Services;
@@ -116,7 +116,50 @@ public class FormDef
         catch (JsonException ex) { error = ex.Message; return null; }
     }
 
+    private static readonly JsonSerializerOptions Pretty = new(Json) { WriteIndented = true };
+
     public string ToJson() => JsonSerializer.Serialize(this, Json);
+
+    /// <summary>The same JSON, laid out for a person to read and edit.</summary>
+    public string ToPrettyJson() => JsonSerializer.Serialize(this, Pretty);
+
+    /// <summary>
+    /// Tidies what a screen leaves behind: a box left empty means "not set", not an empty text or list. Called by the builder after each change, so the rules see
+    /// what the author meant.
+    /// </summary>
+    public FormDef Tidy()
+    {
+        static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        static List<string>? NoneIfEmpty(List<string>? list) => list is null || list.Count == 0 ? null : list;
+
+        void Input(FormInput input)
+        {
+            (input.Unit, input.Source, input.Options) = (Blank(input.Unit), Blank(input.Source), NoneIfEmpty(input.Options));
+        }
+
+        void Columns(List<FormColumn>? columns)
+        {
+            foreach (var column in columns ?? [])
+            {
+                Input(column);
+                if (column.Children is { Count: > 0 }) { column.Repeat = column.Repeat is null or < 1 ? null : column.Repeat; Columns(column.Children); }
+            }
+        }
+
+        foreach (var section in Sections)
+        {
+            (section.Title, section.ShowIf) = (Blank(section.Title), Blank(section.ShowIf));
+            foreach (var field in section.Fields ?? [])
+            {
+                Input(field);
+                (field.Default, field.Prefill, field.Calc, field.ShowIf, field.Flag, field.FlagOn) = (Blank(field.Default), Blank(field.Prefill), Blank(field.Calc), Blank(field.ShowIf), Blank(field.Flag), NoneIfEmpty(field.FlagOn));
+                if (field.Validate is { NotFuture: false, NotPast: false }) field.Validate = null;
+            }
+            Columns(section.Columns);
+            if (section.Rows is { } rows) rows.Source = Blank(rows.Source);
+        }
+        return this;
+    }
 
     // ---- walking it ----
 

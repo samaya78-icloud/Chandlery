@@ -1,0 +1,142 @@
+@using System.Text.Json.Nodes
+@using System.Globalization
+@* Draws a form from its definition and keeps the answers as typed. What is shown, what is calculated and what is wrong all come from FormValueRules, the same code the vessel, the office and the tests use. *@
+<div class="space-y-5">
+    @foreach (var section in Definition.Sections)
+    {
+        if (_check.IsSectionHidden(section.Id)) { continue; }
+        <section class="card p-4 text-sm">
+            @if (!string.IsNullOrWhiteSpace(section.Title)) { <h3 class="mb-3 font-display text-base font-extrabold text-ink">@section.Title</h3> }
+
+            @if (section.Layout == "fields")
+            {
+                <div class="grid gap-4 md:grid-cols-2">
+                    @foreach (var field in section.Fields ?? [])
+                    {
+                        if (_check.IsHidden(field.Id)) { continue; }
+                        var calculated = field.Calc is not null || field.Type == FormFieldTypes.Calculated;
+                        var problems = _check.Problems.Where(p => p.Where == field.Id).ToList();
+                        var flagged = _check.Exceptions.Any(e => e.FieldId == field.Id);
+                        <div class="@(field.Type == FormFieldTypes.LongText ? "md:col-span-2" : "")">
+                            <label class="mb-1 block text-xs font-semibold text-muted">@field.Label@if (field.Required) { <span class="text-rose-600"> *</span> }@if (flagged) { <span class="chip ml-2" data-tone="danger">exception</span> }</label>
+                            <FormControl Input="field" Disabled="ReadOnly" Calculated="calculated" CalcText="@Display(_check.Clean[field.Id])"
+                                         Value="@(calculated ? null : Values[field.Id])" ValueChanged="v => SetField(field.Id, v)" />
+                            @foreach (var problem in problems) { <p class="mt-1 text-xs text-rose-700">@problem.Message</p> }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                var cells = FormDef.Cells(section).ToList();
+                var rows = RowsOf(section);
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-line/60 text-left text-xs text-muted">
+                                <th class="sticky left-0 bg-surface px-2 py-1"></th>
+                                @foreach (var (cellId, column) in cells) { <th class="px-2 py-1 font-semibold">@CellHeading(cellId, column)</th> }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var (rowId, label) in rows)
+                            {
+                                <tr class="border-b border-line/40">
+                                    <th class="sticky left-0 bg-surface px-2 py-1 text-left font-medium">@label</th>
+                                    @foreach (var (cellId, column) in cells)
+                                    {
+                                        var key = $"{section.Id}.{rowId}.{cellId}";
+                                        <td class="min-w-[7rem] px-2 py-1 align-top">
+                                            <FormControl Input="column" Disabled="ReadOnly" Value="@CellValue(section.Id, rowId, cellId)" ValueChanged="v => SetCell(section.Id, rowId, cellId, v)" />
+                                            @foreach (var problem in _check.Problems.Where(p => p.Where == key)) { <p class="mt-1 text-xs text-rose-700">@problem.Message</p> }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @foreach (var problem in _check.Problems.Where(p => p.Where == section.Id)) { <p class="mt-1 text-xs text-rose-700">@problem.Message</p> }
+                @if (section.Rows?.Mode != "fixed" && !ReadOnly)
+                {
+                    <button type="button" class="btn btn-secondary btn-sm mt-3" @onclick="() => AddRow(section)">+ Add a row</button>
+                    @if (section.Rows?.Mode == "list") { <span class="ml-2 text-xs text-muted">On the vessel these rows come from its @section.Rows.Source.</span> }
+                }
+            }
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FormDef Definition { get; set; } = null!;
+
+    /// <summary>The answers as typed. The renderer changes this object as the person types, and reports through <see cref="OnChanged"/>.</summary>
+    [Parameter, EditorRequired] public JsonObject Values { get; set; } = null!;
+    [Parameter] public bool ReadOnly { get; set; }
+
+    /// <summary>Whether required answers are insisted on (a submission) or not (a draft).</summary>
+    [Parameter] public bool ForSubmit { get; set; }
+    [Parameter] public DateOnly? Today { get; set; }
+    [Parameter] public EventCallback<FormCheck> OnChanged { get; set; }
+
+    private FormCheck _check = new([], [], []);
+
+    /// <summary>The checking of the answers as they stand now.</summary>
+    public FormCheck Current => _check;
+
+    protected override void OnParametersSet() => Recheck();
+
+    private void Recheck() => _check = FormValueRules.Check(Definition, Values, Today ?? DateOnly.FromDateTime(DateTime.UtcNow), ForSubmit);
+
+    private async Task ChangedAsync()
+    {
+        Recheck();
+        await OnChanged.InvokeAsync(_check);
+    }
+
+    private static string Display(JsonNode? node) => node switch
+    {
+        null => "",
+        JsonValue v when v.TryGetValue<decimal>(out var d) => d.ToString("0.######", CultureInfo.InvariantCulture),
+        JsonValue v when v.TryGetValue<bool>(out var b) => b ? "Yes" : "No",
+        JsonValue v => v.ToString(),
+        _ => node.ToJsonString(),
+    };
+
+    private static string CellHeading(string cellId, FormColumn column)
+    {
+        var dot = cellId.LastIndexOf('.');
+        return dot < 0 ? column.Label : $"{cellId[..dot].ToUpperInvariant()} {column.Label}";
+    }
+
+    private List<(string Id, string Label)> RowsOf(FormSection section)
+    {
+        if (section.Rows?.Mode == "fixed") return (section.Rows.Items ?? []).Select(r => (r.Id, r.Label)).ToList();
+        return (Values[section.Id] as JsonObject)?.Select(p => (p.Key, p.Key)).ToList() ?? [];
+    }
+
+    private JsonNode? CellValue(string gridId, string rowId, string cellId) => ((Values[gridId] as JsonObject)?[rowId] as JsonObject)?[cellId];
+
+    private async Task SetField(string id, JsonNode? value)
+    {
+        if (value is null) Values.Remove(id); else Values[id] = value.DeepClone();
+        await ChangedAsync();
+    }
+
+    private async Task SetCell(string gridId, string rowId, string cellId, JsonNode? value)
+    {
+        var grid = Values[gridId] as JsonObject ?? (JsonObject)(Values[gridId] = new JsonObject());
+        var row = grid[rowId] as JsonObject ?? (JsonObject)(grid[rowId] = new JsonObject());
+        if (value is null) row.Remove(cellId); else row[cellId] = value.DeepClone();
+        await ChangedAsync();
+    }
+
+    private async Task AddRow(FormSection section)
+    {
+        var grid = Values[section.Id] as JsonObject ?? (JsonObject)(Values[section.Id] = new JsonObject());
+        var n = 1;
+        while (grid.ContainsKey("r" + n)) n++;
+        grid["r" + n] = new JsonObject();
+        await ChangedAsync();
+    }
+}

@@ -434,6 +434,53 @@ public class FormValueRulesTests
     }
 }
 
+public class FormBuilderSupportTests
+{
+    [Fact]
+    public void TidyTurnsBoxesLeftEmptyIntoNotSet_SoTheRulesSeeWhatTheAuthorMeant()
+    {
+        var def = FormSamples.Def();
+        var trim = def.Sections[0].Fields!.Single(f => f.Id == "trim");
+        (trim.Unit, trim.Prefill, trim.ShowIf, trim.Flag, trim.FlagOn, trim.Options) = ("  ", "", "   ", "", [], []);
+        def.Sections[2].ShowIf = "";
+        def.Sections[0].Title = " ";
+        def.Sections[0].Fields![0].Validate = new FormValidate();
+
+        Assert.NotEmpty(FormDefinitionRules.Validate(def));                                 // an empty show-if is an error until it is tidied
+        def.Tidy();
+        Assert.Empty(FormDefinitionRules.Validate(def));
+        Assert.Null(trim.Unit);
+        Assert.Null(trim.FlagOn);
+        Assert.Null(def.Sections[2].ShowIf);
+        Assert.Null(def.Sections[0].Fields![0].Validate);
+    }
+
+    [Fact]
+    public void ThePrettyJsonReadsBackAsTheSameDefinition()
+    {
+        var def = FormSamples.Def();
+        var again = FormDef.TryRead(def.ToPrettyJson(), out var error);
+        Assert.True(again is not null, error);
+        Assert.Equal(def.ToJson(), again!.ToJson());
+        Assert.Contains("\n", def.ToPrettyJson());
+        Assert.DoesNotContain("\n", def.ToJson());
+    }
+
+    [Fact]
+    public void TheCheckSaysWhatIsHiddenSoAScreenDrawsOnlyWhatIsShown()
+    {
+        var empty = FormValueRules.Check(FormSamples.Def(), FormSamples.Values("{}"), FormSamples.Today, false);
+        Assert.True(empty.IsSectionHidden("remarks"));
+        Assert.True(empty.IsHidden("note"));
+        Assert.False(empty.IsHidden("trim"));
+        Assert.False(empty.IsSectionHidden("header"));
+
+        var measured = FormValueRules.Check(FormSamples.Def(), FormSamples.Values("""{ "measured": { "meas": { "b1.f": 0.55 } } }"""), FormSamples.Today, false);
+        Assert.False(measured.IsSectionHidden("remarks"));
+        Assert.False(measured.IsHidden("note"));
+    }
+}
+
 public class FormStatusRulesTests
 {
     private static FormReview Review(int forSubmission, ReviewDecision decision, int minute) => new() { Id = Guid.NewGuid(), ForSubmission = forSubmission, Decision = decision, At = new DateTime(2026, 11, 15, 8, minute, 0, DateTimeKind.Utc) };

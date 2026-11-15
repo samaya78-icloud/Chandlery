@@ -1,0 +1,114 @@
+@using System.Text.Json.Nodes
+@* One answer of a form, drawn by its type. Shared by the builder's preview and (later) the vessel's fill screen. Typed text is kept as typed; the checking is FormValueRules' job. *@
+@if (Calculated)
+{
+    <div class="input flex items-center bg-surface-2 text-sm">@(string.IsNullOrEmpty(CalcText) ? "—" : CalcText)@if (Input.Unit is { Length: > 0 } && !string.IsNullOrEmpty(CalcText)) { <span class="ml-1 text-muted">@Input.Unit</span> }</div>
+}
+else
+{
+    switch (Input.Type)
+    {
+        case FormFieldTypes.LongText:
+            <textarea class="textarea" rows="3" disabled="@Disabled" @onchange="e => SetText(e.Value?.ToString())">@Text</textarea>
+            break;
+        case FormFieldTypes.Number:
+            <div class="flex items-center gap-1">
+                <input class="input" inputmode="decimal" disabled="@Disabled" value="@Text" @onchange="e => SetText(e.Value?.ToString())" />
+                @if (Input.Unit is { Length: > 0 }) { <span class="text-xs text-muted">@Input.Unit</span> }
+            </div>
+            break;
+        case FormFieldTypes.Date:
+            <input type="date" class="input" disabled="@Disabled" value="@Text" @onchange="e => SetText(e.Value?.ToString())" />
+            break;
+        case FormFieldTypes.Time:
+            <input type="time" class="input" disabled="@Disabled" value="@Text" @onchange="e => SetText(e.Value?.ToString())" />
+            break;
+        case FormFieldTypes.Moment:
+            <input type="datetime-local" class="input" disabled="@Disabled" value="@Text" @onchange="e => SetText(e.Value?.ToString())" />
+            break;
+        case FormFieldTypes.Choice:
+        case FormFieldTypes.Rating:
+        case FormFieldTypes.YesNoNa:
+            <select class="select" disabled="@Disabled" @onchange="e => SetText(e.Value?.ToString())">
+                <option value="" selected="@(Text == "")"></option>
+                @foreach (var option in Options)
+                {
+                    <option value="@option" selected="@(Text == option)">@option</option>
+                }
+            </select>
+            break;
+        case FormFieldTypes.MultiChoice:
+            <div class="flex flex-wrap gap-x-4 gap-y-1">
+                @foreach (var option in Input.Options ?? [])
+                {
+                    var ticked = Chosen.Contains(option);
+                    <label class="flex items-center gap-1 text-sm"><input type="checkbox" disabled="@Disabled" checked="@ticked" @onchange="e => Toggle(option, e.Value is true)" /> @option</label>
+                }
+            </div>
+            break;
+        case FormFieldTypes.Tick:
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" disabled="@Disabled" checked="@(Value is JsonValue v && v.TryGetValue<bool>(out var on) && on)" @onchange="e => ValueChanged.InvokeAsync(JsonValue.Create(e.Value is true))" /> Yes</label>
+            break;
+        case FormFieldTypes.Photo:
+            <span class="text-xs text-muted">Pictures are added by the person filling the form.</span>
+            break;
+        case FormFieldTypes.Signature:
+            @if (Value is JsonObject signed)
+            {
+                <div class="flex items-center gap-2 text-sm">
+                    <span class="chip" data-tone="success">Signed by @(signed["name"]?.ToString())</span>
+                    @if (!Disabled) { <button type="button" class="btn btn-ghost btn-sm" @onclick="() => ValueChanged.InvokeAsync(null)">Clear</button> }
+                </div>
+            }
+            else
+            {
+                <div class="flex items-center gap-2">
+                    <input class="input" placeholder="Your name" disabled="@Disabled" @bind="_signer" @bind:event="oninput" />
+                    <button type="button" class="btn btn-secondary btn-sm" disabled="@(Disabled || string.IsNullOrWhiteSpace(_signer))" @onclick="SignAsync">Sign</button>
+                </div>
+            }
+            break;
+        default:   // text and lookup
+            <input class="input" disabled="@Disabled" value="@Text" @onchange="e => SetText(e.Value?.ToString())" />
+            break;
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public FormInput Input { get; set; } = null!;
+    [Parameter] public JsonNode? Value { get; set; }
+    [Parameter] public EventCallback<JsonNode?> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>A calculated field is shown, never typed: <see cref="CalcText"/> is what the rules worked out.</summary>
+    [Parameter] public bool Calculated { get; set; }
+    [Parameter] public string? CalcText { get; set; }
+
+    private string _signer = "";
+
+    private string Text => Value is JsonValue v ? (v.TryGetValue<string>(out var s) ? s : v.ToString()) : "";
+
+    private List<string> Options => Input.Type switch
+    {
+        FormFieldTypes.Choice => Input.Options ?? [],
+        FormFieldTypes.YesNoNa => [.. FormFieldTypes.YesNoNaValues],
+        _ => FormDefinitionRules.RatingOptions(Input),
+    };
+
+    private List<string> Chosen => Value is JsonArray array ? array.Select(n => n?.ToString() ?? "").ToList() : [];
+
+    private Task SetText(string? text) => ValueChanged.InvokeAsync(string.IsNullOrWhiteSpace(text) ? null : JsonValue.Create(text.Trim()));
+
+    private Task Toggle(string option, bool on)
+    {
+        var chosen = Chosen.Where(c => c != option).ToList();
+        if (on) chosen.Add(option);
+        return ValueChanged.InvokeAsync(chosen.Count == 0 ? null : new JsonArray(chosen.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray()));
+    }
+
+    private async Task SignAsync()
+    {
+        await ValueChanged.InvokeAsync(new JsonObject { ["name"] = _signer.Trim(), ["at"] = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm") });
+        _signer = "";
+    }
+}

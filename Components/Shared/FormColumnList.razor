@@ -1,0 +1,75 @@
+@* The columns of a grid. A group of columns can repeat (bearing 1 to 7, each with fore and aft) and holds columns of its own. *@
+<div class="space-y-2">
+    @for (var i = 0; i < Columns.Count; i++)
+    {
+        var index = i;
+        var column = Columns[index];
+        <div class="flex items-start gap-2">
+            <div class="flex-1">
+                @if (column.Children is not null)
+                {
+                    <div class="rounded-xl border border-accent-200 bg-accent-50/40 p-3">
+                        <div class="grid gap-2 md:grid-cols-12">
+                            <label class="md:col-span-3 text-xs text-muted">Group id <input class="input mt-1" @bind="column.Id" @bind:after="Changed" /></label>
+                            <label class="md:col-span-5 text-xs text-muted">Group label <input class="input mt-1" @bind="column.Label" @bind:after="Changed" /></label>
+                            <label class="md:col-span-2 text-xs text-muted">Repeated <input type="number" class="input mt-1" @bind="column.Repeat" @bind:after="Changed" placeholder="once" /></label>
+                        </div>
+                        <div class="mt-3"><FormColumnList Columns="column.Children" Level="Level + 1" OnChanged="OnChanged" /></div>
+                    </div>
+                }
+                else
+                {
+                    <FormInputEditor Input="column" IsCell="true" OnChanged="OnChanged" />
+                }
+            </div>
+            <div class="flex flex-col gap-1 pt-2">
+                <button type="button" class="btn btn-ghost btn-sm" disabled="@(index == 0)" @onclick="() => Move(index, -1)" title="Move up">↑</button>
+                <button type="button" class="btn btn-ghost btn-sm" disabled="@(index == Columns.Count - 1)" @onclick="() => Move(index, 1)" title="Move down">↓</button>
+                <button type="button" class="btn btn-ghost btn-sm text-rose-700" @onclick="() => Remove(index)" title="Remove">✕</button>
+            </div>
+        </div>
+    }
+    <div class="flex gap-2">
+        <button type="button" class="btn btn-secondary btn-sm" @onclick="AddColumn">+ Column</button>
+        @if (Level < 3) { <button type="button" class="btn btn-secondary btn-sm" @onclick="AddGroup">+ Group of columns</button> }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<FormColumn> Columns { get; set; } = null!;
+    [Parameter] public int Level { get; set; } = 1;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private Task Changed() => OnChanged.InvokeAsync();
+
+    private string FreeId(string stem)
+    {
+        var n = Columns.Count + 1;
+        while (Columns.Any(c => string.Equals(c.Id, stem + n, StringComparison.OrdinalIgnoreCase))) n++;
+        return stem + n;
+    }
+
+    private Task AddColumn()
+    {
+        Columns.Add(new FormColumn { Id = FreeId("col"), Label = "Column", Type = FormFieldTypes.Text });
+        return Changed();
+    }
+
+    private Task AddGroup()
+    {
+        Columns.Add(new FormColumn { Id = FreeId("group"), Label = "Group", Repeat = 2, Children = [new FormColumn { Id = "a", Label = "A", Type = FormFieldTypes.Number }] });
+        return Changed();
+    }
+
+    private Task Move(int index, int by)
+    {
+        (Columns[index], Columns[index + by]) = (Columns[index + by], Columns[index]);
+        return Changed();
+    }
+
+    private Task Remove(int index)
+    {
+        Columns.RemoveAt(index);
+        return Changed();
+    }
+}

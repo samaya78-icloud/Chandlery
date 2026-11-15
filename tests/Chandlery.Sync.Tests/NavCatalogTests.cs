@@ -22,7 +22,7 @@ public class NavCatalogTests : IAsyncLifetime
         var authorization = new ServiceCollection().AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")))
             .AddLogging().BuildServiceProvider().GetRequiredService<IAuthorizationService>();
         _catalog = new NavCatalogService(new ApprovalService(factory), new InvoiceService(factory, new NoFiles()), worklist, pms, new RestHoursService(factory),
-            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), new DrillService(factory, worklist), new DrillFleetService(new DrillService(factory, worklist), new MeetingService(factory, worklist)), new PermitService(factory, worklist), authorization, new ChatService(factory));
+            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), new DrillService(factory, worklist), new DrillFleetService(new DrillService(factory, worklist), new MeetingService(factory, worklist)), new PermitService(factory, worklist), authorization, new ChatService(factory), new FormService(factory));
     }
 
     public Task DisposeAsync() => _s.DisposeAsync();
@@ -74,6 +74,17 @@ public class NavCatalogTests : IAsyncLifetime
         var inbox = work.Items.Single(i => i.Label == "Conversations");
         Assert.Equal(("/conversations", 0), (inbox.Href, inbox.Badge));
         Assert.Contains("Conversations", Pages(await _catalog.GetAsync(admin, isVessel: true), "Onboard"));
+    }
+
+    [Fact]
+    public async Task TheFormsDesignerIsOfferedToTheCompanyAdminOnlyWhereFormsAreOn()
+    {
+        var admin = Person("CompanyAdmin");
+        Assert.DoesNotContain("Forms", Pages(await _catalog.GetAsync(admin, isVessel: false), "Admin"));
+        await SwitchOnAsync(PolicyModules.Forms);
+        Assert.Contains("Forms", Pages(await _catalog.GetAsync(admin, isVessel: false), "Admin"));
+        Assert.DoesNotContain("Admin", Titles(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync()), isVessel: false)));      // the designer is not for everyone
+        Assert.DoesNotContain("Forms", Pages(await _catalog.GetAsync(admin, isVessel: true), "Onboard"));                                           // and not onboard; the vessel fills forms in F3
     }
 
     [Fact]

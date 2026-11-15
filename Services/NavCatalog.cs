@@ -16,7 +16,7 @@ public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
 public class NavCatalogService(
     ApprovalService approvals, InvoiceService invoices, WorklistService worklist, PmsService pms, RestHoursService rest,
     TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
-    IncidentService incidents, DrillService drills, DrillFleetService drillFleet, PermitService permits, IAuthorizationService authorization, ChatService chat)
+    IncidentService incidents, DrillService drills, DrillFleetService drillFleet, PermitService permits, IAuthorizationService authorization, ChatService chat, FormService forms)
 {
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
     {
@@ -196,6 +196,9 @@ public class NavCatalogService(
             if (!isVessel) projectItems.Add(new("/projects/groups", "Project groups", "project"));
             if (!isVessel && await projects.MayManageAsync(companyId, userId)) projectItems.Add(new("/projects/new", "New project", "project"));
         }
+
+        if (!isVessel && await forms.IsEnabledForCompanyAsync(companyId))
+            admin.Add(new("/forms/types", "Forms", "forms"));
 
         var groups = new List<NavGroup> { new(isVessel ? "Onboard" : "Work", isVessel ? onboard : work) };
         if (maintenance.Count > 0) groups.Add(new("Maintenance", maintenance, "pms planned maintenance"));

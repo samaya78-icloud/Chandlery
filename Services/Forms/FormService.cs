@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using Chandlery.Data;
 using Chandlery.Models;
 using Chandlery.Services.Sync;
@@ -38,6 +38,27 @@ public class FormService(IDbContextFactory<ChandleryDbContext> factory)
     private static void OfficeOnly(ChandleryDbContext db, string what)
     {
         if (db.Node.IsVessel) throw new InvalidOperationException($"{what} is done by the office.");
+    }
+
+    public async Task<bool> IsEnabledForCompanyAsync(Guid companyId) => (await EnabledVesselsAsync(companyId)).Count > 0;
+
+    /// <summary>The groups (with their path) and the vessels a form can be pointed at.</summary>
+    public async Task<(List<(Guid Id, string Path)> Groups, List<(Guid Id, string Name)> Vessels)> ScopeOptionsAsync(Guid companyId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var groups = VesselGroup.BuildTree(await db.VesselGroups.AsNoTracking().Where(g => g.CompanyId == companyId).ToListAsync()).Select(g => (g.Group.Id, g.Path)).ToList();
+        var vessels = (await db.Vessels.AsNoTracking().Where(v => v.CompanyId == companyId).OrderBy(v => v.Name).Select(v => new { v.Id, v.Name }).ToListAsync()).Select(v => (v.Id, v.Name)).ToList();
+        return (groups, vessels);
+    }
+
+    public async Task<(FormType Type, FormVersion Version)?> GetVersionAsync(Guid companyId, Guid versionId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var version = await db.FormVersions.AsNoTracking().FirstOrDefaultAsync(v => v.Id == versionId && v.CompanyId == companyId);
+        if (version is null) return null;
+        return (await db.FormTypes.AsNoTracking().FirstAsync(t => t.Id == version.FormTypeId), version);
     }
 
     // ---- form types (the office) ----

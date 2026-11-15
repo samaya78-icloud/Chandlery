@@ -1,0 +1,328 @@
+@page "/forms/types"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@inject FormService Svc
+@inject NavigationManager Nav
+
+<PageTitle>Forms · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Admin" Title="Forms" Subtitle="The forms vessels fill in. Design a form, publish a version, and the vessels it applies to receive it. A published version never changes; an edit makes the next one.">
+    <Actions>
+        <button class="btn btn-primary" @onclick="StartNew">+ New form</button>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @if (_notice is not null) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div> }
+
+    <div class="grid gap-6 lg:grid-cols-5">
+        <div class="space-y-3 lg:col-span-2">
+            <div class="card grid gap-2 p-3 text-sm md:grid-cols-2">
+                <input class="input md:col-span-2" placeholder="Search code or title" @bind="_search" @bind:event="oninput" />
+                <select class="select" @bind="_department">
+                    <option value="">Every department</option>
+                    @foreach (var d in Departments) { <option value="@d">@d</option> }
+                </select>
+                <select class="select" @bind="_periodicity">
+                    <option value="">Every periodicity</option>
+                    @foreach (var p in Enum.GetValues<FormPeriodicity>()) { <option value="@p">@PeriodicityName(p)</option> }
+                </select>
+                <label class="flex items-center gap-2 text-xs"><input type="checkbox" @bind="_activeOnly" /> In use only</label>
+            </div>
+
+            <div class="card p-2 text-sm">
+                @if (Visible.Count == 0) { <p class="p-3 text-muted">@(_types.Count == 0 ? "No forms yet. Add the first one." : "No form matches.")</p> }
+                @foreach (var t in Visible)
+                {
+                    <button class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left hover:bg-surface-2 @(_selected?.Id == t.Id ? "bg-accent-50" : "")" @onclick="() => SelectAsync(t)">
+                        <span class="w-20 shrink-0 font-mono text-xs font-semibold">@t.Code</span>
+                        <span class="min-w-0 flex-1 truncate">@t.Title</span>
+                        <span class="chip chip-plain" data-tone="neutral">@PeriodicityName(t.Periodicity)</span>
+                        @if (t.OfficeOnly) { <span class="chip" data-tone="info">office</span> }
+                        @if (!t.IsActive) { <span class="chip" data-tone="neutral">off</span> }
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="space-y-5 lg:col-span-3">
+            @if (_form)
+            {
+                <div class="card p-5 text-sm">
+                    <h2 class="mb-3 font-display text-lg font-extrabold text-ink">@(_editing is null ? "New form" : "Form details")</h2>
+                    <div class="grid gap-3 md:grid-cols-3">
+                        <label>Code <input class="input mt-1" @bind="_code" placeholder="PM05" /></label>
+                        <label class="md:col-span-2">Title <input class="input mt-1" @bind="_title" /></label>
+                        <label>Department
+                            <input class="input mt-1" list="departments" @bind="_dept" />
+                            <datalist id="departments">@foreach (var d in Departments) { <option value="@d"></option> }</datalist>
+                        </label>
+                        <label>How often
+                            <select class="select mt-1" @bind="_period">
+                                @foreach (var p in Enum.GetValues<FormPeriodicity>()) { <option value="@p">@PeriodicityName(p)</option> }
+                            </select>
+                        </label>
+                        @if (FormSchedule.PeriodOf(_period) is not null)
+                        {
+                            <label>Due
+                                <select class="select mt-1" @bind="_basis">
+                                    <option value="@FormScheduleBasis.Calendar">on the calendar</option>
+                                    <option value="@FormScheduleBasis.FromPrevious">a period after the last one</option>
+                                </select>
+                            </label>
+                            <label>@(_basis == FormScheduleBasis.Calendar ? "First period starts" : "Counted from (optional)") <input type="date" class="input mt-1" @bind="_startsOn" /></label>
+                        }
+                    </div>
+
+                    <div class="mt-4 grid gap-4 md:grid-cols-2">
+                        <fieldset>
+                            <legend class="mb-1 text-xs font-semibold text-muted">Applies to these groups (and the vessels beneath them)</legend>
+                            <div class="max-h-40 space-y-1 overflow-auto rounded-xl border border-line/60 p-2">
+                                @foreach (var g in _groups)
+                                {
+                                    <label class="flex items-center gap-2 text-xs"><input type="checkbox" checked="@_pickedGroups.Contains(g.Id)" @onchange="e => Toggle(_pickedGroups, g.Id, e.Value is true)" /> @g.Path</label>
+                                }
+                                @if (_groups.Count == 0) { <span class="text-xs text-muted">No vessel groups.</span> }
+                            </div>
+                        </fieldset>
+                        <fieldset>
+                            <legend class="mb-1 text-xs font-semibold text-muted">and these vessels</legend>
+                            <div class="max-h-40 space-y-1 overflow-auto rounded-xl border border-line/60 p-2">
+                                @foreach (var v in _vessels)
+                                {
+                                    <label class="flex items-center gap-2 text-xs"><input type="checkbox" checked="@_pickedVessels.Contains(v.Id)" @onchange="e => Toggle(_pickedVessels, v.Id, e.Value is true)" /> @v.Name</label>
+                                }
+                            </div>
+                        </fieldset>
+                    </div>
+                    <p class="mt-1 text-xs text-muted">Leave both empty and the form applies to every vessel.</p>
+
+                    <div class="mt-4 flex flex-wrap items-center gap-4">
+                        <label class="flex items-center gap-2"><input type="checkbox" @bind="_officeOnly" /> The office fills it in (never sent to a vessel)</label>
+                        @if (_editing is not null) { <label class="flex items-center gap-2"><input type="checkbox" @bind="_active" /> In use</label> }
+                    </div>
+                    <div class="mt-4 flex gap-2">
+                        <button class="btn btn-primary" @onclick="SaveAsync">Save</button>
+                        <button class="btn btn-ghost" @onclick="() => _form = false">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (_selected is { } type)
+            {
+                <div class="card p-5 text-sm">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <h2 class="font-display text-lg font-extrabold text-ink">@type.Code · @type.Title</h2>
+                        <span class="text-xs text-muted">@type.Department · @PeriodicityName(type.Periodicity)@(type.OfficeOnly ? " · office only" : "")</span>
+                        <span class="ml-auto flex gap-2">
+                            <button class="btn btn-secondary btn-sm" @onclick="() => StartEdit(type)">Details</button>
+                            <button class="btn btn-primary btn-sm" @onclick="NewDraftAsync" disabled="@(_versions.Any(v => v.Status == FormVersionStatus.Draft))">+ New version</button>
+                        </span>
+                    </div>
+                    <p class="mt-1 text-xs text-muted">Applies to: @AppliesText(type)</p>
+
+                    <table class="mt-4 w-full text-sm">
+                        <thead><tr class="border-b border-line/60 text-left text-xs text-muted"><th class="py-1">Version</th><th>State</th><th>What changed</th><th>By</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var v in _versions)
+                            {
+                                <tr class="border-b border-line/40">
+                                    <td class="py-2 font-semibold">@v.Number</td>
+                                    <td><span class="chip" data-tone="@(v.Status == FormVersionStatus.Published ? "success" : v.Status == FormVersionStatus.Draft ? "warning" : "neutral")">@v.Status.ToString().ToLowerInvariant()</span></td>
+                                    <td class="text-xs text-muted">@v.Note</td>
+                                    <td class="text-xs text-muted">@v.CreatedByName · @v.CreatedAt.ToString("dd MMM yyyy")</td>
+                                    <td class="whitespace-nowrap text-right">
+                                        <a class="btn btn-ghost btn-sm" href="/forms/builder/@v.Id">@(v.Status == FormVersionStatus.Draft ? "Edit" : "View")</a>
+                                        @if (v.Status != FormVersionStatus.Draft) { <button class="btn btn-ghost btn-sm" @onclick="() => CopyAsync(v)" disabled="@(_versions.Any(x => x.Status == FormVersionStatus.Draft))">Copy</button> }
+                                        @if (v.Status == FormVersionStatus.Published) { <button class="btn btn-ghost btn-sm" @onclick="() => RetireAsync(v)">Retire</button> }
+                                        @if (v.Status == FormVersionStatus.Draft) { <button class="btn btn-ghost btn-sm text-rose-700" @onclick="() => DiscardAsync(v)">Discard</button> }
+                                    </td>
+                                </tr>
+                            }
+                            @if (_versions.Count == 0) { <tr><td colspan="5" class="py-3 text-muted">No version yet. Start one to design the form.</td></tr> }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else if (!_form)
+            {
+                <EmptyState Title="Pick a form" Message="Choose one on the left to see its versions, or add a new form." />
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "type")] public Guid? TypeId { get; set; }
+    [SupplyParameterFromQuery(Name = "published")] public int? Published { get; set; }
+
+    private static readonly string[] StandardDepartments = ["Corporate", "HSEV", "Operations", "Technical"];
+
+    private Guid _companyId;
+    private bool _loaded;
+    private string? _error, _notice;
+    private List<FormType> _types = [];
+    private List<FormVersion> _versions = [];
+    private FormType? _selected;
+    private List<(Guid Id, string Path)> _groups = [];
+    private List<(Guid Id, string Name)> _vessels = [];
+
+    private string _search = "", _department = "", _periodicity = "";
+    private bool _activeOnly = true;
+
+    private bool _form;
+    private FormType? _editing;
+    private string _code = "", _title = "", _dept = "";
+    private FormPeriodicity _period;
+    private FormScheduleBasis _basis;
+    private DateTime? _startsOn;
+    private bool _officeOnly, _active = true;
+    private readonly HashSet<Guid> _pickedGroups = [], _pickedVessels = [];
+
+    private IEnumerable<string> Departments => StandardDepartments.Concat(_types.Select(t => t.Department)).Where(d => d != "").Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(d => d);
+
+    private List<FormType> Visible => _types
+        .Where(t => !_activeOnly || t.IsActive)
+        .Where(t => _department == "" || string.Equals(t.Department, _department, StringComparison.OrdinalIgnoreCase))
+        .Where(t => _periodicity == "" || t.Periodicity.ToString() == _periodicity)
+        .Where(t => _search.Length == 0 || t.Code.Contains(_search, StringComparison.OrdinalIgnoreCase) || t.Title.Contains(_search, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        (_groups, _vessels) = await Svc.ScopeOptionsAsync(_companyId);
+        _types = await Svc.TypesAsync(_companyId);
+        if (TypeId is { } id && _types.FirstOrDefault(t => t.Id == id) is { } chosen)
+        {
+            await SelectAsync(chosen);
+            if (Published is { } number) _notice = $"Version {number} is published. The vessels it applies to will receive it.";
+        }
+        _loaded = true;
+    }
+
+    public static string PeriodicityName(FormPeriodicity p) => p switch
+    {
+        FormPeriodicity.HalfYearly => "Half-yearly", FormPeriodicity.Pms => "PMS", FormPeriodicity.ThirdParty => "Third party", FormPeriodicity.None => "As needed", _ => p.ToString(),
+    };
+
+    private string AppliesText(FormType type)
+    {
+        var groups = FormApplicability.ParseIds(type.AppliesToGroups).Select(id => _groups.FirstOrDefault(g => g.Id == id).Path).Where(p => p is not null);
+        var vessels = FormApplicability.ParseIds(type.AppliesToVessels).Select(id => _vessels.FirstOrDefault(v => v.Id == id).Name).Where(n => n is not null);
+        var all = groups.Concat(vessels).ToList();
+        return all.Count == 0 ? "every vessel" : string.Join(", ", all);
+    }
+
+    private static void Toggle(HashSet<Guid> set, Guid id, bool on) { if (on) set.Add(id); else set.Remove(id); }
+
+    private async Task ReloadAsync()
+    {
+        _types = await Svc.TypesAsync(_companyId);
+        _selected = _selected is null ? null : _types.FirstOrDefault(t => t.Id == _selected.Id);
+        _versions = _selected is null ? [] : await Svc.VersionsAsync(_companyId, _selected.Id);
+    }
+
+    private async Task SelectAsync(FormType type)
+    {
+        _selected = type;
+        _form = false;
+        _error = _notice = null;
+        _versions = await Svc.VersionsAsync(_companyId, type.Id);
+    }
+
+    private void StartNew()
+    {
+        _error = _notice = null; _editing = null; _form = true; _selected = null;
+        (_code, _title, _dept, _period, _basis, _startsOn, _officeOnly, _active) = ("", "", "Technical", FormPeriodicity.Monthly, FormScheduleBasis.Calendar, DateTime.UtcNow.Date, false, true);
+        _pickedGroups.Clear(); _pickedVessels.Clear();
+    }
+
+    private void StartEdit(FormType t)
+    {
+        _error = _notice = null; _editing = t; _form = true;
+        (_code, _title, _dept, _period, _basis, _startsOn, _officeOnly, _active) = (t.Code, t.Title, t.Department, t.Periodicity, t.Basis, t.StartsOn, t.OfficeOnly, t.IsActive);
+        _pickedGroups.Clear(); _pickedGroups.UnionWith(FormApplicability.ParseIds(t.AppliesToGroups));
+        _pickedVessels.Clear(); _pickedVessels.UnionWith(FormApplicability.ParseIds(t.AppliesToVessels));
+    }
+
+    private async Task<Actor> ActorAsync() => Actor.From((await AuthStateTask!).User);
+
+    private async Task SaveAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var input = new NewFormType(_code, _title, _dept, _period, _basis, _startsOn, _pickedGroups.ToList(), _pickedVessels.ToList(), _officeOnly);
+            if (_editing is null)
+            {
+                var made = await Svc.CreateTypeAsync(_companyId, input, await ActorAsync());
+                _form = false;
+                _types = await Svc.TypesAsync(_companyId);
+                await SelectAsync(_types.First(t => t.Id == made.Id));
+                _notice = "Added the form. Start a version to design it.";
+            }
+            else
+            {
+                await Svc.UpdateTypeAsync(_companyId, _editing.Id, input, _active, await ActorAsync());
+                _form = false;
+                await ReloadAsync();
+                _notice = "Saved.";
+            }
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task NewDraftAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var draft = await Svc.CreateDraftAsync(_companyId, _selected!.Id, null, "", await ActorAsync());
+            Nav.NavigateTo($"/forms/builder/{draft.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task CopyAsync(FormVersion v)
+    {
+        _error = _notice = null;
+        try
+        {
+            var copy = await Svc.CopyAsync(_companyId, v.Id, await ActorAsync());
+            Nav.NavigateTo($"/forms/builder/{copy.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task RetireAsync(FormVersion v)
+    {
+        _error = _notice = null;
+        try
+        {
+            await Svc.RetireAsync(_companyId, v.Id);
+            _versions = await Svc.VersionsAsync(_companyId, _selected!.Id);
+            _notice = $"Version {v.Number} is retired: no new entries on it, and the ones already filled stay readable.";
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task DiscardAsync(FormVersion v)
+    {
+        _error = _notice = null;
+        try
+        {
+            await Svc.DiscardDraftAsync(_companyId, v.Id);
+            _versions = await Svc.VersionsAsync(_companyId, _selected!.Id);
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

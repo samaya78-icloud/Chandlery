@@ -7,8 +7,12 @@ namespace Chandlery.Services;
 public record FormException(string FieldId, string Label, string Message);
 
 /// <summary>What <see cref="FormValueRules.Check"/> found: the answers as they should be kept, what is wrong, and what is flagged.</summary>
-public record FormCheck(JsonObject Clean, List<FormProblem> Problems, List<FormException> Exceptions)
+public record FormCheck(JsonObject Clean, List<FormProblem> Problems, List<FormException> Exceptions, IReadOnlySet<string>? HiddenFields = null, IReadOnlySet<string>? HiddenSections = null)
 {
+    /// <summary>Whether a field is shown with the answers as they stand (a screen draws only what is shown).</summary>
+    public bool IsHidden(string fieldId) => HiddenFields?.Contains(fieldId) == true;
+    public bool IsSectionHidden(string sectionId) => HiddenSections?.Contains(sectionId) == true;
+
     public bool Ok => Problems.Count == 0;
 }
 
@@ -114,7 +118,7 @@ public static class FormValueRules
             if (grid.Rows.Count > 0) clean[section.Id] = grid.ToNode();
         }
 
-        return new FormCheck(clean, problems, exceptions);
+        return new FormCheck(clean, problems, exceptions, hiddenFields, hiddenSections);
     }
 
     // ---- a grid's answers ----

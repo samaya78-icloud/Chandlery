@@ -1,0 +1,127 @@
+@* Edits one field of a form, or one column of a grid, in place. Changes go straight onto the object; the builder checks the whole definition after each one. *@
+<div class="rounded-xl border border-line/60 bg-surface p-3">
+    <div class="grid gap-2 md:grid-cols-12">
+        <label class="md:col-span-2 text-xs text-muted">Id <input class="input mt-1" @bind="Input.Id" @bind:after="Changed" /></label>
+        <label class="md:col-span-4 text-xs text-muted">Label <input class="input mt-1" @bind="Input.Label" @bind:after="Changed" /></label>
+        <label class="md:col-span-2 text-xs text-muted">Type
+            <select class="select mt-1" @bind="Input.Type" @bind:after="Changed">
+                @foreach (var type in Types) { <option value="@type">@TypeName(type)</option> }
+            </select>
+        </label>
+        @if (Input.Type == FormFieldTypes.Number || Input.Type == FormFieldTypes.Calculated)
+        {
+            <label class="md:col-span-1 text-xs text-muted">Unit <input class="input mt-1" @bind="Input.Unit" @bind:after="Changed" /></label>
+            <label class="md:col-span-1 text-xs text-muted">Decimals <input type="number" class="input mt-1" @bind="Input.Decimals" @bind:after="Changed" /></label>
+        }
+        <div class="flex items-end gap-2 pb-1 md:col-span-2">
+            @if (Field is null || Field.Calc is null)
+            {
+                <label class="flex items-center gap-1 text-xs"><input type="checkbox" @bind="Input.Required" @bind:after="Changed" /> Required</label>
+            }
+            <button type="button" class="btn btn-ghost btn-sm" @onclick="() => _more = !_more">@(_more ? "Less" : "More")</button>
+        </div>
+    </div>
+
+    @if (_more)
+    {
+        <div class="mt-3 grid gap-2 md:grid-cols-4">
+            @if (Input.Type is FormFieldTypes.Choice or FormFieldTypes.MultiChoice or FormFieldTypes.Rating)
+            {
+                <label class="md:col-span-4 text-xs text-muted">Choices, separated by commas @(Input.Type == FormFieldTypes.Rating ? "(empty means Good, Fair, Bad)" : "")
+                    <input class="input mt-1" @bind="OptionsText" @bind:after="Changed" /></label>
+            }
+            @if (Input.Type == FormFieldTypes.Lookup)
+            {
+                <label class="text-xs text-muted">Looks up
+                    <select class="select mt-1" @bind="Input.Source" @bind:after="Changed">
+                        <option value=""></option>
+                        @foreach (var source in FormFieldTypes.LookupSources) { <option value="@source">@source</option> }
+                    </select>
+                </label>
+            }
+            @if (Input.Type == FormFieldTypes.Number)
+            {
+                <label class="text-xs text-muted">Minimum <input type="number" class="input mt-1" @bind="Input.Min" @bind:after="Changed" /></label>
+                <label class="text-xs text-muted">Maximum <input type="number" class="input mt-1" @bind="Input.Max" @bind:after="Changed" /></label>
+            }
+            @if (Input.Type is FormFieldTypes.Text or FormFieldTypes.LongText)
+            {
+                <label class="text-xs text-muted">Longest answer <input type="number" class="input mt-1" @bind="Input.MaxLength" @bind:after="Changed" /></label>
+            }
+            @if (Field is { } field)
+            {
+                @if (field.Calc is null && field.Type != FormFieldTypes.Calculated && field.Type is not (FormFieldTypes.Photo or FormFieldTypes.Signature or FormFieldTypes.MultiChoice or FormFieldTypes.Lookup))
+                {
+                    <label class="text-xs text-muted">Starts as <input class="input mt-1" @bind="field.Default" @bind:after="Changed" placeholder="@(field.Type == FormFieldTypes.Date ? "today or 2026-01-31" : "")" /></label>
+                    <label class="text-xs text-muted">Filled from
+                        <select class="select mt-1" @bind="field.Prefill" @bind:after="Changed">
+                            <option value=""></option>
+                            <option value="today">today</option>
+                            <option value="vessel.name">vessel name</option>
+                            <option value="vessel.imo">vessel IMO</option>
+                            <option value="vessel.code">vessel code</option>
+                            @if (!string.IsNullOrEmpty(field.Prefill) && field.Prefill.StartsWith("previous.")) { <option value="@field.Prefill">@field.Prefill</option> }
+                        </select>
+                    </label>
+                }
+                <label class="md:col-span-2 text-xs text-muted">Worked out as <input class="input mt-1 font-mono" @bind="field.Calc" @bind:after="Changed" placeholder="for example draftAft - draftFwd" /></label>
+                <label class="md:col-span-2 text-xs text-muted">Shown only if <input class="input mt-1 font-mono" @bind="field.ShowIf" @bind:after="Changed" placeholder="for example condition = &quot;Bad&quot;" /></label>
+                <label class="md:col-span-2 text-xs text-muted">An exception when <input class="input mt-1 font-mono" @bind="field.Flag" @bind:after="Changed" placeholder="for example pressure > 12" /></label>
+                @if (field.Type is FormFieldTypes.Choice or FormFieldTypes.MultiChoice or FormFieldTypes.YesNoNa or FormFieldTypes.Rating)
+                {
+                    <label class="md:col-span-2 text-xs text-muted">These answers are exceptions <input class="input mt-1" @bind="FlagOnText" @bind:after="Changed" placeholder="for example Bad, Fair" /></label>
+                }
+                @if (field.Type is FormFieldTypes.Date or FormFieldTypes.Moment)
+                {
+                    <label class="flex items-center gap-1 text-xs"><input type="checkbox" checked="@(field.Validate?.NotFuture == true)" @onchange="e => SetDateRule(e.Value is true, field.Validate?.NotPast == true)" /> Not in the future</label>
+                    <label class="flex items-center gap-1 text-xs"><input type="checkbox" checked="@(field.Validate?.NotPast == true)" @onchange="e => SetDateRule(field.Validate?.NotFuture == true, e.Value is true)" /> Not in the past</label>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FormInput Input { get; set; } = null!;
+    [Parameter] public bool IsCell { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool _more;
+    private FormField? Field => Input as FormField;
+
+    private string[] Types => IsCell
+        ? FormFieldTypes.All.Where(t => t is not (FormFieldTypes.Photo or FormFieldTypes.Signature or FormFieldTypes.Calculated or FormFieldTypes.LongText)).ToArray()
+        : FormFieldTypes.All;
+
+    private static string TypeName(string type) => type switch
+    {
+        FormFieldTypes.LongText => "long text", FormFieldTypes.Moment => "date and time", FormFieldTypes.MultiChoice => "several choices", FormFieldTypes.YesNoNa => "yes / no / NA",
+        FormFieldTypes.Tick => "tick box", _ => type,
+    };
+
+    private Task Changed() => OnChanged.InvokeAsync();
+
+    private string OptionsText
+    {
+        get => string.Join(", ", Input.Options ?? []);
+        set => Input.Options = Split(value);
+    }
+
+    private string FlagOnText
+    {
+        get => string.Join(", ", Field?.FlagOn ?? []);
+        set { if (Field is { } f) f.FlagOn = Split(value); }
+    }
+
+    private static List<string>? Split(string? text)
+    {
+        var parts = (text ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+        return parts.Count == 0 ? null : parts;
+    }
+
+    private Task SetDateRule(bool notFuture, bool notPast)
+    {
+        if (Field is { } field) field.Validate = notFuture || notPast ? new FormValidate { NotFuture = notFuture, NotPast = notPast } : null;
+        return Changed();
+    }
+}
