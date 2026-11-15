@@ -1,4 +1,4 @@
-@page "/conversations"
+﻿@page "/conversations"
 @attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
 @attribute [VesselAllowed]
 @rendermode InteractiveServer
@@ -30,6 +30,41 @@ else
         }
         <input class="input w-auto" placeholder="Search record or text…" @bind="_search" @bind:event="oninput" />
     </div>
+
+    <details class="card mb-4 p-4" open="@(_hits is not null)">
+        <summary class="cursor-pointer text-sm font-semibold text-ink">Search the words of messages</summary>
+        <div class="mt-3 flex flex-wrap items-end gap-3">
+            <label class="text-xs text-muted">Words<input class="input mt-1 block w-56" placeholder="At least two letters" @bind="_q" @onkeydown="OnSearchKey" /></label>
+            <label class="text-xs text-muted">Kind of record
+                <select class="select mt-1 block w-auto" @bind="_kind">
+                    <option value="">Everything</option>
+                    @foreach (var m in ChatModules.All) { <option value="@m">@ChatModules.Label(m)</option> }
+                </select>
+            </label>
+            <label class="text-xs text-muted">From<input type="date" class="input mt-1 block w-auto" @bind="_from" /></label>
+            <label class="text-xs text-muted">To<input type="date" class="input mt-1 block w-auto" @bind="_to" /></label>
+            <button class="btn btn-secondary" disabled="@(_q.Trim().Length < 2)" @onclick="SearchAsync">Search</button>
+        </div>
+        @if (_hits is not null)
+        {
+            @if (_hits.Count == 0) { <p class="mt-3 text-sm text-muted">No message matches.</p> }
+            else
+            {
+                <ul class="mt-3 space-y-2">
+                    @foreach (var h in _hits)
+                    {
+                        <li class="rounded-lg border border-line p-3 text-sm">
+                            <div class="flex flex-wrap items-center gap-2">
+                                @if (h.Href is not null) { <a href="@h.Href" class="link font-semibold">@h.Label</a> } else { <span class="font-semibold text-ink">@h.Label</span> }
+                                <span class="ml-auto text-xs text-muted">@(string.IsNullOrEmpty(h.VesselName) ? "" : h.VesselName + " · ")@h.At.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
+                            </div>
+                            <p class="mt-1 text-ink-2"><span class="text-muted">@h.Author:</span> @h.Snippet</p>
+                        </li>
+                    }
+                </ul>
+            }
+        }
+    </details>
 
     @if (Visible.Count == 0)
     {
@@ -67,6 +102,9 @@ else
     private Actor _actor = Actor.System;
     private List<ChatInboxRow> _rows = [];
     private string _show = "all", _vessel = "", _search = "";
+    private string _q = "", _kind = "";
+    private DateTime? _from, _to;
+    private List<ChatSearchHit>? _hits;
     private List<string> _vessels = [];
 
     protected override async Task OnInitializedAsync()
@@ -94,6 +132,14 @@ else
     ];
 
     private void SetShow(string key) => _show = key;
+
+    private async Task OnSearchKey(KeyboardEventArgs e) { if (e.Key == "Enter") await SearchAsync(); }
+
+    private async Task SearchAsync()
+    {
+        if (_q.Trim().Length < 2) return;
+        _hits = await Chat.SearchAsync(_companyId, _actor, new ChatSearch(_q, _kind.Length == 0 ? null : _kind, From: _from, To: _to));
+    }
 
     private List<ChatInboxRow> Visible => _rows
         .Where(r => _show switch { "unread" => r.Unread > 0, "mentions" => r.UnreadMentions > 0, "waiting" => r.WaitingForMe > 0, _ => true })

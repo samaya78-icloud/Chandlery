@@ -1,4 +1,4 @@
-namespace Chandlery.Models;
+﻿namespace Chandlery.Models;
 
 /// <summary>Who may see a message (spec 10 section 2).</summary>
 public enum ChatChannel
@@ -105,4 +105,11 @@ public static class ChatModules
     public const string Incident = "Incident";
 
     public static readonly string[] All = [Requisition, Rfq, PurchaseOrder, Delivery, Worklist, PmsJob, TankInspection, RiskAssessment, Project, Incident];
+
+    /// <summary>What a person calls this kind of record.</summary>
+    public static string Label(string moduleType) => moduleType switch
+    {
+        Requisition => "Requisitions", Rfq => "RFQs", PurchaseOrder => "Orders", Delivery => "Deliveries", Worklist => "Worklist tasks", PmsJob => "Maintenance jobs",
+        TankInspection => "Tank inspections", RiskAssessment => "Risk assessments", Project => "Projects", Incident => "Incidents", _ => moduleType,
+    };
 }

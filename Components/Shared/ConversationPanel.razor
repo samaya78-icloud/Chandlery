@@ -11,6 +11,7 @@
             @if (_unreadAtOpen > 0) { <StatusChip Label="@($"{_unreadAtOpen} new")" Tone="warning" /> }
             @if (_view.NeedingReply > 0) { <StatusChip Label="@($"{_view.NeedingReply} waiting for a reply")" Tone="warning" /> }
             @if (_view.Resolved) { <StatusChip Label="Resolved" Tone="success" /> }
+            @if (_view.Items.Count > 0 && _viewer.Side != ChatSide.Supplier) { <a class="link text-xs" href="/conversations/transcript/@ModuleType/@RecordId" target="_blank">Print</a> }
             @if (_view.Items.Count > 0 && _viewer.Side != ChatSide.Supplier)
             {
                 <button class="btn btn-sm btn-ghost ml-auto" @onclick="ToggleResolvedAsync">@(_view.Resolved ? "Reopen" : "Mark resolved")</button>
@@ -143,9 +144,11 @@
     protected override async Task OnParametersSetAsync()
     {
         _enabled = await Chat.IsEnabledAsync(CompanyId, VesselId);
+        var sharedOn = !_enabled || await Chat.IsSharedEnabledAsync(CompanyId, VesselId);
+        if (OnlyChannel == ChatChannel.Shared && !sharedOn) _enabled = false;                                  // a supplier thread has no place where suppliers are switched off
         _viewer = _enabled ? await Chat.ViewerAsync(CompanyId, Actor) : null;
         if (_viewer is null) return;
-        _channels = OnlyChannel is { } only && ChatRules.ChannelsFor(_viewer.Side).Contains(only) ? [only] : ChatRules.ChannelsFor(_viewer.Side);
+        _channels = OnlyChannel is { } only && ChatRules.ChannelsFor(_viewer.Side).Contains(only) ? [only] : ChatRules.ChannelsFor(_viewer.Side).Where(c => c != ChatChannel.Shared || sharedOn).ToList();
         if (!_channels.Contains(_channel)) _channel = _channels.FirstOrDefault();
         _view = await Chat.ThreadAsync(CompanyId, Actor, ModuleType, RecordId, Topic);
         _unreadAtOpen = _view.Unread;

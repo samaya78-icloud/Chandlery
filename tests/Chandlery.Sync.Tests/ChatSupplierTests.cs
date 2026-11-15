@@ -27,7 +27,7 @@ public class ChatSupplierTests : IAsyncLifetime
         var other = new Supplier { Name = "Other Marine Co", ContactEmail = "other@example.com" };
         db.Suppliers.Add(other);
         _c = other.Id;
-        foreach (var module in new[] { PolicyModules.Conversations })
+        foreach (var module in new[] { PolicyModules.Conversations, PolicyModules.ConversationsWithSuppliers })
             db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = module, Enabled = true });
         await db.SaveChangesAsync();
         _supplierA = await SupplierUserAsync(_a, "Anna");
@@ -143,5 +143,49 @@ public class ChatSupplierTests : IAsyncLifetime
         Assert.Empty((await _chat.ThreadAsync(_s.CompanyId, _supplierA, ChatModules.Worklist, rfq.Id)).Items);
         await Assert.ThrowsAsync<InvalidOperationException>(() => _chat.PostAsync(_s.CompanyId, _supplierA, new ChatPost(ChatModules.Worklist, Guid.NewGuid(), _s.VesselId, ChatChannel.Shared, "hello")));
         Assert.Null(await _chat.InboxCountsAsync(_s.CompanyId, _supplierA));
+    }
+
+    [Fact]
+    public async Task WhereTheSupplierChannelIsSwitchedOff_NobodyWritesOrReadsOnIt_AndTheScreensKnow()
+    {
+        var rfq = await RfqAsync(_a);
+        await _chat.PostAsync(_s.CompanyId, _s.User, Post(rfq.Id, "Before it was switched off", topic: ChatRules.SupplierTopic(_a)));
+        Assert.True(await _chat.IsSharedEnabledAsync(_s.CompanyId, _s.VesselId));
+        Assert.Single((await ReadAsync(_supplierA, rfq.Id)).Items);
+
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
+        {
+            (await db.VesselModuleSwitches.SingleAsync(m => m.Module == PolicyModules.ConversationsWithSuppliers)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        Assert.False(await _chat.IsSharedEnabledAsync(_s.CompanyId, _s.VesselId));
+        Assert.Empty((await ReadAsync(_supplierA, rfq.Id)).Items);                                                  // the supplier reads nothing
+        Assert.Contains("not open to you", (await Assert.ThrowsAsync<InvalidOperationException>(() => _chat.PostAsync(_s.CompanyId, _supplierA, Post(rfq.Id, "hello")))).Message);
+        Assert.Contains("not switched on", (await Assert.ThrowsAsync<InvalidOperationException>(() => _chat.PostAsync(_s.CompanyId, _s.User, Post(rfq.Id, "to the supplier", topic: ChatRules.SupplierTopic(_a))))).Message);
+        await _chat.PostAsync(_s.CompanyId, _s.User, Post(rfq.Id, "Internal talk goes on", ChatChannel.Internal));       // the company still talks among itself
+    }
+
+    [Fact]
+    public async Task ASupplierLearnsOfAReplyOnItsList_AndNotOfItsOwnWords()
+    {
+        var rfq = await RfqAsync(_a, _b);
+        await _chat.PostAsync(_s.CompanyId, _s.User, Post(rfq.Id, "Please confirm the lead time", topic: ChatRules.SupplierTopic(_a)));
+        await _chat.PostAsync(_s.CompanyId, _s.User, Post(rfq.Id, "A different question for B", topic: ChatRules.SupplierTopic(_b)));
+        await _chat.PostAsync(_s.CompanyId, _supplierA, Post(rfq.Id, "Three weeks"));
+
+        Assert.Equal(1, (await _chat.SupplierUnreadAsync(_supplierA, _a, ChatModules.Rfq, [rfq.Id]))[rfq.Id]);          // the office's line, not its own
+        Assert.Equal(1, (await _chat.SupplierUnreadAsync(_supplierB, _b, ChatModules.Rfq, [rfq.Id]))[rfq.Id]);
+        await _chat.MarkReadAsync(_s.CompanyId, _supplierA, ChatModules.Rfq, rfq.Id);
+        Assert.Empty(await _chat.SupplierUnreadAsync(_supplierA, _a, ChatModules.Rfq, [rfq.Id]));
+        Assert.Equal(1, (await _chat.SupplierUnreadAsync(_supplierB, _b, ChatModules.Rfq, [rfq.Id]))[rfq.Id]);        // reading one supplier's thread says nothing about another's
+        await Task.Delay(20);
+        await _chat.PostAsync(_s.CompanyId, _s.User, Post(rfq.Id, "Thanks, and the price?", topic: ChatRules.SupplierTopic(_a)));
+        Assert.Equal(1, (await _chat.SupplierUnreadAsync(_supplierA, _a, ChatModules.Rfq, [rfq.Id]))[rfq.Id]);
+
+        await using var db = await _s.ShoreFactory.CreateDbContextAsync();
+        var name = await db.Suppliers.IgnoreQueryFilters().Where(s => s.Id == _a).Select(s => s.Name).SingleAsync();
+        Assert.Equal("With " + name, await _chat.TopicTitleAsync(ChatRules.SupplierTopic(_a)));
+        Assert.Equal("", await _chat.TopicTitleAsync(""));
+        Assert.Equal("Delivery damage", await _chat.TopicTitleAsync("Delivery damage"));
     }
 }

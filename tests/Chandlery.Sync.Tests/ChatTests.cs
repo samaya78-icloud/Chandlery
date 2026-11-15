@@ -1,4 +1,4 @@
-using Chandlery.Models;
+﻿using Chandlery.Models;
 using Chandlery.Services;
 using Chandlery.Services.Sync;
 using Marine.Sync;
@@ -21,7 +21,8 @@ public class ChatTests : IAsyncLifetime
         _vessel = new ChatService(_s.VesselFactory);
         await using (var db = await _s.ShoreFactory.CreateDbContextAsync())
         {
-            db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = PolicyModules.Conversations, Enabled = true });
+            foreach (var module in new[] { PolicyModules.Conversations, PolicyModules.ConversationsWithSuppliers })
+                db.VesselModuleSwitches.Add(new VesselModuleSwitch { CompanyId = _s.CompanyId, VesselId = _s.VesselId, Module = module, Enabled = true });
             await db.SaveChangesAsync();
         }
         _chief = await SignOnAsync("C3001", "Chief Officer");

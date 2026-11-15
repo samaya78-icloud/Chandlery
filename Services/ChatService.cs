@@ -12,6 +12,10 @@ public sealed record ChatInboxRow(string ModuleType, Guid RecordId, string Topic
     string LastPreview, int Unread, int UnreadMentions, int WaitingForMe, bool Resolved);
 
 /// <summary>The numbers behind the menu badge and the home page card: threads, not messages.</summary>
+public sealed record ChatSearch(string Text, string? ModuleType = null, Guid? VesselId = null, DateTime? From = null, DateTime? To = null);
+
+public sealed record ChatSearchHit(string ModuleType, Guid RecordId, string Topic, Guid MessageId, string Label, string? Href, string VesselName, string Author, DateTime At, string Snippet);
+
 public sealed record ChatInboxCounts(int UnreadThreads, int MentionThreads, int WaitingThreads);
 
 /// <summary>
@@ -28,6 +32,18 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
     // ---- the module ----
 
     public static Task<bool> IsEnabledForVesselAsync(ChandleryDbContext db, Guid companyId, Guid vesselId) => ModuleGate.IsEnabledAsync(db, companyId, vesselId, PolicyModules.Conversations);
+
+    /// <summary>Whether the shared channel (conversations with suppliers) is switched on for a vessel; a record with no vessel always may.</summary>
+    public static async Task<bool> IsSharedEnabledAsync(ChandleryDbContext db, Guid companyId, Guid? vesselId)
+        => vesselId is not { } vessel || (await IsEnabledForVesselAsync(db, companyId, vessel) && await ModuleGate.IsEnabledAsync(db, companyId, vessel, PolicyModules.ConversationsWithSuppliers));
+
+    /// <summary>The same question for a screen: should it offer the shared channel for this vessel?</summary>
+    public async Task<bool> IsSharedEnabledAsync(Guid companyId, Guid? vesselId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        return await IsSharedEnabledAsync(db, companyId, vesselId);
+    }
 
     private static async Task RequireEnabledAsync(ChandleryDbContext db, Guid companyId, Guid? vesselId)
     {
@@ -78,6 +94,7 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
                 : await db.PurchaseOrders.AsNoTracking().Where(p => p.Id == post.RecordId).Select(p => p.VesselId).FirstOrDefaultAsync() };
         await RequireEnabledAsync(db, companyId, post.VesselId);
         if ((await HiddenRecordsAsync(db, companyId, who.Viewer, post.ModuleType, [post.RecordId])).Count > 0) throw new InvalidOperationException("This record is not open to you.");
+        if (post.Channel == ChatChannel.Shared && !await IsSharedEnabledAsync(db, companyId, post.VesselId)) throw new InvalidOperationException("Conversations with suppliers are not switched on for this vessel.");
         if (!ChatRules.CanPost(who.Side, post.Channel)) throw new InvalidOperationException(who.Side == ChatSide.Vessel ? "Onboard, messages are internal." : "This channel is not open to you.");
         if (who.Side == ChatSide.Vessel && post.VesselId != who.Viewer.VesselId) throw new InvalidOperationException("You are not signed on to this vessel.");
 
@@ -298,6 +315,94 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         return rows.OrderByDescending(r => r.LastAt).ToList();
     }
 
+    /// <summary>
+    /// Searches the words of the messages the person may read, across records: edits and removals count as the thread now reads, and nothing a person may not see is searched.
+    /// The newest matches come first. A record kind, a vessel and a date range narrow it.
+    /// </summary>
+    public async Task<List<ChatSearchHit>> SearchAsync(Guid companyId, Actor actor, ChatSearch filter, int max = 100)
+    {
+        var text = (filter.Text ?? "").Trim();
+        if (text.Length < 2) return [];
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        if (who.Side == ChatSide.Supplier) throw new InvalidOperationException("Suppliers have no inbox.");
+
+        var pattern = "%" + text.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+        var matched = db.ChatMessages.Where(m => m.CompanyId == companyId && (filter.ModuleType == null || m.ModuleType == filter.ModuleType) && EF.Functions.ILike(m.Body, pattern)).Select(m => m.RecordId).Distinct();
+        var all = (await db.ChatMessages.AsNoTracking().Where(m => m.CompanyId == companyId && matched.Contains(m.RecordId)).ToListAsync()).Where(m => ChatRules.Visible(m, who.Viewer)).ToList();
+        var hidden = await HiddenRecordsAsync(db, companyId, who.Viewer, ChatModules.Incident, all.Where(m => m.ModuleType == ChatModules.Incident).Select(m => m.RecordId));
+        var threads = all.Where(m => !(m.ModuleType == ChatModules.Incident && hidden.Contains(m.RecordId))).GroupBy(m => (m.ModuleType, m.RecordId, m.Topic)).ToList();
+
+        var hits = new List<(ChatItem Item, string ModuleType, Guid RecordId, string Topic)>();
+        foreach (var g in threads)
+            foreach (var item in ChatRules.Replay(g, who.Viewer).Items)
+            {
+                if (item.Removed || item.Message.Kind != ChatKind.Message) continue;
+                if (item.Body.IndexOf(text, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (filter.VesselId is { } vessel && item.Message.VesselId != vessel) continue;
+                if (filter.From is { } from && item.Message.At < from) continue;
+                if (filter.To is { } to && item.Message.At >= to.AddDays(1)) continue;
+                hits.Add((item, g.Key.ModuleType, g.Key.RecordId, g.Key.Topic));
+            }
+        var top = hits.OrderByDescending(h => h.Item.Message.At).Take(max).ToList();
+
+        var records = await DescribeAsync(db, who.Side, top.Select(h => (h.ModuleType, h.RecordId)));
+        var vesselIds = top.Select(h => h.Item.Message.VesselId).OfType<Guid>().Distinct().ToList();
+        var vessels = await db.Vessels.AsNoTracking().Where(v => vesselIds.Contains(v.Id)).ToDictionaryAsync(v => v.Id, v => v.Name);
+        return top.Select(h =>
+        {
+            var info = records.GetValueOrDefault((h.ModuleType, h.RecordId));
+            return new ChatSearchHit(h.ModuleType, h.RecordId, h.Topic, h.Item.Message.Id, info?.Label ?? ChatModules.Label(h.ModuleType), info?.Href,
+                h.Item.Message.VesselId is { } v ? vessels.GetValueOrDefault(v, "") : "", h.Item.Message.AuthorName, h.Item.Message.At, Snippet(h.Item.Body, text));
+        }).ToList();
+    }
+
+    /// <summary>
+    /// For a supplier's lists: how many messages from the buyer are new to it on each of its own RFQs or orders. It is how a supplier learns a reply has come,
+    /// since it has no inbox. Only the buyer's shared messages in the supplier's own thread count, never its own.
+    /// </summary>
+    public async Task<Dictionary<Guid, int>> SupplierUnreadAsync(Actor actor, Guid supplierId, string moduleType, IEnumerable<Guid> recordIds)
+    {
+        var ids = recordIds.Distinct().ToList();
+        if (actor.UserId is not { } userId || ids.Count == 0 || (moduleType != ChatModules.Rfq && moduleType != ChatModules.PurchaseOrder)) return [];
+        await using var db = await factory.CreateDbContextAsync();
+        var topic = ChatRules.SupplierTopic(supplierId);
+        var messages = await db.ChatMessages.AsNoTracking().IgnoreQueryFilters()
+            .Where(m => m.ModuleType == moduleType && ids.Contains(m.RecordId) && m.Topic == topic && m.Channel == ChatChannel.Shared && m.Kind == ChatKind.Message && m.AuthorUserId != userId)
+            .Select(m => new { m.RecordId, m.At }).ToListAsync();
+        var reads = (await db.ChatReads.AsNoTracking().IgnoreQueryFilters().Where(r => r.UserId == userId && r.ModuleType == moduleType && r.Topic == topic && ids.Contains(r.RecordId))
+            .Select(r => new { r.RecordId, r.LastReadAt }).ToListAsync()).ToDictionary(r => r.RecordId, r => r.LastReadAt);
+        return messages.GroupBy(m => m.RecordId).Select(g => (g.Key, Count: g.Count(m => !reads.TryGetValue(g.Key, out var seen) || m.At > seen))).Where(x => x.Count > 0).ToDictionary(x => x.Key, x => x.Count);
+    }
+
+    /// <summary>What a record is called in a conversation (its number and title), or the kind of record when it is not named.</summary>
+    public async Task<string> LabelAsync(Guid companyId, Actor actor, string moduleType, Guid recordId)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var who = await WhoAsync(db, companyId, actor);
+        return (await DescribeAsync(db, who.Side, [(moduleType, recordId)])).GetValueOrDefault((moduleType, recordId))?.Label ?? ChatModules.Label(moduleType);
+    }
+
+    /// <summary>What a thread is called: nothing for the main thread, "With {supplier}" for a supplier thread, otherwise its topic.</summary>
+    public async Task<string> TopicTitleAsync(string topic)
+    {
+        if (topic.Length == 0) return "";
+        if (ChatRules.SupplierOfTopic(topic) is not { } supplierId) return topic;
+        await using var db = await factory.CreateDbContextAsync();
+        return "With " + (await db.Suppliers.AsNoTracking().IgnoreQueryFilters().Where(s => s.Id == supplierId).Select(s => s.Name).FirstOrDefaultAsync() ?? "the supplier");
+    }
+
+    /// <summary>The words around the first match, so a result shows why it matched.</summary>
+    public static string Snippet(string body, string text)
+    {
+        var at = Math.Max(0, body.IndexOf(text, StringComparison.OrdinalIgnoreCase));
+        var start = Math.Max(0, at - 50);
+        var end = Math.Min(body.Length, at + text.Length + 80);
+        return (start > 0 ? "…" : "") + body[start..end].Replace("\n", " ") + (end < body.Length ? "…" : "");
+    }
+
     /// <summary>What the menu badge and the home page card show. Returns null when the person cannot take part in conversations.</summary>
     public async Task<ChatInboxCounts?> InboxCountsAsync(Guid companyId, Actor actor)
     {
@@ -395,11 +500,14 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
         if (viewer.Side == ChatSide.Supplier)
         {
             if (viewer.SupplierId is not { } supplier) return ids.ToHashSet();
-            if (moduleType == ChatModules.Rfq)
-                return ids.Except(await db.Rfqs.AsNoTracking().Where(r => r.CompanyId == companyId && ids.Contains(r.Id) && r.InvitedSupplierIds.Contains(supplier)).Select(r => r.Id).ToListAsync()).ToHashSet();
-            if (moduleType == ChatModules.PurchaseOrder)
-                return ids.Except(await db.PurchaseOrders.AsNoTracking().Where(p => p.CompanyId == companyId && ids.Contains(p.Id) && p.SupplierId == supplier && p.Status == PoStatus.Approved).Select(p => p.Id).ToListAsync()).ToHashSet();
-            return ids.ToHashSet();
+            var own = moduleType == ChatModules.Rfq
+                ? await db.Rfqs.AsNoTracking().Where(r => r.CompanyId == companyId && ids.Contains(r.Id) && r.InvitedSupplierIds.Contains(supplier)).Select(r => new { r.Id, r.VesselId }).ToListAsync()
+                : moduleType == ChatModules.PurchaseOrder
+                    ? await db.PurchaseOrders.AsNoTracking().Where(p => p.CompanyId == companyId && ids.Contains(p.Id) && p.SupplierId == supplier && p.Status == PoStatus.Approved).Select(p => new { p.Id, p.VesselId }).ToListAsync()
+                    : [];
+            var open = new HashSet<Guid>();
+            foreach (var record in own) if (await IsSharedEnabledAsync(db, companyId, record.VesselId)) open.Add(record.Id);
+            return ids.Where(i => !open.Contains(i)).ToHashSet();
         }
 
         if (moduleType != ChatModules.Incident) return [];
