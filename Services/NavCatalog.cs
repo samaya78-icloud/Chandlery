@@ -18,7 +18,51 @@ public class NavCatalogService(
     TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
     IncidentService incidents, DrillService drills, DrillFleetService drillFleet, PermitService permits, IAuthorizationService authorization, ChatService chat, FormService forms)
 {
+    // The menu, the finder and every page header ask for the same list; a few seconds of memory spares the counts behind it being worked out again each time.
+    private (DateTime At, string? User, bool Vessel, List<NavGroup> Groups)? _memo;
+
+    /// <summary>
+    /// The pages that sit beside the one at <paramref name="path"/> in the menu (same group, same sub-heading), with the one that holds the page marked, so a page can offer a way back to its neighbours.
+    /// Empty when the page is not in the menu or stands alone there. The dashboard is never a neighbour: the breadcrumb already leads home.
+    /// </summary>
+    public async Task<(List<NavEntry> Pages, string? Current)> NeighboursAsync(ClaimsPrincipal user, bool isVessel, string path)
+    {
+        path = "/" + path.Split('?', '#')[0].Trim('/').ToLowerInvariant();
+        var groups = await GetAsync(user, isVessel);
+        foreach (var group in groups)
+        {
+            var entries = group.Items.Where(i => i.Href != "/").ToList();
+            var holder = entries
+                .Where(i => path == i.Href || path.StartsWith(i.Href + "/"))
+                .OrderByDescending(i => i.Href.Length)
+                .FirstOrDefault();
+            if (holder is null) continue;
+            var set = entries.Where(i => i.Section == holder.Section).ToList();
+            return set.Count > 1 ? (set, holder.Href) : ([], null);
+        }
+
+        // A page the menu does not list (a report, an import, a setting) still sits in a section: show that section's pages, none of them marked.
+        if (Chandlery.Components.Shared.Breadcrumbs.SectionOf(path) is { } section)
+        {
+            var group = groups.FirstOrDefault(g => string.Equals(g.Title, section, StringComparison.OrdinalIgnoreCase));
+            var set = group is not null
+                ? group.Items.Where(i => i.Href != "/").ToList()
+                : groups.SelectMany(g => g.Items).Where(i => string.Equals(i.Section, section, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (set.Count > 1) return (set, null);
+        }
+        return ([], null);
+    }
+
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
+    {
+        var who = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (_memo is { } m && m.User == who && m.Vessel == isVessel && DateTime.UtcNow - m.At < TimeSpan.FromSeconds(20)) return m.Groups;
+        var built = await BuildAsync(user, isVessel);
+        _memo = (DateTime.UtcNow, who, isVessel, built);
+        return built;
+    }
+
+    private async Task<List<NavGroup>> BuildAsync(ClaimsPrincipal user, bool isVessel)
     {
         var groups = new List<NavGroup>();
         if (user.Identity?.IsAuthenticated != true) return groups;

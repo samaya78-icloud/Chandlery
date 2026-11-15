@@ -1,4 +1,5 @@
 @inject NavigationManager Navigation
+@inject NavCatalogService Catalog
 
 <div class="mb-7 flex flex-wrap items-start justify-between gap-4">
     <div class="min-w-0">
@@ -56,6 +57,21 @@
         {
             <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">@Facts</div>
         }
+        @* The other pages of this part of the menu, so a page is never a dead end (the menu itself only opens from the logo). *@
+        @if (_neighbours.Count > 1)
+        {
+            <nav aria-label="In this section" class="section-nav mt-4 flex flex-wrap items-center gap-1 print:hidden">
+                @foreach (var link in _neighbours)
+                {
+                    var here = link.Href == _neighbourCurrent;
+                    <a href="@link.Href" aria-current="@(here ? "page" : null)"
+                       class="@("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium no-underline transition " + (here ? "bg-accent-50 font-semibold text-accent-700" : "text-muted hover:bg-surface-2 hover:text-ink"))">
+                        @link.Label
+                        @if (link.Badge > 0) { <span class="rounded-full bg-surface-2 px-1.5 text-xs font-bold text-ink-2">@link.Badge</span> }
+                    </a>
+                }
+            </nav>
+        }
     </div>
     @if (Actions is not null)
     {
@@ -82,16 +98,31 @@
     /// <summary>An extra step between the list and this page, e.g. the order a document belongs to.</summary>
     [Parameter] public Crumb? Parent { get; set; }
 
-    private List<Crumb> _trail = new();
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
-    protected override void OnParametersSet()
+    private List<Crumb> _trail = new();
+    private List<NavEntry> _neighbours = [];
+    private string? _neighbourCurrent, _neighboursFor;
+
+    protected override async Task OnParametersSetAsync()
     {
-        var ancestors = Breadcrumbs.Ancestors("/" + Navigation.ToBaseRelativePath(Navigation.Uri));
-        if (ancestors.Count == 0) { _trail = ancestors; return; }
-        // A module's front page is titled like the module ("Forms"): don't show "Home > Forms > Forms".
-        if (ancestors[^1].Href is null && string.Equals(ancestors[^1].Label, Title, StringComparison.OrdinalIgnoreCase)) ancestors.RemoveAt(ancestors.Count - 1);
-        if (Parent is not null) ancestors.Add(Parent);
-        ancestors.Add(new Crumb(Title, null));
-        _trail = ancestors;
+        var path = "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+        var ancestors = Breadcrumbs.Ancestors(path);
+        if (ancestors.Count == 0) _trail = ancestors;
+        else
+        {
+            // A module's front page is titled like the module ("Forms"): don't show "Home > Forms > Forms".
+            if (ancestors[^1].Href is null && string.Equals(ancestors[^1].Label, Title, StringComparison.OrdinalIgnoreCase)) ancestors.RemoveAt(ancestors.Count - 1);
+            if (Parent is not null) ancestors.Add(Parent);
+            ancestors.Add(new Crumb(Title, null));
+            _trail = ancestors;
+        }
+
+        // The page's neighbours in the menu only change when the page does.
+        var where = path.Split('?', '#')[0];
+        if (where == _neighboursFor || AuthStateTask is null) return;
+        _neighboursFor = where;
+        var user = (await AuthStateTask).User;
+        (_neighbours, _neighbourCurrent) = await Catalog.NeighboursAsync(user, NodeContext.Current.IsVessel, where);
     }
 }

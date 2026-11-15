@@ -322,3 +322,6 @@
 .tank-plan .tank-handle[data-handle="nw"], .tank-plan .tank-handle[data-handle="se"] { cursor: nwse-resize; }
 .tank-plan .tank-handle[data-handle="ne"], .tank-plan .tank-handle[data-handle="sw"] { cursor: nesw-resize; }
 .tank-plan .tank-cell:hover .tank-handle { fill: currentColor; fill-opacity: 0.2; }
+
+/* The strip of neighbouring pages under a page title: the current one reads like the active menu entry, also in dark mode */
+:root[data-mode="dark"] .section-nav [aria-current="page"] { color: var(--accent-300); }
