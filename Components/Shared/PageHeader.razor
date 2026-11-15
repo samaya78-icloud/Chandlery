@@ -88,6 +88,8 @@
     {
         var ancestors = Breadcrumbs.Ancestors("/" + Navigation.ToBaseRelativePath(Navigation.Uri));
         if (ancestors.Count == 0) { _trail = ancestors; return; }
+        // A module's front page is titled like the module ("Forms"): don't show "Home > Forms > Forms".
+        if (ancestors[^1].Href is null && string.Equals(ancestors[^1].Label, Title, StringComparison.OrdinalIgnoreCase)) ancestors.RemoveAt(ancestors.Count - 1);
         if (Parent is not null) ancestors.Add(Parent);
         ancestors.Add(new Crumb(Title, null));
         _trail = ancestors;

@@ -13,7 +13,8 @@ public record ModuleStat(string Label, string Value, string Href, string Tone = 
 }
 
 /// <summary>One module's card: its name, where it lives, and its handful of numbers.</summary>
-public record ModuleSummary(string Key, string Title, string Href, List<ModuleStat> Stats)
+/// <summary>NewHref is the page for starting a new record in the module (null when the module has none, or the person may not): it puts an "Add new" button on the card.</summary>
+public record ModuleSummary(string Key, string Title, string Href, List<ModuleStat> Stats, string? NewHref = null)
 {
     public int Severity => Stats.Count == 0 ? 0 : Stats.Max(s => s.Severity);
 }
@@ -43,7 +44,7 @@ public class DashboardModuleService(
                 new("To verify", w.AwaitingVerification.ToString("N0"), verifyHref, Hot(w.AwaitingVerification, "info"),
                     isVessel ? "Completed, waiting for the office" : "Completed by vessels, waiting for you",
                     isVessel ? 0 : w.AwaitingVerification, "worklist tasks to verify"),
-            ]));
+            ], "/worklist?new=1"));
         }
 
         if (await pms.CountsAsync(companyId) is { } p)
@@ -67,7 +68,7 @@ public class DashboardModuleService(
                 new("To finish", formCounts.ToFinish.ToString("N0"), "/forms", Hot(formCounts.ToFinish, "warning"), "Drafts and those sent back", formCounts.ToFinish, "forms to finish"),
             };
             if (!isVessel) formStats.Add(new("To review", formCounts.ToReview.ToString("N0"), "/forms/review", Hot(formCounts.ToReview, "warning"), "Sent by the vessels, waiting for a decision", formCounts.ToReview, "forms to review"));
-            modules.Add(new("forms", "Forms", isVessel ? "/forms" : "/forms/review", formStats));
+            modules.Add(new("forms", "Forms", isVessel ? "/forms" : "/forms/review", formStats, "/forms"));
         }
 
         if (await tanks.CountsAsync(companyId) is { } t)
@@ -79,7 +80,7 @@ public class DashboardModuleService(
                 stats.Add(new("To review", t.WaitingReview.ToString("N0"), "/tanks/review", t.WaitingBad > 0 ? "danger" : Hot(t.WaitingReview, "warning"), $"{t.WaitingBad} with a Bad rating", t.WaitingReview, "tank inspections to review"));
             stats.Add(new("Exceptions now", t.CurrentExceptions.ToString("N0"), "/tanks/exceptions", t.TanksWithBad > 0 ? "danger" : Hot(t.CurrentExceptions, "warning"), $"{t.TanksWithBad} tank(s) with a Bad rating", t.TanksWithBad, "tanks rated Bad"));
             stats.Add(new("Never inspected", t.NeverInspected.ToString("N0"), "/tanks", Hot(t.NeverInspected, "info")));
-            modules.Add(new("tanks", "Tank inspection", "/tanks", stats));
+            modules.Add(new("tanks", "Tank inspection", "/tanks", stats, "/tanks/inspections/new"));
         }
 
         if (await risk.CountsAsync(companyId) is { } r)
@@ -90,7 +91,7 @@ public class DashboardModuleService(
                 new("Due for review", r.DueForReview.ToString("N0"), "/risk", r.Overdue > 0 ? "danger" : Hot(r.DueForReview, "warning"), $"{r.Overdue} overdue", r.Overdue, "risk assessments overdue for review"),
                 new("Serious risk still signed", r.HighResidual.ToString("N0"), "/risk", Hot(r.HighResidual, "warning"), "High or worse left after controls"),
                 new("Drafts gone quiet", r.OldDrafts.ToString("N0"), "/risk", Hot(r.OldDrafts, "info"), $"Not submitted after {RiskAssessmentService.OldDraftDays} days"),
-            ]));
+            ], "/risk/new"));
         }
 
         if (isVessel)
@@ -139,7 +140,7 @@ public class DashboardModuleService(
                     new("Urgent and open", ic.UrgentOpen.ToString("N0"), "/incidents", Hot(ic.UrgentOpen, "danger"), "Serious reports not yet closed"),
                     new("Waiting for the Master", ic.ToReview.ToString("N0"), "/incidents", "info", "Reported, not yet reviewed onboard"),
                 ];
-            modules.Add(new("incidents", "Incident reports", isVessel ? "/incidents" : "/incidents/queue", stats));
+            modules.Add(new("incidents", "Incident reports", isVessel ? "/incidents" : "/incidents/queue", stats, "/incidents/new"));
         }
 
         if (await drillFleet.CountsAsync(companyId, Actor.From(user)) is { } dc)
@@ -153,7 +154,7 @@ public class DashboardModuleService(
                 new("Crew without a drill", dc.CrewLate.ToString("N0"), dc.IsOffice ? "/drills/fleet" : "/drills", Hot(dc.CrewLate, "warning"), dc.QuarterVessels > 0 ? $"{dc.QuarterVessels} vessel(s) over the quarter-of-crew rule" : "Past their own due date for a drill everyone attends"),
                 new("Meetings overdue", dc.MeetingsOverdue.ToString("N0"), dc.IsOffice ? "/drills/fleet" : "/meetings", Hot(dc.MeetingsOverdue, "warning"), "Scheduled meetings past their date", dc.MeetingsOverdue, "safety meetings overdue"),
             ];
-            modules.Add(new("drills", "Drills and meetings", href, stats));
+            modules.Add(new("drills", "Drills and meetings", href, stats, isVessel ? "/drills/new" : null));
         }
 
         if (await permits.CountsAsync(companyId, Actor.From(user)) is { } ptw)
@@ -166,7 +167,7 @@ public class DashboardModuleService(
                 new("Expired, not closed", ptw.Expired.ToString("N0"), href, Hot(ptw.Expired, "danger"), "Past their window and still open", ptw.Expired, "permits expired and not closed"),
                 new("Gas outside limits", ptw.GasOutside30Days.ToString("N0"), ptw.IsOffice ? "/permits/audit" : "/permits", Hot(ptw.GasOutside30Days, "warning"), "Readings outside the limits in the last 30 days"),
             ];
-            modules.Add(new("permits", "Permit to work", href, stats));
+            modules.Add(new("permits", "Permit to work", href, stats, isVessel ? "/permits/new" : null));
         }
 
         if (await projects.CountsAsync(companyId) is { } pc)
@@ -180,7 +181,8 @@ public class DashboardModuleService(
             stats.Add(new(isVessel ? "Requests waiting" : "Vessel requests to answer", pc.RequestsWaiting.ToString("N0"), "/projects", Hot(pc.RequestsWaiting, isVessel ? "info" : "warning"),
                 isVessel ? "Jobs you asked for, not answered yet" : "Jobs the vessel asked to add", isVessel ? 0 : pc.RequestsWaiting, "vessel requests to answer"));
             if (!isVessel) stats.Add(new("Over budget", pc.OverBudget.ToString("N0"), "/projects", Hot(pc.OverBudget, "danger"), "Cost to date above the budget", pc.OverBudget, "projects over budget"));
-            modules.Add(new("projects", "Projects", "/projects", stats));
+            var mayStart = Guid.TryParse(user.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId) && await projects.MayManageAsync(companyId, userId);   // the same people the "New project" page lets in
+            modules.Add(new("projects", "Projects", "/projects", stats, mayStart ? "/projects/new" : null));
         }
 
         if (await chat.IsEnabledForCompanyAsync(companyId) && await chat.InboxCountsAsync(companyId, Actor.From(user)) is { } cc)
@@ -202,7 +204,7 @@ public class DashboardModuleService(
         new("Waiting for my approval", c.PendingMyApproval.ToString("N0"), "/company/approvals", Hot(c.PendingMyApproval, "danger"), "Purchase orders and invoices", c.PendingMyApproval, "waiting for your approval"),
         new("Awaiting delivery", c.AwaitingDelivery.ToString("N0"), "/company/purchase-orders?f.status=Approved", "info", "Approved purchase orders"),
         new("Ordered, last 30 days", c.Spend30Days == 0 ? "—" : Money.Format(c.Spend30Days, c.SpendCurrency), "/company/purchase-orders", "accent", "Approved purchase orders"),
-    ]);
+    ], "/company/requisitions/new");
 
     /// <summary>The vessel's purchasing card.</summary>
     public static ModuleSummary Procurement(VesselHomeData d) => new("procurement", "Procurement", "/company/requisitions",
@@ -212,7 +214,7 @@ public class DashboardModuleService(
         new("Orders awaiting approval", (d.AwaitingMaster + d.AwaitingOffice).ToString("N0"), "/vessel/orders", Hot(d.NeedsMyApproval.Count, "danger", "info"),
             $"{d.AwaitingMaster} with the Master · {d.AwaitingOffice} with the office", d.NeedsMyApproval.Count, "orders waiting for your approval"),
         new("Deliveries expected", d.Deliveries.Count.ToString("N0"), "/vessel/port-calls", "info", "Approved, not yet fully received"),
-    ]);
+    ], "/company/requisitions/new");
 
     /// <summary>What needs looking at across all cards, worst first.</summary>
     public static List<AttentionItem> Attention(IEnumerable<ModuleSummary> modules) => modules

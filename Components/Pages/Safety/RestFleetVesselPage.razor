@@ -6,7 +6,7 @@
 
 <PageTitle>@(_vessel?.Name ?? "Vessel") hours of rest · Chandlery</PageTitle>
 
-<PageHeader Eyebrow="Fleet" Title="@(_vessel?.Name ?? "Hours of rest")" Parent="@(new Crumb("Hours of rest", $"/rest/fleet?month={_month:yyyy-MM}"))"
+<PageHeader Eyebrow="Fleet" Title="@(_vessel?.Name ?? "Hours of rest")"
             Subtitle="One vessel, one month: each seafarer's records, breaches and signatures. Open a name for the trend, or the sheet for the hour-by-hour record.">
     <Actions>
         <a href="/rest/table?vessel=@_vesselId" class="btn btn-secondary">Working table</a>

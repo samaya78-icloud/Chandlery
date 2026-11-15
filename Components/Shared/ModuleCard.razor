@@ -1,10 +1,16 @@
 <section class="card flex flex-col overflow-hidden">
-    <header class="flex items-center justify-between gap-3 px-5 pt-4 pb-2">
+    <header class="flex min-h-[3.55rem] items-center justify-between gap-3 px-5 pt-4 pb-2">
         <a href="@Module.Href" class="flex min-w-0 items-center gap-2.5 text-ink no-underline">
             <span class="h-2.5 w-2.5 shrink-0 rounded-full" style="background:@DotColour" aria-hidden="true"></span>
             <h2 class="truncate font-display text-base font-bold">@Module.Title</h2>
         </a>
-        <span class="chip chip-plain" data-tone="@StatusTone">@StatusText</span>
+        <span class="flex shrink-0 items-center gap-2">
+            <span class="chip chip-plain" data-tone="@StatusTone">@StatusText</span>
+            @if (Module.NewHref is { } newHref)
+            {
+                <a href="@newHref" class="btn btn-secondary btn-sm" title="@($"Add a new record in {Module.Title}")">+ Add new</a>
+            }
+        </span>
     </header>
 
     <ul class="divide-y divide-line/60 px-2 pb-2">

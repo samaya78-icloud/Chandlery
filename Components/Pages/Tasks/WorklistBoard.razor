@@ -161,6 +161,8 @@ else
 
     private Guid _companyId;
     private Actor _actor = Actor.System;
+    [SupplyParameterFromQuery(Name = "new")] public string? New { get; set; }
+
     private bool _loaded, _adding;
     private string? _error;
     private List<(Guid Id, string Name)> _vessels = [];
@@ -183,6 +185,7 @@ else
         _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
         _actor = Actor.From(state.User);
         await LoadAsync();
+        _adding = !string.IsNullOrEmpty(New);   // the dashboard's "Add new" arrives here with the form already open
         _loaded = true;
     }
 
