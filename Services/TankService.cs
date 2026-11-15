@@ -89,16 +89,16 @@ public class TankService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
-    /// <summary>Moves a tank on the plan, keeping its size. Same rules as editing it: only the side that made the tank may move it.</summary>
-    public async Task MoveTankAsync(Guid companyId, Guid tankId, int planX, int planY)
+    /// <summary>Moves and/or resizes a tank on the plan. Same rules as editing it: only the side that made the tank may change it.</summary>
+    public async Task PlaceTankAsync(Guid companyId, Guid tankId, int planX, int planY, int planWidth, int planHeight)
     {
         await using var db = await factory.CreateDbContextAsync();
         db.CurrentCompanyId = companyId;
         var tank = await db.Tanks.FirstOrDefaultAsync(t => t.Id == tankId && t.CompanyId == companyId) ?? throw new InvalidOperationException("Tank not found.");
         if (!await IsEnabledForVesselAsync(db, companyId, tank.VesselId)) throw new InvalidOperationException("Tank inspection is not switched on for this vessel.");
-        if (planX < 0 || planY < 0 || planX + tank.PlanWidth > PlanColumns || planY + tank.PlanHeight > PlanRows)
+        if (planWidth < 1 || planHeight < 1 || planX < 0 || planY < 0 || planX + planWidth > PlanColumns || planY + planHeight > PlanRows)
             throw new InvalidOperationException($"The tank must sit inside the plan ({PlanColumns} columns by {PlanRows} rows).");
-        (tank.PlanX, tank.PlanY) = (planX, planY);
+        (tank.PlanX, tank.PlanY, tank.PlanWidth, tank.PlanHeight) = (planX, planY, planWidth, planHeight);
         await db.SaveChangesAsync();
     }
 

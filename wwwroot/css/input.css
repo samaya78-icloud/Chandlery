@@ -313,7 +313,12 @@
 }
 @page { size: A4; margin: 13mm 12mm 14mm; }
 
-/* Tank plan: tanks can be dragged to a new place */
+/* Tank plan: tanks can be dragged to a new place, and resized by their edges and corners */
 .tank-plan .tank-cell { cursor: grab; }
 .tank-plan.dragging, .tank-plan.dragging .tank-cell { cursor: grabbing; user-select: none; }
 .tank-plan .tank-cell.dragging { opacity: 0.8; }
+.tank-plan .tank-handle[data-handle="n"], .tank-plan .tank-handle[data-handle="s"] { cursor: ns-resize; }
+.tank-plan .tank-handle[data-handle="e"], .tank-plan .tank-handle[data-handle="w"] { cursor: ew-resize; }
+.tank-plan .tank-handle[data-handle="nw"], .tank-plan .tank-handle[data-handle="se"] { cursor: nwse-resize; }
+.tank-plan .tank-handle[data-handle="ne"], .tank-plan .tank-handle[data-handle="sw"] { cursor: nesw-resize; }
+.tank-plan .tank-cell:hover .tank-handle { fill: currentColor; fill-opacity: 0.2; }

@@ -70,9 +70,13 @@ else
                 var selected = _selected?.Tank.Id == t.Id;
                 <g class="tank-cell" data-tank="@t.Id" data-movable="true" data-x="@t.PlanX" data-y="@t.PlanY" data-w="@t.PlanWidth" data-h="@t.PlanHeight"
                    @onclick="() => Select(row)" role="button" aria-label="@($"{t.Code} {t.Name}")">
-                    <rect x="@(t.PlanX * 10)" y="@(t.PlanY * 10)" width="@(t.PlanWidth * 10)" height="@(t.PlanHeight * 10)" rx="6"
+                    <rect class="tank-body" x="@(t.PlanX * 10)" y="@(t.PlanY * 10)" width="@(t.PlanWidth * 10)" height="@(t.PlanHeight * 10)" rx="6"
                           fill="@fill" fill-opacity="@(t.IsActive ? "0.55" : "0.15")" stroke="@(selected ? "currentColor" : fill)" stroke-width="@(selected ? 4 : 2)" />
                     <text x="@(t.PlanX * 10 + t.PlanWidth * 5)" y="@(t.PlanY * 10 + t.PlanHeight * 5 + 5)" font-size="14" font-weight="700" text-anchor="middle" fill="currentColor">@t.Code</text>
+                    @foreach (var hd in HandleRects(t))
+                    {
+                        <rect class="tank-handle" data-handle="@hd.Dir" x="@hd.X" y="@hd.Y" width="@hd.W" height="@hd.H" fill="transparent" />
+                    }
                 </g>
             }
             @if (_form is not null && _fieldsValid)
@@ -81,7 +85,7 @@ else
             }
         </svg>
         @if (_rows.Count == 0) { <p class="mt-2 text-sm text-muted">No tanks yet. Add the first one, or the office can copy a sister vessel's tank list.</p> }
-        else { <p class="mt-2 text-xs text-muted">Drag a tank to move it. It snaps to the plan grid and is saved when you let go.</p> }
+        else { <p class="mt-2 text-xs text-muted">Drag a tank to move it, or drag its edges and corners to resize it. It snaps to the plan grid and is saved when you let go.</p> }
     </div>
 
     @if (_form is not null)
@@ -238,16 +242,31 @@ else
         catch (JSDisconnectedException) { }
     }
 
-    /// <summary>A tank was dropped on a new cell of the plan: save it, or put it back and say why.</summary>
+    /// <summary>The edges and corners of a tank that can be dragged to resize it, in SVG units (one plan cell is 10). Keep in step with handleRects in tank-plan.js.</summary>
+    private static List<(string Dir, double X, double Y, double W, double H)> HandleRects(Tank t)
+    {
+        const double edge = 6, corner = 10;
+        double x = t.PlanX * 10, y = t.PlanY * 10, w = t.PlanWidth * 10, h = t.PlanHeight * 10;
+        var c = Math.Min(corner, Math.Min(w, h) / 2);
+        double ew = Math.Max(w - 2 * c, 0), eh = Math.Max(h - 2 * c, 0);
+        return
+        [
+            ("nw", x, y, c, c), ("ne", x + w - c, y, c, c), ("sw", x, y + h - c, c, c), ("se", x + w - c, y + h - c, c, c),
+            ("n", x + c, y - edge / 2, ew, edge), ("s", x + c, y + h - edge / 2, ew, edge),
+            ("w", x - edge / 2, y + c, edge, eh), ("e", x + w - edge / 2, y + c, edge, eh),
+        ];
+    }
+
+    /// <summary>A tank was dropped on a new place or size on the plan: save it, or put it back and say why.</summary>
     [JSInvokable]
-    public async Task OnTankMoved(string id, int x, int y)
+    public async Task OnTankPlaced(string id, int x, int y, int w, int h)
     {
         _error = null;
         try
         {
             var tankId = Guid.Parse(id);
-            await Svc.MoveTankAsync(_companyId, tankId, x, y);
-            if (_editing?.Id == tankId) (_x, _y) = (x, y);   // keep an open edit form in step
+            await Svc.PlaceTankAsync(_companyId, tankId, x, y, w, h);
+            if (_editing?.Id == tankId) (_x, _y, _w, _h) = (x, y, w, h);   // keep an open edit form in step
             await LoadAsync();
         }
         catch (InvalidOperationException ex) { _error = ex.Message; }
