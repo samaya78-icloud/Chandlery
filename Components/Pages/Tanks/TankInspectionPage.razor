@@ -43,6 +43,8 @@ else
         </div>
     }
 
+    @if (editable) { <PermitTankNotice CompanyId="_companyId" VesselId="insp.VesselId" TankId="insp.TankId" /> }
+
     <div class="mb-5 flex flex-wrap items-center gap-2">
         <StatusChip Value="@_detail.Status" />
         <span class="text-sm text-muted">@answered of @insp.Results.Count answered</span>

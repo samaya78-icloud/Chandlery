@@ -234,6 +234,9 @@ public static class DbSeeder
             await Chandlery.Services.TankDefaults.EnsureDefaultsAsync(db, companyId);
             await Chandlery.Services.RestDefaults.EnsureDefaultsAsync(db, companyId);
             await Chandlery.Services.IncidentDefaults.EnsureDefaultsAsync(db, companyId);
+            await Chandlery.Services.DrillDefaults.EnsureDefaultsAsync(db, companyId);
+            await Chandlery.Services.MeetingDefaults.EnsureDefaultsAsync(db, companyId);
+            await Chandlery.Services.PermitDefaults.EnsureDefaultsAsync(db, companyId);
             await Chandlery.Services.RaDefaults.EnsureDefaultsAsync(db, companyId);
         }
         await db.SaveChangesAsync();

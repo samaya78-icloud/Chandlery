@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 
 namespace Chandlery.Services;
@@ -16,7 +16,7 @@ public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
 public class NavCatalogService(
     ApprovalService approvals, InvoiceService invoices, WorklistService worklist, PmsService pms, RestHoursService rest,
     TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
-    IncidentService incidents, IAuthorizationService authorization, ChatService chat)
+    IncidentService incidents, DrillService drills, DrillFleetService drillFleet, PermitService permits, IAuthorizationService authorization, ChatService chat)
 {
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
     {
@@ -145,6 +145,29 @@ public class NavCatalogService(
             if (!isVessel) admin.Add(new("/incidents/settings", "Incident settings", "incident"));
         }
 
+        if (await permits.IsEnabledForCompanyAsync(companyId))
+        {
+            const string permitToWork = "Permit to work";
+            safety.Add(new("/permits", "Permit board", "permit", Section: permitToWork));
+            if (isVessel) safety.Add(new("/permits/new", "New permit", "permit", Section: permitToWork));
+            if (!isVessel) safety.Add(new("/permits/fleet", "Fleet permit activity", "permit", await permits.ExpiredCountAsync(companyId, new Actor(userId, "")), permitToWork));
+            if (!isVessel) safety.Add(new("/permits/audit", "Permit audit", "permit", Section: permitToWork));
+            if (!isVessel) admin.Add(new("/permits/types", "Permit types and checklists", "permit"));
+        }
+
+        if (await drills.IsEnabledForCompanyAsync(companyId))
+        {
+            const string drillsAndMeetings = "Drills and meetings";
+            if (!isVessel) safety.Add(new("/drills/fleet", "Fleet drill status", "drill", await drillFleet.OverdueAsync(companyId, new Actor(userId, "")), drillsAndMeetings));
+            safety.Add(new("/drills", "Drill schedule", "drill", Section: drillsAndMeetings));
+            if (isVessel) safety.Add(new("/drills/new", "Record a drill", "drill", Section: drillsAndMeetings));
+            if (!isVessel) safety.Add(new("/drills/crew", "Crew participation", "drill", Section: drillsAndMeetings));
+            safety.Add(new("/drills/history", "Drill history", "drill", Section: drillsAndMeetings));
+            safety.Add(new("/meetings", "Meetings", "drill", Section: drillsAndMeetings));
+            if (isVessel) safety.Add(new("/meetings/new", "Record a meeting", "drill", Section: drillsAndMeetings));
+            if (!isVessel) admin.Add(new("/drills/types", "Drill and meeting types", "drill"));
+        }
+
         if (await tanks.IsEnabledForCompanyAsync(companyId))
         {
             tankItems.Add(new("/tanks", "Tanks", "tank"));
@@ -178,7 +201,7 @@ public class NavCatalogService(
         if (maintenance.Count > 0) groups.Add(new("Maintenance", maintenance, "pms planned maintenance"));
         if (tankItems.Count > 0) groups.Add(new("Tank inspection", tankItems));
         if (riskItems.Count > 0) groups.Add(new("Risk assessment", riskItems, "risk ra hazard"));
-        if (safety.Count > 0) groups.Add(new("Safety", safety, "hours of rest rest hours incident accident near miss report lessons"));
+        if (safety.Count > 0) groups.Add(new("Safety", safety, "hours of rest rest hours incident accident near miss report lessons drill drills fire abandon muster"));
         if (projectItems.Count > 0) groups.Add(new("Projects", projectItems, "drydock yard technical project"));
         if (!isVessel)
         {

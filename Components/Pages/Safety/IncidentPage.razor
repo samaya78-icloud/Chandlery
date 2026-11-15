@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @using Chandlery.Models
 @inject IncidentService Svc
+@inject DrillService Drills
 @inject RiskLibraryService Library
 
 <PageTitle>@(_d?.Incident.Code ?? "Incident report") · Chandlery</PageTitle>
@@ -253,6 +254,15 @@ else
                                 <label>For<input class="input mt-1" maxlength="120" placeholder="Name or rank" @bind="_actionFor" /></label>
                                 <button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="AddActionAsync">Add action</button>
                             </div>
+                            @if (_drillTypes.Count > 0)
+                            {
+                                <div class="flex flex-wrap items-end gap-2 border-t border-line/60 pt-2">
+                                    <label>Ask the vessel to hold a drill
+                                        <select class="select mt-1" @bind="_askDrill"><option value="@Guid.Empty">Choose…</option>@foreach (var dt in _drillTypes) { <option value="@dt.Id">@dt.Name</option> }</select>
+                                    </label>
+                                    <button class="btn btn-secondary btn-sm" disabled="@(_busy || _askDrill == Guid.Empty)" @onclick="AskForDrillAsync">Ask for the drill</button>
+                                </div>
+                            }
                         </div>
                     }
                 </div>
@@ -330,6 +340,8 @@ else
     private int _actual, _potential = 1, _likelihood = 1;
     private string _comment = "", _supplement = "", _findings = "", _withdraw = "", _actionTitle = "", _actionText = "", _actionFor = "";
     private DateTime? _actionDue;
+    private Guid _askDrill;
+    private List<DrillType> _drillTypes = [];
     private List<IncidentCause> _causes = [];
     private readonly HashSet<string> _invCauses = new(StringComparer.OrdinalIgnoreCase);
     private string _invFacts = "", _invCause = "", _invWhy = "", _invContrib = "", _invLessons = "", _invBy = "", _reason = "", _notification = "", _closing = "", _reopen = "";
@@ -344,6 +356,7 @@ else
         _words = await Library.GetMatrixAsync(_companyId);
         _limitMonths = (await Svc.SettingsAsync(_companyId)).RepeatWindowMonths;
         if (!NodeContext.Current.IsVessel) _causes = await Svc.CausesAsync(_companyId);
+        try { _drillTypes = await Drills.TypesAsync(_companyId); } catch (InvalidOperationException) { _drillTypes = []; }
         await LoadAsync();
         _loaded = true;
     }
@@ -427,6 +440,12 @@ else
     private Task FindingsAsync() => RunAsync(async () => { await Svc.AddVesselFindingsAsync(_companyId, Id, _actor, _findings); _findings = ""; }, "The findings are added.");
 
     private Task WithdrawAsync() => RunAsync(async () => { await Svc.WithdrawAsync(_companyId, Id, _actor, _withdraw); _withdraw = ""; }, "The report is withdrawn.");
+
+    private Task AskForDrillAsync() => RunAsync(async () =>
+    {
+        await Svc.AskForDrillAsync(_companyId, Id, _actor, _askDrill, _actionText, _actionDue is { } due ? DateTime.SpecifyKind(due, DateTimeKind.Utc) : null);
+        (_askDrill, _actionText, _actionDue) = (Guid.Empty, "", null);
+    }, "The drill is asked for as an action.");
 
     private Task AddActionAsync() => RunAsync(async () =>
     {

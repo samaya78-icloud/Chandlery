@@ -1,0 +1,285 @@
+@page "/drills/types"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject DrillService Drills
+@inject MeetingService Meetings
+
+<PageTitle>Drill and meeting types · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Drill and meeting types"
+            Subtitle="What the company drills and meets about, and how often, for every vessel. Every interval is a common default: check it against the flag state, class and the safety management system. Vessels receive changes when they next connect.">
+    <Actions>
+        <a href="/drills/fleet" class="btn btn-secondary">Fleet status</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else
+{
+    <div class="space-y-6">
+        <div class="card p-4 text-sm">
+            <div class="mb-3 flex items-center gap-3">
+                <h2 class="text-base font-semibold text-ink">Drill types</h2>
+                <button class="btn btn-primary btn-sm ml-auto" @onclick="NewDrillType">New drill type</button>
+            </div>
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Name</th><th>Kind</th><th>How often</th><th>Every crew member</th><th>In use</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var t in _types)
+                    {
+                        var row = t;
+                        <tr class="border-t border-line/60">
+                            <td class="py-1 font-medium">@t.Name</td>
+                            <td>@DrillLook.Category(t.Category)</td>
+                            <td>@DrillLook.Interval(t.IntervalKind, t.IntervalCount)</td>
+                            <td>@(t.EveryCrewMember ? "Yes" : "")</td>
+                            <td>@(t.IsActive ? "Yes" : "Switched off")</td>
+                            <td class="text-right"><button class="btn btn-secondary btn-sm" @onclick="() => EditDrillType(row)">Change</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            @if (_dt is { } d)
+            {
+                <div class="mt-4 space-y-3 border-t border-line pt-4">
+                    <h3 class="font-semibold text-ink">@(d.Id == Guid.Empty ? "New drill type" : $"Change {d.Name}")</h3>
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <label>Name<input class="input mt-1 w-full" maxlength="100" @bind="d.Name" /></label>
+                        <label>Kind
+                            <select class="select mt-1 w-full" @bind="d.Category">
+                                @foreach (var c in Enum.GetValues<DrillCategory>()) { <option value="@c">@DrillLook.Category(c)</option> }
+                            </select>
+                        </label>
+                        <label>Reference<input class="input mt-1 w-full" maxlength="200" placeholder="What it satisfies (to verify)" @bind="d.Reference" /></label>
+                        <label>Every
+                            <div class="mt-1 flex gap-2">
+                                <input type="number" min="1" class="input w-24" @bind="d.IntervalCount" />
+                                <select class="select" @bind="d.IntervalKind"><option value="@DrillIntervalKind.CalendarMonths">calendar months</option><option value="@DrillIntervalKind.Days">days</option></select>
+                            </div>
+                        </label>
+                        <label>Warn this many days before<input type="number" min="0" max="90" class="input mt-1 w-full" @bind="d.WarningDays" /></label>
+                        <div class="flex items-end gap-4">
+                            <label class="flex items-center gap-2"><input type="checkbox" @bind="d.EveryCrewMember" /> Every crew member takes part</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" @bind="d.IsActive" /> In use</label>
+                        </div>
+                    </div>
+                    <label class="block">Standard scenario<textarea class="textarea mt-1 w-full" rows="2" maxlength="2000" @bind="d.Scenario"></textarea></label>
+                    <label class="block">What to test, one to a line<textarea class="textarea mt-1 w-full" rows="3" maxlength="2000" @bind="d.Checklist"></textarea></label>
+                    <div class="flex gap-2">
+                        <button class="btn btn-primary" disabled="@_busy" @onclick="SaveDrillTypeAsync">Save</button>
+                        <button class="btn btn-secondary" @onclick="() => _dt = null">Cancel</button>
+                    </div>
+                </div>
+            }
+            @if (_drillError is not null) { <p class="mt-2 text-rose-600">@_drillError</p> }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <h2 class="mb-1 text-base font-semibold text-ink">Another rule for one vessel</h2>
+            <p class="mb-3 text-xs text-muted">A drill that does not apply on a vessel, or has a different interval there (a flag state or class difference). A reason is kept with it.</p>
+            @if (_vessels.Count == 0) { <p class="text-muted">No vessel has the module switched on.</p> }
+            else
+            {
+                <label>Vessel
+                    <select class="select mt-1" @bind="_vessel" @bind:after="LoadOverridesAsync">
+                        @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+                <table class="mt-3 w-full text-left">
+                    <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Drill</th><th>Applies</th><th>Interval</th><th>Reason</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var o in _rows)
+                        {
+                            var row = o;
+                            <tr class="border-t border-line/60 align-top">
+                                <td class="py-2 pr-2 font-medium">@o.Type.Name<div class="text-xs font-normal text-muted">company: @DrillLook.Interval(o.Type.IntervalKind, o.Type.IntervalCount)</div></td>
+                                <td class="py-2 pr-2"><input type="checkbox" @bind="row.Applies" /></td>
+                                <td class="py-2 pr-2">
+                                    <label class="flex items-center gap-2 text-xs"><input type="checkbox" @bind="row.Custom" /> another interval</label>
+                                    @if (row.Custom)
+                                    {
+                                        <div class="mt-1 flex gap-2">
+                                            <input type="number" min="1" class="input w-20" @bind="row.Count" />
+                                            <select class="select" @bind="row.Kind"><option value="@DrillIntervalKind.CalendarMonths">months</option><option value="@DrillIntervalKind.Days">days</option></select>
+                                        </div>
+                                    }
+                                </td>
+                                <td class="py-2 pr-2"><input class="input w-full" maxlength="300" placeholder="Why this vessel differs" @bind="row.Reason" /></td>
+                                <td class="py-2"><button class="btn btn-secondary btn-sm" disabled="@_busy" @onclick="() => SaveOverrideAsync(row)">Save</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (_overrideError is not null) { <p class="mt-2 text-rose-600">@_overrideError</p> }
+                @if (_overrideDone is not null) { <p class="mt-2 text-emerald-700">@_overrideDone</p> }
+            }
+        </div>
+
+        <div class="card p-4 text-sm">
+            <div class="mb-3 flex items-center gap-3">
+                <h2 class="text-base font-semibold text-ink">Meeting types</h2>
+                <button class="btn btn-primary btn-sm ml-auto" @onclick="NewMeetingType">New meeting type</button>
+            </div>
+            <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Name</th><th>How often</th><th>In use</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var t in _meetingTypes)
+                    {
+                        var row = t;
+                        <tr class="border-t border-line/60">
+                            <td class="py-1 font-medium">@t.Name</td>
+                            <td>@(t.Scheduled ? DrillLook.Interval(t.IntervalKind, t.IntervalCount) : "When needed")</td>
+                            <td>@(t.IsActive ? "Yes" : "Switched off")</td>
+                            <td class="text-right"><button class="btn btn-secondary btn-sm" @onclick="() => EditMeetingType(row)">Change</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            @if (_mt is { } m)
+            {
+                <div class="mt-4 space-y-3 border-t border-line pt-4">
+                    <h3 class="font-semibold text-ink">@(m.Id == Guid.Empty ? "New meeting type" : $"Change {m.Name}")</h3>
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <label>Name<input class="input mt-1 w-full" maxlength="100" @bind="m.Name" /></label>
+                        <label>Reference<input class="input mt-1 w-full" maxlength="200" placeholder="What sets the interval (to verify)" @bind="m.Reference" /></label>
+                        <div class="flex items-end gap-4">
+                            <label class="flex items-center gap-2"><input type="checkbox" @bind="m.Scheduled" /> Held on a schedule</label>
+                            <label class="flex items-center gap-2"><input type="checkbox" @bind="m.IsActive" /> In use</label>
+                        </div>
+                        @if (m.Scheduled)
+                        {
+                            <label>Every
+                                <div class="mt-1 flex gap-2">
+                                    <input type="number" min="1" class="input w-24" @bind="m.IntervalCount" />
+                                    <select class="select" @bind="m.IntervalKind"><option value="@DrillIntervalKind.CalendarMonths">calendar months</option><option value="@DrillIntervalKind.Days">days</option></select>
+                                </div>
+                            </label>
+                            <label>Warn this many days before<input type="number" min="0" max="90" class="input mt-1 w-full" @bind="m.WarningDays" /></label>
+                        }
+                    </div>
+                    <label class="block">Standard agenda, one item to a line<textarea class="textarea mt-1 w-full" rows="5" maxlength="4000" @bind="m.StandardAgenda"></textarea></label>
+                    <div class="flex gap-2">
+                        <button class="btn btn-primary" disabled="@_busy" @onclick="SaveMeetingTypeAsync">Save</button>
+                        <button class="btn btn-secondary" @onclick="() => _mt = null">Cancel</button>
+                    </div>
+                </div>
+            }
+            @if (_meetingError is not null) { <p class="mt-2 text-rose-600">@_meetingError</p> }
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed class OverrideRow
+    {
+        public required DrillType Type { get; init; }
+        public bool Applies { get; set; } = true;
+        public bool Custom { get; set; }
+        public DrillIntervalKind Kind { get; set; } = DrillIntervalKind.CalendarMonths;
+        public int Count { get; set; } = 1;
+        public string Reason { get; set; } = "";
+    }
+
+    private Guid _companyId, _vessel;
+    private bool _loaded, _busy;
+    private string? _drillError, _meetingError, _overrideError, _overrideDone;
+    private List<DrillType> _types = [];
+    private List<MeetingType> _meetingTypes = [];
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<OverrideRow> _rows = [];
+    private DrillType? _dt;
+    private MeetingType? _mt;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _vessels = await Drills.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count > 0) _vessel = _vessels[0].Id;
+        await ReloadAsync();
+        _loaded = true;
+    }
+
+    private async Task ReloadAsync()
+    {
+        _types = await Drills.TypesAsync(_companyId, includeInactive: true);
+        _meetingTypes = await Meetings.TypesAsync(_companyId, includeInactive: true);
+        await LoadOverridesAsync();
+    }
+
+    private async Task LoadOverridesAsync()
+    {
+        _overrideError = _overrideDone = null;
+        if (_vessel == Guid.Empty) { _rows = []; return; }
+        var overrides = (await Drills.OverridesAsync(_companyId, _vessel)).ToDictionary(o => o.DrillTypeId);
+        _rows = _types.Where(t => t.IsActive).Select(t =>
+        {
+            var o = overrides.GetValueOrDefault(t.Id);
+            return new OverrideRow { Type = t, Applies = o?.Applies ?? true, Custom = o?.IntervalKind is not null, Kind = o?.IntervalKind ?? t.IntervalKind, Count = o?.IntervalCount ?? t.IntervalCount, Reason = o?.Reason ?? "" };
+        }).ToList();
+    }
+
+    private void NewDrillType() { _drillError = null; _dt = new DrillType { IsActive = true }; }
+
+    private void EditDrillType(DrillType t)
+    {
+        _drillError = null;
+        _dt = new DrillType
+        {
+            Id = t.Id, Name = t.Name, Category = t.Category, IntervalKind = t.IntervalKind, IntervalCount = t.IntervalCount, WarningDays = t.WarningDays, EveryCrewMember = t.EveryCrewMember,
+            Scenario = t.Scenario, Checklist = t.Checklist, Reference = t.Reference, IsActive = t.IsActive,
+        };
+    }
+
+    private async Task SaveDrillTypeAsync()
+    {
+        _drillError = null;
+        _busy = true;
+        try { await Drills.SaveTypeAsync(_companyId, _dt!); _dt = null; await ReloadAsync(); }
+        catch (InvalidOperationException ex) { _drillError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task SaveOverrideAsync(OverrideRow row)
+    {
+        _overrideError = _overrideDone = null;
+        _busy = true;
+        try
+        {
+            await Drills.SaveOverrideAsync(_companyId, _vessel, row.Type.Id, row.Applies, row.Custom ? row.Kind : null, row.Custom ? row.Count : null, row.Reason);
+            _overrideDone = $"Saved for {row.Type.Name}.";
+            await LoadOverridesAsync();
+        }
+        catch (InvalidOperationException ex) { _overrideError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void NewMeetingType() { _meetingError = null; _mt = new MeetingType { IsActive = true }; }
+
+    private void EditMeetingType(MeetingType t)
+    {
+        _meetingError = null;
+        _mt = new MeetingType
+        {
+            Id = t.Id, Name = t.Name, Scheduled = t.Scheduled, IntervalKind = t.IntervalKind, IntervalCount = t.IntervalCount, WarningDays = t.WarningDays,
+            StandardAgenda = t.StandardAgenda, Reference = t.Reference, IsActive = t.IsActive,
+        };
+    }
+
+    private async Task SaveMeetingTypeAsync()
+    {
+        _meetingError = null;
+        _busy = true;
+        try { await Meetings.SaveTypeAsync(_companyId, _mt!); _mt = null; await ReloadAsync(); }
+        catch (InvalidOperationException ex) { _meetingError = ex.Message; }
+        finally { _busy = false; }
+    }
+}

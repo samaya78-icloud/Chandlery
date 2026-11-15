@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Chandlery.Models;
 using Chandlery.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -22,7 +22,7 @@ public class NavCatalogTests : IAsyncLifetime
         var authorization = new ServiceCollection().AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")))
             .AddLogging().BuildServiceProvider().GetRequiredService<IAuthorizationService>();
         _catalog = new NavCatalogService(new ApprovalService(factory), new InvoiceService(factory, new NoFiles()), worklist, pms, new RestHoursService(factory),
-            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), authorization, new ChatService(factory));
+            new TankService(factory), inspections, new TankTrendService(factory, inspections), new RiskLibraryService(factory), new RiskAssessmentService(factory, worklist), new ProjectService(factory), new IncidentService(factory, worklist), new DrillService(factory, worklist), new DrillFleetService(new DrillService(factory, worklist), new MeetingService(factory, worklist)), new PermitService(factory, worklist), authorization, new ChatService(factory));
     }
 
     public Task DisposeAsync() => _s.DisposeAsync();
@@ -122,6 +122,16 @@ public class NavCatalogTests : IAsyncLifetime
         Assert.Equal(["Dashboard", "RFQs", "Purchase Orders", "Invoices", "Bank Accounts"], Pages(supplier, "Workspace"));
 
         Assert.Empty(await _catalog.GetAsync(new ClaimsPrincipal(new ClaimsIdentity()), isVessel: false));                                    // not signed in: nothing
+    }
+
+    [Fact]
+    public async Task DrillsAndMeetingsHaveTheirOwnSubHeading_TheVesselCanRecordAndTheOfficeCannot()
+    {
+        await SwitchOnAsync(PolicyModules.Drills);
+        var vessel = (await _catalog.GetAsync(Person("CompanyUser"), isVessel: true)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
+        var office = (await _catalog.GetAsync(Person("CompanyAdmin"), isVessel: false)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
+        Assert.Equal(["Drill schedule", "Record a drill", "Drill history", "Meetings", "Record a meeting"], vessel);
+        Assert.Equal(["Fleet drill status", "Drill schedule", "Crew participation", "Drill history", "Meetings"], office);                         // drills and meetings are recorded onboard
     }
 
     [Fact]

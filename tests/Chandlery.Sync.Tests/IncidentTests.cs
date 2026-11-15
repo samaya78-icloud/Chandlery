@@ -58,6 +58,28 @@ public class IncidentTests : IAsyncLifetime
 
     private async Task<IncidentStatus> StatusAsync(IncidentService side, Guid id, Actor who) => (await side.GetAsync(_s.CompanyId, id, who))!.Status;
 
+    // ---- asking for a drill ----
+
+    [Fact]
+    public async Task TheOfficeCanAskTheVesselToHoldADrill_AsALinkedAction_ButOnlyForADrillTypeInUse()
+    {
+        var report = await SubmittedAsync();
+        DrillType drill;
+        await using (var db = await _s.ShoreFactory.CreateDbContextAsync()) drill = await db.DrillTypes.AsNoTracking().FirstAsync(t => t.CompanyId == _s.CompanyId && t.IsActive);
+
+        var task = await _shore.AskForDrillAsync(_s.CompanyId, report.Id, _s.User, drill.Id, "Nobody knew where the gas detector was kept.");
+        await _s.SettleUntilQuietAsync();
+        Assert.Equal($"Hold a drill: {drill.Name}", task.Title);
+        var seen = (await _vessel.GetAsync(_s.CompanyId, report.Id, As(_master)))!.Actions.Single();           // the action reached the vessel, linked to the report
+        Assert.Equal(task.Id, seen.Id);
+        Assert.Contains("gas detector", seen.Description);
+
+        var unknown = await Assert.ThrowsAsync<InvalidOperationException>(() => _shore.AskForDrillAsync(_s.CompanyId, report.Id, _s.User, Guid.NewGuid(), ""));
+        Assert.Contains("drill type", unknown.Message);
+        var crew = await Assert.ThrowsAsync<InvalidOperationException>(() => _vessel.AskForDrillAsync(_s.CompanyId, report.Id, As(_cook), drill.Id, ""));
+        Assert.Contains("office or by the Master", crew.Message);                                                // the same rule as any action
+    }
+
     // ---- the whole way ----
 
     [Fact]

@@ -69,6 +69,29 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<TankInspection> TankInspections => Set<TankInspection>();
     public DbSet<TankInspectionResult> TankInspectionResults => Set<TankInspectionResult>();
     public DbSet<TankInspectionReview> TankInspectionReviews => Set<TankInspectionReview>();
+    public DbSet<Meeting> Meetings => Set<Meeting>();
+    public DbSet<MeetingAttendee> MeetingAttendees => Set<MeetingAttendee>();
+    public DbSet<MeetingItem> MeetingItems => Set<MeetingItem>();
+    public DbSet<MeetingNote> MeetingNotes => Set<MeetingNote>();
+    public DbSet<MeetingComment> MeetingComments => Set<MeetingComment>();
+    public DbSet<MeetingType> MeetingTypes => Set<MeetingType>();
+    public DbSet<PermitType> PermitTypes => Set<PermitType>();
+    public DbSet<PermitChecklistItem> PermitChecklistItems => Set<PermitChecklistItem>();
+    public DbSet<PermitConflictPair> PermitConflictPairs => Set<PermitConflictPair>();
+    public DbSet<PermitJobRule> PermitJobRules => Set<PermitJobRule>();
+    public DbSet<Permit> Permits => Set<Permit>();
+    public DbSet<PermitAnswer> PermitAnswers => Set<PermitAnswer>();
+    public DbSet<PermitPerson> PermitPersons => Set<PermitPerson>();
+    public DbSet<PermitGasReading> PermitGasReadings => Set<PermitGasReading>();
+    public DbSet<PermitEntry> PermitEntries => Set<PermitEntry>();
+    public DbSet<PermitEvent> PermitEvents => Set<PermitEvent>();
+    public DbSet<PermitComment> PermitComments => Set<PermitComment>();
+    public DbSet<Drill> Drills => Set<Drill>();
+    public DbSet<DrillParticipant> DrillParticipants => Set<DrillParticipant>();
+    public DbSet<DrillNote> DrillNotes => Set<DrillNote>();
+    public DbSet<DrillComment> DrillComments => Set<DrillComment>();
+    public DbSet<DrillType> DrillTypes => Set<DrillType>();
+    public DbSet<DrillOverride> DrillOverrides => Set<DrillOverride>();
     public DbSet<Incident> Incidents => Set<Incident>();
     public DbSet<IncidentPerson> IncidentPersons => Set<IncidentPerson>();
     public DbSet<IncidentSupplement> IncidentSupplements => Set<IncidentSupplement>();
@@ -662,6 +685,248 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             b.HasOne<TankInspection>().WithMany().HasForeignKey(r => r.InspectionId).OnDelete(DeleteBehavior.Restrict);
             b.HasIndex(r => r.InspectionId);
             b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+
+        // ---- safety meetings (spec 13, C3): the meeting is one document with its attendees, items and notes ----
+        modelBuilder.Entity<MeetingType>(b =>
+        {
+            b.Property(t => t.Name).HasMaxLength(120);
+            b.Property(t => t.StandardAgenda).HasMaxLength(2000);
+            b.Property(t => t.Reference).HasMaxLength(300);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(t => new { t.CompanyId, t.Name }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<Meeting>(b =>
+        {
+            b.Property(m => m.Code).HasMaxLength(40);
+            b.Property(m => m.TypeName).HasMaxLength(120);
+            b.Property(m => m.Place).HasMaxLength(200);
+            b.Property(m => m.ChairName).HasMaxLength(120);
+            b.Property(m => m.SecretaryName).HasMaxLength(120);
+            b.Property(m => m.Summary).HasMaxLength(1000);
+            b.Property(m => m.SignedByName).HasMaxLength(120);
+            b.Property(m => m.CreatedByName).HasMaxLength(120);
+            b.Property(m => m.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.Ignore(m => m.IsSigned);
+            b.HasOne<Company>().WithMany().HasForeignKey(m => m.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(m => m.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(m => m.Attendees).WithOne().HasForeignKey(a => a.MeetingId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(m => m.Items).WithOne().HasForeignKey(i => i.MeetingId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(m => m.Notes).WithOne().HasForeignKey(n => n.MeetingId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(m => new { m.VesselId, m.MeetingTypeId, m.HeldAt });
+            b.HasIndex(m => new { m.CompanyId, m.Code });
+            b.HasQueryFilter(m => CurrentCompanyId == null || m.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<MeetingAttendee>(b =>
+        {
+            b.Property(a => a.Name).HasMaxLength(120);
+            b.Property(a => a.Rank).HasMaxLength(80);
+            b.HasIndex(a => a.MeetingId);
+        });
+        modelBuilder.Entity<MeetingItem>(b =>
+        {
+            b.Property(i => i.Title).HasMaxLength(300);
+            b.Property(i => i.Notes).HasMaxLength(4000);
+            b.Property(i => i.RaisedBy).HasMaxLength(120);
+            b.HasIndex(i => i.MeetingId);
+        });
+        modelBuilder.Entity<MeetingNote>(b =>
+        {
+            b.Property(n => n.Text).HasMaxLength(2000);
+            b.Property(n => n.ByName).HasMaxLength(120);
+            b.HasIndex(n => n.MeetingId);
+        });
+        modelBuilder.Entity<MeetingComment>(b =>
+        {
+            b.Property(c => c.Text).HasMaxLength(2000);
+            b.Property(c => c.ByName).HasMaxLength(120);
+            b.Property(c => c.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Meeting>().WithMany().HasForeignKey(c => c.MeetingId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => new { c.MeetingId, c.At });
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+
+        // ---- permit to work (spec 14): a permit is one document with its answers, persons, readings, entries and events ----
+        modelBuilder.Entity<PermitType>(b =>
+        {
+            b.Property(t => t.Name).HasMaxLength(120);
+            b.Property(t => t.Code).HasMaxLength(12);
+            b.Property(t => t.Reference).HasMaxLength(300);
+            b.Property(t => t.OxygenMin).HasPrecision(5, 2);
+            b.Property(t => t.OxygenMax).HasPrecision(5, 2);
+            b.Property(t => t.FlammableMaxPercentLel).HasPrecision(6, 2);
+            b.Property(t => t.H2sMaxPpm).HasPrecision(8, 2);
+            b.Property(t => t.CoMaxPpm).HasPrecision(8, 2);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(t => new { t.CompanyId, t.Name }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitChecklistItem>(b =>
+        {
+            b.Property(i => i.Section).HasMaxLength(120);
+            b.Property(i => i.Text).HasMaxLength(500);
+            b.HasOne<Company>().WithMany().HasForeignKey(i => i.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(i => i.PermitTypeId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(i => new { i.PermitTypeId, i.Version, i.Position });
+            b.HasQueryFilter(i => CurrentCompanyId == null || i.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitConflictPair>(b =>
+        {
+            b.Property(p => p.Message).HasMaxLength(300);
+            b.HasOne<Company>().WithMany().HasForeignKey(p => p.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(p => p.PermitTypeAId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(p => p.PermitTypeBId).OnDelete(DeleteBehavior.Restrict);
+            b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitJobRule>(b =>
+        {
+            b.HasOne<Company>().WithMany().HasForeignKey(r => r.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<PermitType>().WithMany().HasForeignKey(r => r.PermitTypeId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(r => new { r.CompanyId, r.JobTemplateId }).IsUnique();
+            b.HasQueryFilter(r => CurrentCompanyId == null || r.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<Permit>(b =>
+        {
+            b.Property(p => p.Code).HasMaxLength(40);
+            b.Property(p => p.TypeName).HasMaxLength(120);
+            b.Property(p => p.Terms).HasMaxLength(1000);
+            b.Property(p => p.Location).HasMaxLength(200);
+            b.Property(p => p.Description).HasMaxLength(2000);
+            b.Property(p => p.Isolation).HasMaxLength(1000);
+            b.Property(p => p.Conditions).HasMaxLength(2000);
+            b.Property(p => p.RequesterName).HasMaxLength(120);
+            b.Property(p => p.IssuerName).HasMaxLength(120);
+            b.Property(p => p.AttendantName).HasMaxLength(120);
+            b.Property(p => p.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(p => p.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(p => p.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(p => p.Answers).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Persons).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Readings).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Entries).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(p => p.Events).WithOne().HasForeignKey(a => a.PermitId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(p => new { p.VesselId, p.ValidFrom });
+            b.HasIndex(p => new { p.CompanyId, p.Code });
+            b.HasQueryFilter(p => CurrentCompanyId == null || p.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<PermitAnswer>(b =>
+        {
+            b.Property(a => a.Section).HasMaxLength(120);
+            b.Property(a => a.Text).HasMaxLength(500);
+            b.Property(a => a.Note).HasMaxLength(1000);
+            b.Property(a => a.ByName).HasMaxLength(120);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitPerson>(b =>
+        {
+            b.Property(a => a.Name).HasMaxLength(120);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitGasReading>(b =>
+        {
+            b.Property(a => a.Instrument).HasMaxLength(120);
+            b.Property(a => a.Location).HasMaxLength(200);
+            b.Property(a => a.Failures).HasMaxLength(1000);
+            b.Property(a => a.ByName).HasMaxLength(120);
+            b.Property(a => a.Oxygen).HasPrecision(5, 2);
+            b.Property(a => a.FlammablePercentLel).HasPrecision(6, 2);
+            b.Property(a => a.H2sPpm).HasPrecision(8, 2);
+            b.Property(a => a.CoPpm).HasPrecision(8, 2);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitEntry>(b =>
+        {
+            b.Property(a => a.PersonName).HasMaxLength(120);
+            b.Property(a => a.AttendantName).HasMaxLength(120);
+            b.HasIndex(a => a.PermitId);
+        });
+        modelBuilder.Entity<PermitEvent>(b =>
+        {
+            b.Property(a => a.ByName).HasMaxLength(120);
+            b.Property(a => a.Note).HasMaxLength(1000);
+            b.HasIndex(a => new { a.PermitId, a.At });
+        });
+        modelBuilder.Entity<PermitComment>(b =>
+        {
+            b.Property(c => c.Text).HasMaxLength(2000);
+            b.Property(c => c.ByName).HasMaxLength(120);
+            b.Property(c => c.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Permit>().WithMany().HasForeignKey(c => c.PermitId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => new { c.PermitId, c.At });
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+
+        // ---- drills (spec 13): a drill is one document with its participants and notes; the schedule is worked out from the drills held ----
+        modelBuilder.Entity<DrillType>(b =>
+        {
+            b.Property(t => t.Name).HasMaxLength(120);
+            b.Property(t => t.Scenario).HasMaxLength(2000);
+            b.Property(t => t.Checklist).HasMaxLength(2000);
+            b.Property(t => t.Reference).HasMaxLength(300);
+            b.HasOne<Company>().WithMany().HasForeignKey(t => t.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(t => new { t.CompanyId, t.Name }).IsUnique();
+            b.HasQueryFilter(t => CurrentCompanyId == null || t.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<DrillOverride>(b =>
+        {
+            b.Property(o => o.Reason).HasMaxLength(500);
+            b.HasOne<Company>().WithMany().HasForeignKey(o => o.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(o => o.VesselId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<DrillType>().WithMany().HasForeignKey(o => o.DrillTypeId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(o => new { o.VesselId, o.DrillTypeId }).IsUnique();
+            b.HasQueryFilter(o => CurrentCompanyId == null || o.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<Drill>(b =>
+        {
+            b.Property(d => d.Code).HasMaxLength(40);
+            b.Property(d => d.TypeName).HasMaxLength(120);
+            b.Property(d => d.Place).HasMaxLength(200);
+            b.Property(d => d.Scenario).HasMaxLength(2000);
+            b.Property(d => d.ConductedByName).HasMaxLength(120);
+            b.Property(d => d.EquipmentTested).HasMaxLength(1000);
+            b.Property(d => d.Findings).HasMaxLength(2000);
+            b.Property(d => d.Deficiencies).HasMaxLength(2000);
+            b.Property(d => d.Remarks).HasMaxLength(2000);
+            b.Property(d => d.SignedByName).HasMaxLength(120);
+            b.Property(d => d.CreatedByName).HasMaxLength(120);
+            b.Property(d => d.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.Ignore(d => d.IsSigned);
+            b.HasOne<Company>().WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(d => d.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(d => d.Participants).WithOne().HasForeignKey(p => p.DrillId).OnDelete(DeleteBehavior.Cascade);
+            b.HasMany(d => d.Notes).WithOne().HasForeignKey(n => n.DrillId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(d => new { d.VesselId, d.DrillTypeId, d.StartedAt });
+            b.HasIndex(d => new { d.CompanyId, d.Code });
+            b.HasQueryFilter(d => CurrentCompanyId == null || d.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<DrillParticipant>(b =>
+        {
+            b.Property(p => p.Name).HasMaxLength(120);
+            b.Property(p => p.Rank).HasMaxLength(80);
+            b.HasIndex(p => p.DrillId);
+            b.HasIndex(p => p.CrewMemberId);
+        });
+        modelBuilder.Entity<DrillNote>(b =>
+        {
+            b.Property(n => n.Text).HasMaxLength(2000);
+            b.Property(n => n.ByName).HasMaxLength(120);
+            b.HasIndex(n => n.DrillId);
+        });
+        modelBuilder.Entity<DrillComment>(b =>
+        {
+            b.Property(c => c.Text).HasMaxLength(2000);
+            b.Property(c => c.ByName).HasMaxLength(120);
+            b.Property(c => c.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<Drill>().WithMany().HasForeignKey(c => c.DrillId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => new { c.DrillId, c.At });
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
         });
 
         // ---- incidents (spec 12): the report is one document with its persons and supplements; what happens to it afterwards is appended ----
@@ -1469,7 +1734,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement ? IncidentOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement ? IncidentOf(entry) : entry.Entity is DrillParticipant or DrillNote ? DrillOf(entry) : entry.Entity is MeetingAttendee or MeetingItem or MeetingNote ? MeetingOf(entry) : entry.Entity is PermitAnswer or PermitPerson or PermitGasReading or PermitEntry or PermitEvent ? PermitOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -1564,6 +1829,39 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<RiskAssessment>().FirstOrDefault(e => e.Entity.Id == assessmentId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A part of a risk assessment was changed without loading the assessment; load it with its team, activities and hazards.");
+        return parent;
+    }
+
+    /// <summary>An answer, a person, a reading, an entry or an event of a permit is its own table but part of the permit: changing one moves the permit's version, so the change travels.</summary>
+    private EntityEntry? PermitOf(EntityEntry child)
+    {
+        var property = child.Property("PermitId");
+        var permitId = (Guid)(child.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Permit>().FirstOrDefault(e => e.Entity.Id == permitId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of a permit was changed without loading the permit; load it with its answers, persons, readings, entries and events.");
+        return parent;
+    }
+
+    /// <summary>An attendee, an item or a note of a meeting is its own table but part of the meeting: changing one moves the meeting's version, so the change travels.</summary>
+    private EntityEntry? MeetingOf(EntityEntry child)
+    {
+        var property = child.Property("MeetingId");
+        var meetingId = (Guid)(child.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Meeting>().FirstOrDefault(e => e.Entity.Id == meetingId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of a meeting was changed without loading the meeting; load it with its attendees, items and notes.");
+        return parent;
+    }
+
+    /// <summary>A participant or a note of a drill is its own table but part of the drill: changing one moves the drill's version, so the change travels.</summary>
+    private EntityEntry? DrillOf(EntityEntry child)
+    {
+        var property = child.Property("DrillId");
+        var drillId = (Guid)(child.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<Drill>().FirstOrDefault(e => e.Entity.Id == drillId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of a drill was changed without loading the drill; load it with its participants and notes.");
         return parent;
     }
 

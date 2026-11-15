@@ -477,6 +477,23 @@ public class IncidentService(IDbContextFactory<ChandleryDbContext> factory, Work
         }
     }
 
+    /// <summary>
+    /// Asks the vessel to hold a drill because of the report: an action titled with the drill, linked to the report, with the reason in it. Same rules as any action (the office or
+    /// the Master, on a submitted report that is still open). The drill itself is recorded in the drills module as usual.
+    /// </summary>
+    public async Task<WorklistTask> AskForDrillAsync(Guid companyId, Guid incidentId, Actor actor, Guid drillTypeId, string reason, DateTime? target = null)
+    {
+        string name;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.CurrentCompanyId = companyId;
+            name = await db.DrillTypes.AsNoTracking().Where(t => t.Id == drillTypeId && t.CompanyId == companyId && t.IsActive).Select(t => t.Name).FirstOrDefaultAsync()
+                ?? throw new InvalidOperationException("Choose a drill type that is in use.");
+        }
+        reason = (reason ?? "").Trim();
+        return await AddActionAsync(companyId, incidentId, actor, new NewIncidentAction($"Hold a drill: {name}", reason.Length == 0 ? "Asked for after this report." : $"Asked for after this report: {reason}", target, "Master"));
+    }
+
     // ---- reading ----
 
     /// <summary>One report with everything that belongs to it, or null when the person may not see it (a crew member sees their own; the Master the vessel's; the office all).</summary>

@@ -1,0 +1,111 @@
+@page "/drills/crew"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject DrillService Svc
+
+<PageTitle>Crew participation in drills · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Crew participation"
+            Subtitle="Who last took part in each drill every crew member must attend, and when each is next due.">
+    <Actions>
+        @if (_p is not null) { <a href="/drills/reports/participation.csv?vessel=@_vesselId" class="btn btn-secondary">CSV</a> }
+        <a href="/drills" class="btn btn-secondary">Schedule</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="5" />
+}
+else if (_blocked is not null)
+{
+    <EmptyState Title="Not available" Message="@_blocked" />
+}
+else if (_p is { } p)
+{
+    @if (_vessels.Count > 1)
+    {
+        <div class="card mb-5 flex flex-wrap items-end gap-4 p-4 text-sm">
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId" @bind:after="LoadAsync">
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        </div>
+    }
+
+    @if (p.Types.Count == 0)
+    {
+        <EmptyState Title="No drill everyone attends" Message="None of the drill types that every crew member takes part in applies on this vessel." />
+    }
+    else if (p.Crew.Count == 0)
+    {
+        <EmptyState Title="No crew" Message="No crew are signed on to this vessel." />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wide text-muted">
+                    <tr><th class="px-4 py-3">@p.VesselName</th>@foreach (var t in p.Types) { <th class="px-3 py-3">@t.Name</th> }</tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in p.Crew)
+                    {
+                        <tr class="border-t border-line/60 align-top">
+                            <td class="px-4 py-3"><span class="font-medium">@c.Name</span><div class="text-xs text-muted">@c.Rank</div></td>
+                            @foreach (var t in p.Types)
+                            {
+                                var s = c.Standing.FirstOrDefault(x => x.Type.Id == t.Id);
+                                <td class="px-3 py-3">
+                                    @if (s is null) { <span class="text-xs text-muted">–</span> }
+                                    else
+                                    {
+                                        var (label, tone) = s.Status == DrillStatus.NeverHeld ? ("No record", "warning") : DrillLook.Status(s.Status);
+                                        <StatusChip Label="@label" Tone="@tone" />
+                                        <div class="mt-1 text-xs text-muted">@(s.LastTookPart is { } l ? $"took part {l:d MMM yyyy}" : "has not taken part")</div>
+                                        <div class="text-xs text-muted">due @DrillLook.Day(s.Due)</div>
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] public Guid? VesselQuery { get; set; }
+
+    private Guid _companyId, _vesselId;
+    private Actor _actor = default!;
+    private bool _loaded;
+    private string? _blocked;
+    private DrillParticipation? _p;
+    private List<(Guid Id, string Name)> _vessels = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 0) { _blocked = "The Drills and Meetings module has not been switched on for any vessel."; _loaded = true; return; }
+        if (NodeContext.Current.IsVessel)
+        {
+            var me = await Svc.CrewOfUserAsync(_companyId, _actor.UserId);
+            if (me?.VesselId is not { } mine || _vessels.All(v => v.Id != mine) || !me.IsMaster) { _blocked = "Crew participation is for the Master of the vessel and the office."; _loaded = true; return; }
+            _vesselId = mine;
+        }
+        else _vesselId = VesselQuery is { } q && _vessels.Any(v => v.Id == q) ? q : _vessels[0].Id;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync() => _p = await Svc.ParticipationAsync(_companyId, _vesselId, _actor);
+}

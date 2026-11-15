@@ -1,0 +1,42 @@
+@inject PermitService Permits
+
+@if (_status is { ModuleOn: true })
+{
+    @if (_status.Permit is { } row && row.Valid)
+    {
+        <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            Enclosed space permit <a class="link font-mono font-semibold" href="/permits/@row.Permit.Id">@row.Permit.Code</a> is valid until @PermitLook.When(row.Until).
+        </div>
+    }
+    else if (_status.Permit is { } open)
+    {
+        <div class="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Enclosed space permit <a class="link font-mono font-semibold" href="/permits/@open.Permit.Id">@open.Permit.Code</a> exists but is not valid now (@open.Reason.ToLowerInvariant()). Do not enter until it is.
+        </div>
+    }
+    else
+    {
+        <div class="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            No enclosed space permit is open for this tank. If the inspection means going in, a permit is needed first.
+            @if (NodeContext.Current.IsVessel) { <a class="link font-semibold" href="/permits/new?tank=@TankId">Request one</a> }
+        </div>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public Guid CompanyId { get; set; }
+    [Parameter, EditorRequired] public Guid VesselId { get; set; }
+    [Parameter, EditorRequired] public Guid TankId { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private PermitTankStatus? _status;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _status = null;
+        if (TankId == Guid.Empty || VesselId == Guid.Empty) return;
+        var state = await AuthStateTask!;
+        try { _status = await Permits.TankStatusAsync(CompanyId, VesselId, TankId, Actor.From(state.User)); }
+        catch (InvalidOperationException) { _status = null; }
+    }
+}

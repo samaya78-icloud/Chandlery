@@ -1,0 +1,127 @@
+@page "/permits/{Id:guid}/log"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using Chandlery.Models
+@inject PermitService Svc
+
+<PageTitle>Entry log · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_d is null)
+{
+    <EmptyState Title="Permit not found" Message="It does not exist, or it belongs to another vessel." />
+}
+else
+{
+    var p = _d.Permit;
+    var (stateLabel, stateTone) = PermitLook.State(_d.State);
+    <PageHeader Eyebrow="@_d.VesselName" Title="@($"Entry log, {p.Code}")" Subtitle="@($"{p.TypeName}, {p.Location}")">
+        <Actions>
+            <a href="/permits/@p.Id" class="btn btn-secondary">The permit</a>
+        </Actions>
+    </PageHeader>
+
+    <div class="mb-5 flex flex-wrap items-center gap-2">
+        <StatusChip Label="@stateLabel" Tone="@stateTone" />
+        <StatusChip Label="@(_d.Validity.Valid ? "Valid now" : "Not valid: " + _d.Validity.Reason)" Tone="@(_d.Validity.Valid ? "success" : "danger")" />
+        @if (_d.Terms.GasTestRequired) { var (gl, gt) = PermitLook.Gas(_d.Gas); <StatusChip Label="@gl" Tone="@gt" /> @if (_d.NextGasDue is { } due) { <span class="chip">Next reading by @PermitLook.When(due)</span> } }
+        <span class="chip">Attendant: @(p.AttendantName == "" ? "none named" : p.AttendantName)</span>
+    </div>
+
+    @if (!_d.Terms.EntryLogRequired)
+    {
+        <EmptyState Title="No entry log" Message="This kind of permit does not keep an entry log." />
+    }
+    else
+    {
+        <div class="mb-3 rounded-lg px-4 py-3 text-lg font-semibold @(_d.Inside.Count == 0 ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900")">
+            @(_d.Inside.Count == 0 ? "Nobody is inside." : $"{_d.Inside.Count} inside: {string.Join(", ", _d.Inside.Select(e => e.PersonName))}")
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+            @foreach (var person in p.Persons.OrderBy(x => x.Name))
+            {
+                var inside = _d.Inside.FirstOrDefault(e => e.CrewMemberId == person.CrewMemberId);
+                <div class="card flex items-center gap-4 p-5">
+                    <div class="min-w-0 flex-1">
+                        <p class="truncate text-xl font-semibold text-ink">@person.Name</p>
+                        <p class="text-sm text-muted">@(inside is null ? "Outside" : $"In since {PermitLook.When(inside.In)}")</p>
+                    </div>
+                    @if (inside is not null)
+                    {
+                        <button class="btn btn-secondary min-h-16 min-w-32 text-lg" disabled="@_busy" @onclick="() => LeaveAsync(inside.Id)">OUT</button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary min-h-16 min-w-32 text-lg" disabled="@(_busy || !_d.Can.Enter)" @onclick="() => EnterAsync(person.CrewMemberId!.Value)">IN</button>
+                    }
+                </div>
+            }
+        </div>
+
+        @if (!_d.Can.Enter && _d.Inside.Count == 0 && p.Persons.Count > 0)
+        {
+            <p class="mt-3 text-sm text-muted">Nobody can go in while the permit is not valid, and only the attendant, the person in charge or the Master records entries.</p>
+        }
+
+        @if (p.Entries.Count > 0)
+        {
+            <div class="card mt-5 p-4 text-sm">
+                <h2 class="mb-3 text-base font-semibold text-ink">Log</h2>
+                <table class="w-full text-left">
+                    <thead class="text-xs uppercase tracking-wide text-muted"><tr><th class="py-1">Name</th><th>In</th><th>Out</th><th>Attendant</th></tr></thead>
+                    <tbody>
+                        @foreach (var e in p.Entries.OrderBy(x => x.In))
+                        {
+                            <tr class="border-t border-line/60"><td class="py-1 font-medium">@e.PersonName</td><td>@PermitLook.When(e.In)</td><td>@(e.Out is { } o ? PermitLook.When(o) : "inside")</td><td>@e.AttendantName</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+
+    @if (_error is not null) { <div class="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">@_error</div> }
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = default!;
+    private PermitDetail? _d;
+    private bool _loaded, _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        try { _d = await Svc.GetAsync(_companyId, Id, _actor); }
+        catch (InvalidOperationException) { _d = null; }
+    }
+
+    private async Task RunAsync(Func<Task> work)
+    {
+        _error = null;
+        _busy = true;
+        try { await work(); }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; await LoadAsync(); }
+    }
+
+    private Task EnterAsync(Guid crewId) => RunAsync(async () => { await Svc.EnterAsync(_companyId, Id, _actor, crewId); });
+    private Task LeaveAsync(Guid entryId) => RunAsync(async () => { await Svc.LeaveAsync(_companyId, Id, _actor, entryId); });
+}
