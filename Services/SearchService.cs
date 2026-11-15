@@ -60,6 +60,23 @@ public class SearchService(IDbContextFactory<ChandleryDbContext> factory)
                      .OrderBy(d => d.Name).Take(PerGroup).ToListAsync())
             hits.Add(new SearchHit("Departments", d.Name, "", DocLinks.For(DocKind.Department, d.Id)));
 
+        foreach (var p in await db.Projects.Where(p => p.CompanyId == companyId && (EF.Functions.ILike(p.Code, like) || EF.Functions.ILike(p.Title, like) || EF.Functions.ILike(p.Yard, like)))
+                     .OrderByDescending(p => p.CreatedAt).Take(PerGroup).ToListAsync())
+            hits.Add(new SearchHit("Projects", p.Code, $"{p.Title} · {(p.Type == ProjectType.Drydock ? "Drydock" : "Technical")}", DocLinks.For(DocKind.Project, p.Id)));
+
+        // An assessment's versions share one reference, so only its latest version is offered.
+        foreach (var r in (await db.RiskAssessments.Where(r => r.CompanyId == companyId && (EF.Functions.ILike(r.Code, like) || EF.Functions.ILike(r.JobDescription, like)))
+                     .OrderByDescending(r => r.Version).Take(PerGroup * 4).ToListAsync()).GroupBy(r => r.Code).Select(g => g.First()).Take(PerGroup))
+            hits.Add(new SearchHit("Risk assessments", r.Code, $"{r.JobDescription} · v{r.Version}", DocLinks.For(DocKind.RiskAssessment, r.Id)));
+
+        foreach (var t in await db.TankInspections.Where(t => t.CompanyId == companyId && EF.Functions.ILike(t.Code, like))
+                     .OrderByDescending(t => t.InspectedOn).Take(PerGroup).ToListAsync())
+            hits.Add(new SearchHit("Tank inspections", t.Code, $"{t.TemplateName} · {t.InspectedOn:d MMM yyyy}", DocLinks.For(DocKind.TankInspection, t.Id)));
+
+        foreach (var w in await db.WorklistTasks.Where(w => w.CompanyId == companyId && (EF.Functions.ILike(w.Code, like) || EF.Functions.ILike(w.Title, like)))
+                     .OrderByDescending(w => w.CreatedAt).Take(PerGroup).ToListAsync())
+            hits.Add(new SearchHit("Worklist", w.Code, w.Title, DocLinks.For(DocKind.WorklistTask, w.Id)));
+
         return hits;
     }
 
