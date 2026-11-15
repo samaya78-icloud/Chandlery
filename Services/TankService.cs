@@ -89,6 +89,19 @@ public class TankService(IDbContextFactory<ChandleryDbContext> factory)
         await db.SaveChangesAsync();
     }
 
+    /// <summary>Moves a tank on the plan, keeping its size. Same rules as editing it: only the side that made the tank may move it.</summary>
+    public async Task MoveTankAsync(Guid companyId, Guid tankId, int planX, int planY)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        db.CurrentCompanyId = companyId;
+        var tank = await db.Tanks.FirstOrDefaultAsync(t => t.Id == tankId && t.CompanyId == companyId) ?? throw new InvalidOperationException("Tank not found.");
+        if (!await IsEnabledForVesselAsync(db, companyId, tank.VesselId)) throw new InvalidOperationException("Tank inspection is not switched on for this vessel.");
+        if (planX < 0 || planY < 0 || planX + tank.PlanWidth > PlanColumns || planY + tank.PlanHeight > PlanRows)
+            throw new InvalidOperationException($"The tank must sit inside the plan ({PlanColumns} columns by {PlanRows} rows).");
+        (tank.PlanX, tank.PlanY) = (planX, planY);
+        await db.SaveChangesAsync();
+    }
+
     public async Task<Tank?> GetTankAsync(Guid companyId, Guid tankId)
     {
         await using var db = await factory.CreateDbContextAsync();

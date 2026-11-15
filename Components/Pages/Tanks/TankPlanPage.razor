@@ -4,6 +4,8 @@
 @rendermode InteractiveServer
 @inject TankService Svc
 @inject TankInspectionService Inspections
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 <PageTitle>Tanks · Chandlery</PageTitle>
 
@@ -57,7 +59,7 @@ else
     </div>
 
     <div class="card mb-5 overflow-x-auto p-4">
-        <svg viewBox="0 0 1000 400" class="w-full min-w-[640px]" role="img" aria-label="Tank plan, profile view with the bow to the right">
+        <svg @ref="_svg" viewBox="0 0 1000 400" class="tank-plan w-full min-w-[640px]" style="touch-action:none" role="img" aria-label="Tank plan, profile view with the bow to the right. Drag a tank to move it.">
             <path d="M10 30 H880 Q990 40 990 200 Q990 360 880 370 H10 Q0 370 0 340 V60 Q0 30 10 30 Z" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2" />
             <text x="14" y="22" font-size="11" fill="currentColor" fill-opacity="0.5">Stern</text>
             <text x="950" y="22" font-size="11" fill="currentColor" fill-opacity="0.5" text-anchor="end">Bow</text>
@@ -66,7 +68,8 @@ else
                 var t = row.Tank;
                 var fill = _byHealth ? TankLook.Colour(row.Health) : TankLook.Colour(t.Type);
                 var selected = _selected?.Tank.Id == t.Id;
-                <g class="cursor-pointer" @onclick="() => Select(row)" role="button" aria-label="@($"{t.Code} {t.Name}")">
+                <g class="tank-cell" data-tank="@t.Id" data-movable="true" data-x="@t.PlanX" data-y="@t.PlanY" data-w="@t.PlanWidth" data-h="@t.PlanHeight"
+                   @onclick="() => Select(row)" role="button" aria-label="@($"{t.Code} {t.Name}")">
                     <rect x="@(t.PlanX * 10)" y="@(t.PlanY * 10)" width="@(t.PlanWidth * 10)" height="@(t.PlanHeight * 10)" rx="6"
                           fill="@fill" fill-opacity="@(t.IsActive ? "0.55" : "0.15")" stroke="@(selected ? "currentColor" : fill)" stroke-width="@(selected ? 4 : 2)" />
                     <text x="@(t.PlanX * 10 + t.PlanWidth * 5)" y="@(t.PlanY * 10 + t.PlanHeight * 5 + 5)" font-size="14" font-weight="700" text-anchor="middle" fill="currentColor">@t.Code</text>
@@ -78,6 +81,7 @@ else
             }
         </svg>
         @if (_rows.Count == 0) { <p class="mt-2 text-sm text-muted">No tanks yet. Add the first one, or the office can copy a sister vessel's tank list.</p> }
+        else { <p class="mt-2 text-xs text-muted">Drag a tank to move it. It snaps to the plan grid and is saved when you let go.</p> }
     </div>
 
     @if (_form is not null)
@@ -206,6 +210,65 @@ else
     private TankType _type;
     private int _x, _y, _w = 10, _h = 8;
     private decimal? _coatedArea, _protectedArea;
+
+    // dragging tanks on the plan
+    private ElementReference _svg;
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<TankPlanPage>? _self;
+    private bool _dragReady, _resetPlan;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_loaded || _vessels.Count == 0) return;
+        try
+        {
+            if (!_dragReady)
+            {
+                _dragReady = true;
+                _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/tank-plan.js");
+                _self = DotNetObjectReference.Create(this);
+                await _module.InvokeVoidAsync("init", _svg, _self, TankService.PlanColumns, TankService.PlanRows);
+            }
+            else if (_resetPlan && _module is not null)
+            {
+                _resetPlan = false;
+                await _module.InvokeVoidAsync("reset", _svg);
+            }
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    /// <summary>A tank was dropped on a new cell of the plan: save it, or put it back and say why.</summary>
+    [JSInvokable]
+    public async Task OnTankMoved(string id, int x, int y)
+    {
+        _error = null;
+        try
+        {
+            var tankId = Guid.Parse(id);
+            await Svc.MoveTankAsync(_companyId, tankId, x, y);
+            if (_editing?.Id == tankId) (_x, _y) = (x, y);   // keep an open edit form in step
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        _resetPlan = true;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_module is not null)
+            {
+                await _module.InvokeVoidAsync("dispose", _svg);
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { }
+        _self?.Dispose();
+    }
 
     private bool _fieldsValid => _w >= 1 && _h >= 1 && _x >= 0 && _y >= 0 && _x + _w <= TankService.PlanColumns && _y + _h <= TankService.PlanRows;
 
