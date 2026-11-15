@@ -125,6 +125,19 @@ public class FormReports(IDbContextFactory<ChandleryDbContext> factory, FormServ
         return (type, columns, rows.Select(r => FormExport.Row(columns, r.Entry, r.Vessel, r.Status)).ToList());
     }
 
+    // ---- moving legacy answers in ----
+
+    /// <summary>
+    /// Starts an entry for a vessel, from the office, on the form's latest published version and puts the answers read from a legacy file into it. The answers are matched by
+    /// id; the check says which could not be kept. The entry is a draft the office can finish and submit.
+    /// </summary>
+    public async Task<(FormEntry Entry, FormCheck Check)> ImportAsync(Guid companyId, Guid vesselId, Guid typeId, DateTime formDate, JsonObject values, Actor actor)
+    {
+        var entry = await forms.StartAsync(companyId, vesselId, typeId, formDate, actor);
+        var check = await forms.SaveAsync(companyId, entry.Id, values);
+        return (entry, check);
+    }
+
     // ---- what is due ----
 
     /// <summary>

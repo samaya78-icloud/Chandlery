@@ -1,0 +1,158 @@
+@page "/forms/convert"
+@attribute [Authorize(Roles = "CompanyAdmin")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@using System.Text.Json.Nodes
+@inject FormService Svc
+@inject FormReports Reports
+@inject NavigationManager Nav
+
+<PageTitle>Convert a legacy form · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Forms" Title="Convert a legacy form" Subtitle="Upload a saved HTML form. You get a draft to check against the original; nothing is live until you publish it.">
+    <Actions><a href="/forms/types" class="btn btn-secondary">Forms</a></Actions>
+</PageHeader>
+
+@if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+@if (_notice is not null) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div> }
+
+<div class="card mb-5 p-4 text-sm">
+    <label class="block text-xs text-muted">The saved form (.html, up to 2 MB). It is read, never run.
+        <InputFile OnChange="PickAsync" accept=".html,.htm" class="mt-1 block text-sm" /></label>
+    <p class="mt-2 text-xs text-muted">A filled-in form also gives you its answers, to put into an entry once the converted form is published.</p>
+</div>
+
+@if (_conversion is { } c)
+{
+    <div class="mb-5 grid gap-4 lg:grid-cols-2">
+        <div>
+            <h2 class="mb-2 font-display text-base font-extrabold text-ink">The original</h2>
+            <iframe title="The original form" sandbox="" srcdoc="@_html" class="h-[34rem] w-full rounded-xl border border-line/60 bg-white"></iframe>
+        </div>
+        <div>
+            <h2 class="mb-2 font-display text-base font-extrabold text-ink">The draft @(c.Definition.Title == "" ? "" : "· " + c.Definition.Title)</h2>
+            <div class="h-[34rem] overflow-y-auto rounded-xl border border-line/60 bg-surface-2/40 p-3">
+                <FormRenderer Definition="c.Definition" Values="_values" />
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-5 p-4 text-sm">
+        <h2 class="mb-2 font-display text-base font-extrabold text-ink">What the converter did</h2>
+        <ul class="space-y-1 text-xs">
+            @foreach (var n in c.Notes.OrderBy(n => n.Level == ConversionLevel.Skipped ? 0 : n.Level == ConversionLevel.Check ? 1 : 2))
+            {
+                <li class="flex flex-wrap items-baseline gap-2">
+                    <span class="chip" data-tone="@(n.Level == ConversionLevel.Skipped ? "danger" : n.Level == ConversionLevel.Check ? "warning" : "neutral")">@(n.Level == ConversionLevel.Skipped ? "left out" : n.Level == ConversionLevel.Check ? "check" : "done")</span>
+                    <span class="font-semibold">@n.Where</span><span>@n.Message</span>
+                </li>
+            }
+        </ul>
+    </div>
+
+    <div class="card mb-5 p-4 text-sm">
+        <h2 class="mb-2 font-display text-base font-extrabold text-ink">Save it as a draft</h2>
+        @if (_types.Count == 0) { <p class="text-xs text-muted">Make the form first (Forms, then New form), then come back to put this draft in it.</p> }
+        else
+        {
+            <div class="grid gap-3 md:grid-cols-3">
+                <label class="text-xs text-muted">Into the form
+                    <select class="select mt-1" @bind="_typeId" @bind:after="TypeChangedAsync"><option value="">Choose…</option>@foreach (var t in _types) { <option value="@t.Id">@t.Code · @t.Title</option> }</select></label>
+                <label class="text-xs text-muted md:col-span-2">Note
+                    <input class="input mt-1" @bind="_note" /></label>
+            </div>
+            <div class="mt-3"><button class="btn btn-primary" @onclick="SaveAsync" disabled="@(_busy || _typeId == "")">Save as a draft version</button></div>
+        }
+    </div>
+
+    @if (_hasPublished && _values.Count > 0)
+    {
+        <div class="card mb-5 p-4 text-sm">
+            <h2 class="mb-2 font-display text-base font-extrabold text-ink">Put its answers into an entry</h2>
+            <p class="mb-3 text-xs text-muted">The answers go in by the same ids as the form's latest published version. Publish the converted draft first so the two match.</p>
+            <div class="flex flex-wrap items-end gap-3">
+                <label class="text-xs text-muted">Vessel
+                    <select class="select mt-1" @bind="_vesselId"><option value="">Choose…</option>@foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }</select></label>
+                <label class="text-xs text-muted">The form is about the date
+                    <input type="date" class="input mt-1" max="@DateTime.UtcNow.ToString("yyyy-MM-dd")" @bind="_date" /></label>
+                <button class="btn btn-secondary" @onclick="ImportAsync" disabled="@(_busy || _vesselId == "")">Create the entry</button>
+            </div>
+        </div>
+    }
+
+    <details class="card mb-5 p-4 text-sm"><summary class="cursor-pointer text-xs font-semibold">The draft as JSON</summary>
+        <pre class="mt-2 max-h-96 overflow-auto text-xs">@c.Json</pre></details>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _busy, _hasPublished;
+    private string? _error, _notice;
+    private string _html = "", _fileName = "", _typeId = "", _note = "", _vesselId = "";
+    private DateTime _date = DateTime.UtcNow.Date;
+    private FormConversion? _conversion;
+    private JsonObject _values = [];
+    private List<FormType> _types = [];
+    private List<(Guid Id, string Name)> _vessels = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _types = await Svc.TypesAsync(_companyId);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+    }
+
+    private async Task PickAsync(InputFileChangeEventArgs e)
+    {
+        _error = _notice = null;
+        _conversion = null;
+        try
+        {
+            var file = e.File;
+            await using var stream = file.OpenReadStream(FormHtmlConverter.MaxHtmlChars);
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            _html = await reader.ReadToEndAsync();
+            _fileName = file.Name;
+            _conversion = FormHtmlConverter.Convert(_html);
+            _values = (JsonObject)_conversion.Values.DeepClone();
+            _note = $"Converted from {_fileName}";
+            if (_conversion.Definition.Sections.Count == 0) _error = "No inputs were found in that file. See the notes below.";
+        }
+        catch (IOException) { _error = "The file is larger than 2 MB."; }
+    }
+
+    private async Task TypeChangedAsync()
+        => _hasPublished = Guid.TryParse(_typeId, out var id) && (await Svc.VersionsAsync(_companyId, id)).Any(v => v.Status == FormVersionStatus.Published);
+
+    private async Task SaveAsync()
+    {
+        _error = _notice = null;
+        _busy = true;
+        try
+        {
+            var draft = await Svc.CreateDraftAsync(_companyId, Guid.Parse(_typeId), _conversion!.Definition.ToJson(), _note, _actor);
+            Nav.NavigateTo($"/forms/builder/{draft.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task ImportAsync()
+    {
+        _error = _notice = null;
+        _busy = true;
+        try
+        {
+            var (entry, check) = await Reports.ImportAsync(_companyId, Guid.Parse(_vesselId), Guid.Parse(_typeId), _date, (JsonObject)_conversion!.Values.DeepClone(), _actor);
+            if (check.Problems.Count > 0) _notice = $"Created {entry.Code}. {check.Problems.Count} answer(s) could not be kept.";
+            Nav.NavigateTo($"/forms/entry/{entry.Id}");
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+}

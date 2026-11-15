@@ -337,6 +337,26 @@ public class FormReviewTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AConvertedLegacyFormIsPublishedLikeAnyOther_AndItsAnswersGoIntoAnEntryByTheSameIds()
+    {
+        await SwitchOnAsync(PolicyModules.Forms);
+        var conversion = FormHtmlConverter.Convert(FormConverterTests.EngineReport);
+        var type = await _shore.CreateTypeAsync(_s.CompanyId, new NewFormType("PM05", "Crankpin Bearings", "Technical", FormPeriodicity.Monthly, FormScheduleBasis.Calendar, Today.AddMonths(-3)), _s.User);
+        var draft = await _shore.CreateDraftAsync(_s.CompanyId, type.Id, conversion.Definition.ToJson(), "Converted from PM05.html", _s.User);
+        await _shore.PublishAsync(_s.CompanyId, draft.Id, _s.User);                                                  // the converted draft passes the same publishing rules
+        await _s.SettleUntilQuietAsync();
+
+        var (entry, check) = await _reports.ImportAsync(_s.CompanyId, _s.VesselId, type.Id, new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc), (JsonObject)conversion.Values.DeepClone(), _s.User);
+        Assert.Empty(check.Problems);
+        Assert.True(entry.FilledAshore);
+        var saved = (await _shore.GetAsync(_s.CompanyId, entry.Id))!;
+        var values = JsonNode.Parse(saved.Entry.Values)!;
+        Assert.Equal("7G60M-CGIE-HPSCR", values["engineType"]!.ToString());
+        Assert.Equal(0.55m, values["tblMeasured"]!["measured"]!["bearing1.f"]!.GetValue<decimal>());
+        Assert.Equal(FormStatus.Draft, saved.Status);
+    }
+
+    [Fact]
     public async Task TheYearViewShowsWhatWasFilledEachMonthForTheFormsThatApply()
     {
         await SwitchOnAsync(PolicyModules.Forms);
