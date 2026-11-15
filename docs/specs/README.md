@@ -22,6 +22,7 @@ One platform used by ship managers and their vessels. The **office (shore)** and
 | 12 | [Safety: incidents](12-safety-incidents.md) | Incidents, near-misses and observations: report, Master review, investigation and root cause, actions in the Worklist, fleet statistics and rates. Draft |
 | 13 | [Safety: drills and meetings](13-safety-drills-meetings.md) | Drill schedule and records, per-person participation, safety committee and toolbox meetings with actions. Draft |
 | 14 | [Safety: permit to work](14-safety-permit-to-work.md) | Hot work, enclosed space and other permits: checklists, issue, gas readings, entry log, validity, close-out. Draft |
+| 15 | [Forms](15-forms.md) | A generic form builder: forms designed by the office as JSON (sections, typed fields, grids, rules), published in versions, filled onboard offline, reviewed ashore, with comments, action items and a year view. Plan: [15a](15a-forms-plan.md) (draft, not built) |
 
 ## Principles (apply to every module)
 1. **Offline-first.** Every screen reads and writes the local store; sync is a background process. A vessel must work for weeks without connectivity.
