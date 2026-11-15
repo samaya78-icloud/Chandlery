@@ -90,7 +90,8 @@ public class RecordFileTests : IAsyncLifetime
         var atOffice = (await _shoreIncidents.GetAsync(_s.CompanyId, report.Id, _s.User))!.Incident.Files.Single();
         Assert.Equal((added.Id, "wrench.png", added.Sha256, "Vessel"), (atOffice.Id, atOffice.FileName, atOffice.Sha256, atOffice.HeldBy));
 
-        var onboard = (await _vessel.OpenAsync(_s.CompanyId, "incident", report.Id, added.Id, As(_cook)))!.Value;
+        Assert.Null(await _vessel.OpenAsync(_s.CompanyId, "incident", report.Id, added.Id, As(_cook)));            // a crew member sees only their own report, so not its files
+        var onboard = (await _vessel.OpenAsync(_s.CompanyId, "incident", report.Id, added.Id, As(_master)))!.Value;
         Assert.NotNull(onboard.Content);
         using (var copy = new MemoryStream()) { await onboard.Content!.CopyToAsync(copy); Assert.Equal(Photo, copy.ToArray()); }
 

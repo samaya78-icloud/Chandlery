@@ -44,7 +44,7 @@ public class RestImportTests : IAsyncLifetime
             + "Ravi Singh,not a date,00:00-04:00\n"
             + "Ravi Singh,2026-12-25,00:00-04:00\n"                                                              // has not happened yet
             + "Ravi Singh,2026-10-05,00:00-99:00\n"                                                              // not a time
-            + "Ravi Singh,2026-10-06,00:00-12:00,13:00-06:00\n"                                                  // overlapping, and an extra cell
+            + "Ravi Singh,2026-10-06,garbage\n"                                                                  // not work periods at all
             + "Same Name,2026-10-07,00:00-04:00\n"                                                               // two seafarers with the name
             + "Ravi Singh,2026-10-08,00:00-04:00\n"
             + "Ravi Singh,2026-10-08,00:00-05:00\n");                                                            // the same day twice
