@@ -32,6 +32,7 @@ public static class DocumentNumbers
         DocType.Meeting => "MT",
         DocType.Permit => "PTW",
         DocType.Form => "FRM",
+        DocType.Certificate => "CRT",
         _ => throw new ArgumentOutOfRangeException(nameof(type))
     };
 

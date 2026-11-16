@@ -97,6 +97,9 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
     public DbSet<IncidentSupplement> IncidentSupplements => Set<IncidentSupplement>();
     public DbSet<IncidentFile> IncidentFiles => Set<IncidentFile>();
     public DbSet<PermitFile> PermitFiles => Set<PermitFile>();
+    public DbSet<ShipCertificate> ShipCertificates => Set<ShipCertificate>();
+    public DbSet<CertificateEvent> CertificateEvents => Set<CertificateEvent>();
+    public DbSet<CertificateFile> CertificateFiles => Set<CertificateFile>();
     public DbSet<IncidentEvent> IncidentEvents => Set<IncidentEvent>();
     public DbSet<IncidentInvestigation> IncidentInvestigations => Set<IncidentInvestigation>();
     public DbSet<IncidentExposure> IncidentExposures => Set<IncidentExposure>();
@@ -982,6 +985,41 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
             ConfigureRecordFile(b);
             b.HasIndex(f => f.PermitId);
         });
+        modelBuilder.Entity<ShipCertificate>(b =>
+        {
+            b.Property(c => c.Code).HasMaxLength(40);
+            b.Property(c => c.Title).HasMaxLength(200);
+            b.Property(c => c.CertificateNumber).HasMaxLength(80);
+            b.Property(c => c.IssuedBy).HasMaxLength(200);
+            b.Property(c => c.Notes).HasMaxLength(2000);
+            b.Property(c => c.CreatedByName).HasMaxLength(120);
+            b.Property(c => c.Kind).HasConversion<string>().HasMaxLength(20);
+            b.Property(c => c.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Office);
+            b.HasOne<Company>().WithMany().HasForeignKey(c => c.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(c => c.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasIndex(c => new { c.VesselId, c.DueDate });
+            b.HasIndex(c => new { c.CompanyId, c.Code });
+            b.HasQueryFilter(c => CurrentCompanyId == null || c.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<CertificateEvent>(b =>
+        {
+            b.Property(e => e.Type).HasConversion<string>().HasMaxLength(20);
+            b.Property(e => e.Reference).HasMaxLength(200);
+            b.Property(e => e.Note).HasMaxLength(2000);
+            b.Property(e => e.ByName).HasMaxLength(120);
+            b.Property(e => e.OwnerStage).HasMaxLength(10).HasDefaultValue(SyncStages.Vessel);
+            b.HasOne<Company>().WithMany().HasForeignKey(e => e.CompanyId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<Vessel>().WithMany().HasForeignKey(e => e.VesselId).OnDelete(DeleteBehavior.Restrict);
+            b.HasOne<ShipCertificate>().WithMany().HasForeignKey(e => e.CertificateId).OnDelete(DeleteBehavior.Restrict);
+            b.HasMany(e => e.Files).WithOne().HasForeignKey(f => f.CertificateEventId).OnDelete(DeleteBehavior.Cascade);
+            b.HasIndex(e => new { e.CertificateId, e.OccurredOn });
+            b.HasQueryFilter(e => CurrentCompanyId == null || e.CompanyId == CurrentCompanyId);
+        });
+        modelBuilder.Entity<CertificateFile>(b =>
+        {
+            ConfigureRecordFile(b);
+            b.HasIndex(f => f.CertificateEventId);
+        });
         modelBuilder.Entity<IncidentEvent>(b =>
         {
             b.Property(e => e.Text).HasMaxLength(2000);
@@ -1820,7 +1858,7 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
                     continue;
                 }
 
-                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement or IncidentFile ? IncidentOf(entry) : entry.Entity is DrillParticipant or DrillNote ? DrillOf(entry) : entry.Entity is MeetingAttendee or MeetingItem or MeetingNote ? MeetingOf(entry) : entry.Entity is PermitAnswer or PermitPerson or PermitGasReading or PermitEntry or PermitEvent or PermitFile ? PermitOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry;
+                var root = entry.Metadata.IsOwned() ? OwnerOf(entry) : entry.Entity is RequisitionLine ? RequisitionOf(entry) : entry.Entity is RfqLine ? RfqOf(entry) : entry.Entity is TankInspectionResult ? InspectionOf(entry) : entry.Entity is RaTeamMember or RaActivity or RaHazard ? AssessmentOf(entry) : entry.Entity is IncidentPerson or IncidentSupplement or IncidentFile ? IncidentOf(entry) : entry.Entity is DrillParticipant or DrillNote ? DrillOf(entry) : entry.Entity is MeetingAttendee or MeetingItem or MeetingNote ? MeetingOf(entry) : entry.Entity is PermitAnswer or PermitPerson or PermitGasReading or PermitEntry or PermitEvent or PermitFile ? PermitOf(entry) : entry.Entity is ProjectItem ? ProjectOf(entry) : entry.Entity is CertificateFile ? CertificateEventOf(entry) : entry;
                 if (root is null || root.State == EntityState.Deleted || root.Metadata.FindProperty(SyncUpdatedAt) is null) continue;
 
                 if (Node.SyncEnabled && Aggregates.Find(root.Entity.GetType()) is { } owned)
@@ -1960,6 +1998,17 @@ public class ChandleryDbContext(DbContextOptions<ChandleryDbContext> options, No
         var parent = ChangeTracker.Entries<Drill>().FirstOrDefault(e => e.Entity.Id == drillId);
         if (parent is null && Node.SyncEnabled)
             throw new InvalidOperationException("A part of a drill was changed without loading the drill; load it with its participants and notes.");
+        return parent;
+    }
+
+    /// <summary>A scan of a certificate event is its own table but part of the event: changing one moves the event's version, so the change travels.</summary>
+    private EntityEntry? CertificateEventOf(EntityEntry child)
+    {
+        var property = child.Property("CertificateEventId");
+        var eventId = (Guid)(child.State == EntityState.Deleted ? property.OriginalValue : property.CurrentValue)!;
+        var parent = ChangeTracker.Entries<CertificateEvent>().FirstOrDefault(e => e.Entity.Id == eventId);
+        if (parent is null && Node.SyncEnabled)
+            throw new InvalidOperationException("A part of a certificate event was changed without loading the event; load it with its files.");
         return parent;
     }
 

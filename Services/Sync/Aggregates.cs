@@ -62,6 +62,8 @@ public static class Aggregates
         new(nameof(MeetingComment), typeof(MeetingComment)),
         new(nameof(Permit), typeof(Permit)),
         new(nameof(PermitComment), typeof(PermitComment)),
+        new(nameof(ShipCertificate), typeof(ShipCertificate)),
+        new(nameof(CertificateEvent), typeof(CertificateEvent)),
         new(nameof(Project), typeof(Project)),
         new(nameof(ProjectStatusEvent), typeof(ProjectStatusEvent)),
         new(nameof(ProjectNote), typeof(ProjectNote)),
@@ -80,7 +82,7 @@ public static class Aggregates
         || clr == typeof(JobDeferralRequest) || clr == typeof(JobDeferralDecision) || clr == typeof(PlanChangeRequest) || clr == typeof(PlanChangeDecision)
         || clr == typeof(TankInspectionReview) || clr == typeof(RaSignOff)
         || clr == typeof(ChatMessage) || clr == typeof(FileAttachment) || clr == typeof(FormReview)
-        || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation) || clr == typeof(IncidentExposure) || clr == typeof(DrillComment) || clr == typeof(MeetingComment) || clr == typeof(PermitComment)
+        || clr == typeof(IncidentEvent) || clr == typeof(IncidentInvestigation) || clr == typeof(IncidentExposure) || clr == typeof(DrillComment) || clr == typeof(MeetingComment) || clr == typeof(PermitComment) || clr == typeof(CertificateEvent)
         || clr == typeof(ProjectStatusEvent) || clr == typeof(ProjectNote) || clr == typeof(ProjectLink) || clr == typeof(ProjectItemRequest) || clr == typeof(ProjectItemDecision)
         || clr == typeof(RestEntry) || clr == typeof(RestSignOff) || clr == typeof(RestBreachNote) || clr == typeof(VesselDayStatus) || clr == typeof(WorkArrangementTable) || clr == typeof(WorkArrangementSignOff);
 
@@ -150,6 +152,8 @@ public static class Aggregates
         MeetingComment meetingComment => meetingComment.OwnerStage,
         Permit permit => permit.OwnerStage,
         PermitComment permitComment => permitComment.OwnerStage,
+        ShipCertificate certificate => certificate.OwnerStage,
+        CertificateEvent certificateEvent => certificateEvent.OwnerStage,
         RaSignOff rs => rs.OwnerStage,
         Project pr => pr.OwnerStage,
         ProjectStatusEvent pe => pe.OwnerStage,
@@ -202,6 +206,8 @@ public static class Aggregates
         else if (root is MeetingComment meetingNote) meetingNote.OwnerStage = stage;
         else if (root is Permit permitDoc) permitDoc.OwnerStage = stage;
         else if (root is PermitComment permitNote) permitNote.OwnerStage = stage;
+        else if (root is ShipCertificate certificateDoc) certificateDoc.OwnerStage = stage;
+        else if (root is CertificateEvent certificateNote) certificateNote.OwnerStage = stage;
         else if (root is RaSignOff signOff) signOff.OwnerStage = stage;
         else if (root is Project project) project.OwnerStage = stage;
         else if (root is ProjectStatusEvent projectEvent) projectEvent.OwnerStage = stage;

@@ -28,7 +28,7 @@ public sealed record RecordFileView(Guid Id, string FileName, string ContentType
 /// Photos and statements kept with an incident report or a permit. The record is part of the document and travels with it; the bytes stay in the file store of the device that took
 /// them, until the sync engine gets its file transfer. Who may add, and who may see, is decided by the incident and permit services; this only stores and opens the bytes.
 /// </summary>
-public class RecordFileService(IFileStore files, IncidentService incidents, PermitService permits, IDbContextFactory<ChandleryDbContext> factory)
+public class RecordFileService(IFileStore files, IncidentService incidents, PermitService permits, IDbContextFactory<ChandleryDbContext> factory, CertificateService? certificates = null)
 {
     private async Task<string> SideAsync()
     {
@@ -58,6 +58,10 @@ public class RecordFileService(IFileStore files, IncidentService incidents, Perm
     public Task<PermitFile> AddToPermitAsync(Guid companyId, Guid permitId, Actor actor, PendingAttachment upload, string caption = "")
         => StoreAsync<PermitFile>(companyId, upload, caption, f => permits.AddFileAsync(companyId, permitId, actor, f));
 
+    /// <summary>A scan of a certificate or survey: kept as an event of its own, by either side.</summary>
+    public Task<CertificateFile> AddToCertificateAsync(Guid companyId, Guid certificateId, Actor actor, PendingAttachment upload, string caption = "")
+        => StoreAsync<CertificateFile>(companyId, upload, caption, f => (certificates ?? throw new InvalidOperationException("Certificates are not available.")).AddFileAsync(companyId, certificateId, actor, f));
+
     /// <summary>
     /// A file, if the person may see the record it belongs to. The content is null when the bytes are not on this device: the vessel took the photo and it has not been sent ashore.
     /// </summary>
@@ -66,6 +70,7 @@ public class RecordFileService(IFileStore files, IncidentService incidents, Perm
         RecordFile? file;
         if (kind == "incident") file = (await incidents.GetAsync(companyId, ownerId, actor))?.Incident.Files.FirstOrDefault(f => f.Id == fileId);
         else if (kind == "permit") file = (await permits.GetAsync(companyId, ownerId, actor))?.Permit.Files.FirstOrDefault(f => f.Id == fileId);
+        else if (kind == "certificate" && certificates is not null) file = (await certificates.GetAsync(companyId, ownerId))?.Files.FirstOrDefault(f => f.Id == fileId);
         else return null;
         if (file is null) return null;
         return (file, file.HeldBy == await SideAsync() ? files.OpenRead(file.StoredKey) : null);

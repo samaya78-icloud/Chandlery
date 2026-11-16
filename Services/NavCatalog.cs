@@ -16,10 +16,13 @@ public record NavGroup(string Title, List<NavEntry> Items, string Aliases = "");
 public class NavCatalogService(
     ApprovalService approvals, InvoiceService invoices, WorklistService worklist, PmsService pms, RestHoursService rest,
     TankService tanks, TankInspectionService tankReviews, TankTrendService tankTrends, RiskLibraryService riskLibrary, RiskAssessmentService risk, ProjectService projects,
-    IncidentService incidents, DrillService drills, DrillFleetService drillFleet, PermitService permits, IAuthorizationService authorization, ChatService chat, FormService forms)
+    IncidentService incidents, DrillService drills, DrillFleetService drillFleet, PermitService permits, IAuthorizationService authorization, ChatService chat, FormService forms, CertificateService certificates)
 {
     // The menu, the finder and every page header ask for the same list; a few seconds of memory spares the counts behind it being worked out again each time.
     private (DateTime At, string? User, bool Vessel, List<NavGroup> Groups)? _memo;
+
+    /// <summary>How long the list is remembered within one session, in seconds. 0 turns it off (tests that switch modules on and read the menu again).</summary>
+    public int MemoSeconds { get; set; } = 20;
 
     /// <summary>
     /// The pages that sit beside the one at <paramref name="path"/> in the menu (same group, same sub-heading), with the one that holds the page marked, so a page can offer a way back to its neighbours.
@@ -56,7 +59,7 @@ public class NavCatalogService(
     public async Task<List<NavGroup>> GetAsync(ClaimsPrincipal user, bool isVessel)
     {
         var who = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (_memo is { } m && m.User == who && m.Vessel == isVessel && DateTime.UtcNow - m.At < TimeSpan.FromSeconds(20)) return m.Groups;
+        if (MemoSeconds > 0 && _memo is { } m && m.User == who && m.Vessel == isVessel && DateTime.UtcNow - m.At < TimeSpan.FromSeconds(MemoSeconds)) return m.Groups;
         var built = await BuildAsync(user, isVessel);
         _memo = (DateTime.UtcNow, who, isVessel, built);
         return built;
@@ -155,16 +158,17 @@ public class NavCatalogService(
         if (await pms.IsEnabledForCompanyAsync(companyId))
         {
             var waiting = (await pms.PendingDeferralsAsync(companyId)).Count;
+            var certificatesDue = (await certificates.CountsAsync(companyId))?.NeedingAttention ?? 0;   // due within 30 days or past
             if (isVessel)
             {
                 maintenance.AddRange([new("/pms", "Plan", "pms"), new("/pms/hours", "Running hours", "pms"), new("/pms/machinery", "Machinery", "pms"),
-                    new("/pms/import", "Import a plan", "pms"), new("/pms/approvals", "Approvals", "pms", waiting)]);
+                    new("/pms/import", "Import a plan", "pms"), new("/pms/approvals", "Approvals", "pms", waiting), new("/pms/certificates", "Certificates", "pms", certificatesDue)]);
             }
             else
             {
                 waiting += (await pms.PlanChangesAsync(companyId, pendingOnly: true)).Count;
                 maintenance.AddRange([new("/pms", "Plan", "pms"), new("/pms/fleet", "Fleet overview", "pms"), new("/pms/hours", "Running hours", "pms"),
-                    new("/pms/machinery", "Machinery", "pms"), new("/pms/import", "Import a plan", "pms"), new("/pms/approvals", "Approvals", "pms", waiting),
+                    new("/pms/machinery", "Machinery", "pms"), new("/pms/import", "Import a plan", "pms"), new("/pms/approvals", "Approvals", "pms", waiting), new("/pms/certificates", "Certificates", "pms", certificatesDue),
                     new("/pms/template-updates", "Template updates", "pms"), new("/pms/sister-vessels", "Sister vessels", "pms"), new("/pms/reports", "Reports", "pms")]);
                 admin.Add(new("/company/pms-library", "Maintenance library", "pms"));
             }
@@ -253,12 +257,14 @@ public class NavCatalogService(
             if (!isVessel) admin.Add(new("/forms/types", "Forms", "forms"));
         }
 
+        // Each module keeps its own sub-heading inside the group it belongs to: Technical (maintenance, tanks, projects) and Safety (risk, rest, incidents, permits, drills).
+        List<NavEntry> Under(List<NavEntry> items, string section) => items.Select(i => i with { Section = section }).ToList();
+        List<NavEntry> technical = [.. Under(maintenance, "Maintenance"), .. Under(tankItems, "Tank inspection"), .. Under(projectItems, "Projects")];
+        safety = [.. Under(riskItems, "Risk assessment"), .. safety];
+
         var groups = new List<NavGroup> { new(isVessel ? "Onboard" : "Work", isVessel ? onboard : work) };
-        if (maintenance.Count > 0) groups.Add(new("Maintenance", maintenance, "pms planned maintenance"));
-        if (tankItems.Count > 0) groups.Add(new("Tank inspection", tankItems));
-        if (riskItems.Count > 0) groups.Add(new("Risk assessment", riskItems, "risk ra hazard"));
-        if (safety.Count > 0) groups.Add(new("Safety", safety, "hours of rest rest hours incident accident near miss report lessons drill drills fire abandon muster"));
-        if (projectItems.Count > 0) groups.Add(new("Projects", projectItems, "drydock yard technical project"));
+        if (technical.Count > 0) groups.Add(new("Technical", technical, "pms planned maintenance tank tanks inspection drydock yard project projects"));
+        if (safety.Count > 0) groups.Add(new("Safety", safety, "risk assessment ra hazard hours of rest rest hours incident accident near miss report lessons drill drills fire abandon muster permit"));
         if (formItems.Count > 0) groups.Add(new("Forms", formItems, "form checklist report inspection"));
         if (!isVessel)
         {

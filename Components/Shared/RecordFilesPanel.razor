@@ -4,7 +4,7 @@
 @if (Files.Any() || CanAdd)
 {
     <div class="card p-4 text-sm">
-        <h2 class="mb-3 text-base font-semibold text-ink">Photos and statements</h2>
+        <h2 class="mb-3 text-base font-semibold text-ink">@Title</h2>
         @if (!Files.Any()) { <p class="text-muted">No file is kept with this record.</p> }
         <ul class="divide-y divide-line/60">
             @foreach (var f in Views)
@@ -35,6 +35,7 @@
     [Parameter, EditorRequired] public Guid CompanyId { get; set; }
     [Parameter, EditorRequired] public IEnumerable<RecordFile> Files { get; set; } = [];
     [Parameter] public bool CanAdd { get; set; }
+    [Parameter] public string Title { get; set; } = "Photos and statements";
     [Parameter] public EventCallback Added { get; set; }
     [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
 
@@ -57,6 +58,7 @@
             var upload = new PendingAttachment { FileName = e.File.Name, Data = buffer.ToArray() };
             var actor = Actor.From(state.User);
             if (Kind == "incident") await Records.AddToIncidentAsync(CompanyId, OwnerId, actor, upload, _caption);
+            else if (Kind == "certificate") await Records.AddToCertificateAsync(CompanyId, OwnerId, actor, upload, _caption);
             else await Records.AddToPermitAsync(CompanyId, OwnerId, actor, upload, _caption);
             _caption = "";
             await Added.InvokeAsync();

@@ -1,0 +1,244 @@
+@page "/pms/certificates"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject CertificateService Svc
+@inject PmsService Pms
+
+<PageTitle>Certificates and surveys · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="@(NodeContext.Current.IsVessel ? "Vessel" : "Fleet")" Title="Certificates and surveys"
+            Subtitle="Statutory and class certificates and the surveys that come round on a cycle. Each one shows how long is left, warns at 90, 60 and 30 days, and keeps what was done to it: endorsements, extensions, surveys and scans.">
+    <Actions>
+        @if (!NodeContext.Current.IsVessel)
+        {
+            <button class="btn btn-primary" @onclick="ToggleAdd">+ Add certificate</button>
+            <a href="/pms/certificates/fleet" class="btn btn-secondary">Fleet overview</a>
+        }
+        <a href="/pms/certificates.csv@(_vesselId == Guid.Empty ? "" : "?vessel=" + _vesselId)" download class="btn btn-secondary">CSV</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_vessels.Count == 0)
+{
+    <EmptyState Title="Planned maintenance is switched off" Message="Certificates and surveys come with the planned maintenance module, which has not been switched on for this vessel." />
+}
+else
+{
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+    @if (_notice is not null) { <div class="mb-4 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">@_notice</div> }
+
+    <div class="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard Label="Overdue" Value="@_counts.Overdue.ToString()" Tone="@(_counts.Overdue > 0 ? "danger" : "success")" Hint="Past the last day" />
+        <StatCard Label="Due in 30 days" Value="@_counts.Due30.ToString()" Tone="@(_counts.Due30 > 0 ? "warning" : "success")" />
+        <StatCard Label="Due in 90 days" Value="@_counts.Due90.ToString()" Tone="info" Hint="Includes the two above" />
+        <StatCard Label="Kept here" Value="@_counts.Total.ToString()" Hint="Certificates and surveys in use" />
+    </div>
+
+    <div class="card mb-5 flex flex-wrap items-end gap-3 p-4 text-sm">
+        @if (_vessels.Count > 1)
+        {
+            <label>Vessel
+                <select class="select mt-1" @bind="_vesselId" @bind:after="LoadAsync">
+                    <option value="@Guid.Empty">All vessels</option>
+                    @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                </select>
+            </label>
+        }
+        <label>Show
+            <select class="select mt-1" @bind="_show" @bind:after="Refilter">
+                <option value="">Everything</option>
+                <option value="attention">Needs attention (30 days or overdue)</option>
+                <option value="90">Due within 90 days</option>
+                <option value="overdue">Overdue</option>
+                <option value="nodate">No date yet</option>
+            </select>
+        </label>
+        <label>Kind
+            <select class="select mt-1" @bind="_kind" @bind:after="Refilter">
+                <option value="">All</option>
+                @foreach (var k in Enum.GetValues<CertificateKind>()) { <option value="@k">@CertificateLook.Label(k)</option> }
+            </select>
+        </label>
+        @if (!NodeContext.Current.IsVessel)
+        {
+            <label class="flex items-center gap-2 pb-2"><input type="checkbox" @bind="_inactive" @bind:after="LoadAsync" /> Show those no longer in use</label>
+        }
+        <input class="input max-w-xs" placeholder="Search title, number or issuer…" @bind="_search" @bind:event="oninput" @bind:after="Refilter" />
+    </div>
+
+    @if (_adding && !NodeContext.Current.IsVessel)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Add a certificate or survey</h2>
+            <div class="grid gap-3 md:grid-cols-4">
+                <label>Vessel
+                    <select class="select mt-1" @bind="_form.VesselId">
+                        @foreach (var v in _vessels) { <option value="@v.Id">@v.Name</option> }
+                    </select>
+                </label>
+                <label>Kind
+                    <select class="select mt-1" @bind="_form.Kind">
+                        @foreach (var k in Enum.GetValues<CertificateKind>()) { <option value="@k">@CertificateLook.Label(k)</option> }
+                    </select>
+                </label>
+                <label class="md:col-span-2">Title <input class="input mt-1" @bind="_form.Title" placeholder="e.g. International Load Line Certificate" /></label>
+                <label>Certificate number <input class="input mt-1" @bind="_form.Number" /></label>
+                <label>Issued by <input class="input mt-1" @bind="_form.IssuedBy" placeholder="Flag, RO or class society" /></label>
+                <label>Issued on <input type="date" class="input mt-1" @bind="_form.IssuedOn" /></label>
+                <label>@(_form.Kind == CertificateKind.Survey ? "Due date (anniversary)" : "Expires on") <input type="date" class="input mt-1" @bind="_form.DueDate" /></label>
+                @if (_form.Kind == CertificateKind.Survey)
+                {
+                    <label>Window opens (days before) <input type="number" min="0" class="input mt-1" @bind="_form.Before" /></label>
+                    <label>Window closes (days after) <input type="number" min="0" class="input mt-1" @bind="_form.After" /></label>
+                }
+                <label>Cycle (months) <input type="number" min="1" class="input mt-1" @bind="_form.Interval" /></label>
+                <label class="md:col-span-4">Notes <input class="input mt-1" @bind="_form.Notes" /></label>
+            </div>
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+                <button class="btn btn-primary" @onclick="SaveAsync">Add</button>
+                <button class="btn btn-ghost" @onclick="ToggleAdd">Cancel</button>
+                <span class="ml-auto text-xs text-muted">Or add the usual set to a vessel and fill in the dates afterwards:</span>
+                <button class="btn btn-secondary btn-sm" @onclick="AddStandardAsync" disabled="@(_form.VesselId == Guid.Empty)">Add the standard set to the vessel above</button>
+            </div>
+        </div>
+    }
+
+    @if (_filtered.Count == 0)
+    {
+        <EmptyState Title="@(_rows.Count == 0 ? "No certificates yet" : "Nothing matches")"
+                    Message="@(_rows.Count == 0 ? (NodeContext.Current.IsVessel ? "The office has not set up any certificate or survey for this vessel yet." : "Add the first one, or add the standard set to a vessel.") : "Change the filters above.")" />
+    }
+    else
+    {
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                    <th class="px-4 py-3 font-medium">Certificate or survey</th>
+                    @if (_vessels.Count > 1) { <th class="px-4 py-3 font-medium">Vessel</th> }
+                    <th class="px-4 py-3 font-medium">Issued by</th><th class="px-4 py-3 font-medium">Due</th><th class="px-4 py-3 font-medium">Last day</th>
+                    <th class="px-4 py-3 font-medium">Status</th><th class="px-4 py-3 font-medium">Last recorded</th>
+                </tr></thead>
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var r in _filtered)
+                    {
+                        <tr class="@(r.Cert.IsActive ? "" : "opacity-60")">
+                            <td class="px-4 py-3">
+                                <a href="/pms/certificates/@r.Cert.Id" class="link font-medium">@r.Cert.Title</a>
+                                <div class="text-xs text-muted">@CertificateLook.Label(r.Cert.Kind)@(r.Cert.CertificateNumber == "" ? "" : " · " + r.Cert.CertificateNumber) · <span class="font-mono">@r.Cert.Code</span>@(r.Cert.IsActive ? "" : " · no longer in use")</div>
+                            </td>
+                            @if (_vessels.Count > 1) { <td class="px-4 py-3">@r.VesselName</td> }
+                            <td class="px-4 py-3 text-ink-2">@r.Cert.IssuedBy</td>
+                            <td class="whitespace-nowrap px-4 py-3">@(r.Status.DueDate?.ToString("dd MMM yyyy") ?? "–")</td>
+                            <td class="whitespace-nowrap px-4 py-3">@(r.Status.Deadline?.ToString("dd MMM yyyy") ?? "–")</td>
+                            <td class="px-4 py-3">
+                                <span class="chip" data-tone="@CertificateLook.Tone(r.Status.State)">@CertificateLook.Label(r.Status.State)</span>
+                                <div class="mt-0.5 text-xs text-muted">@CertificateLook.When(r.Status.DaysLeft)</div>
+                            </td>
+                            <td class="whitespace-nowrap px-4 py-3 text-muted">@(r.LastEventOn?.ToString("dd MMM yyyy") ?? "–")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    [SupplyParameterFromQuery(Name = "vessel")] public Guid? VesselQuery { get; set; }
+
+    private sealed class Form
+    {
+        public Guid VesselId;
+        public CertificateKind Kind;
+        public string Title = "", Number = "", IssuedBy = "", Notes = "";
+        public DateTime? IssuedOn, DueDate;
+        public int Before = 90, After = 90;
+        public int? Interval;
+    }
+
+    private Guid _companyId, _vesselId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _adding, _inactive;
+    private string _show = "", _kind = "", _search = "";
+    private string? _error, _notice;
+    private List<(Guid Id, string Name)> _vessels = [];
+    private List<CertificateRow> _rows = [], _filtered = [];
+    private CertificateCounts _counts = new(0, 0, 0, 0);
+    private Form _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        _vessels = await Svc.EnabledVesselsAsync(_companyId);
+        if (_vessels.Count == 1) _vesselId = _vessels[0].Id;
+        else if (VesselQuery is { } q && _vessels.Any(v => v.Id == q)) _vesselId = q;
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_vessels.Count == 0) return;
+        _rows = await Svc.ListAsync(_companyId, _vesselId == Guid.Empty ? null : _vesselId, _inactive);
+        _counts = CertificateFleet.CountsOf(_rows.Where(r => r.Cert.IsActive));
+        Refilter();
+    }
+
+    private void Refilter()
+    {
+        var q = _rows.AsEnumerable();
+        if (Enum.TryParse<CertificateKind>(_kind, out var kind)) q = q.Where(r => r.Cert.Kind == kind);
+        q = _show switch
+        {
+            "attention" => q.Where(r => r.Status.NeedsAttention),
+            "90" => q.Where(r => r.Status.State is CertificateState.Due90 or CertificateState.Due60 or CertificateState.Due30 or CertificateState.Overdue),
+            "overdue" => q.Where(r => r.Status.State == CertificateState.Overdue),
+            "nodate" => q.Where(r => r.Status.State == CertificateState.NoDate),
+            _ => q,
+        };
+        if (_search.Trim() is { Length: > 0 } term)
+            q = q.Where(r => r.Cert.Title.Contains(term, StringComparison.OrdinalIgnoreCase) || r.Cert.CertificateNumber.Contains(term, StringComparison.OrdinalIgnoreCase) || r.Cert.IssuedBy.Contains(term, StringComparison.OrdinalIgnoreCase));
+        _filtered = q.ToList();
+    }
+
+    private void ToggleAdd()
+    {
+        _error = _notice = null;
+        _adding = !_adding;
+        _form = new Form { VesselId = _vesselId != Guid.Empty ? _vesselId : _vessels.FirstOrDefault().Id };
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var f = _form;
+            await Svc.AddAsync(_companyId, new NewCertificate(f.VesselId, f.Kind, f.Title, f.Number, f.IssuedBy, f.IssuedOn, f.DueDate, f.Before, f.After, f.Interval, null, f.Notes), _actor);
+            _adding = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task AddStandardAsync()
+    {
+        _error = _notice = null;
+        try
+        {
+            var added = await Svc.AddStandardSetAsync(_companyId, _form.VesselId, _actor);
+            _notice = added == 0 ? "This vessel already has all of the standard set." : $"{added} certificates and surveys added. Open each one to enter its dates.";
+            _adding = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

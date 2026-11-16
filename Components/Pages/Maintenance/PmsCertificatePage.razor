@@ -1,0 +1,220 @@
+@page "/pms/certificates/{Id:guid}"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@attribute [VesselAllowed]
+@rendermode InteractiveServer
+@inject CertificateService Svc
+@inject PmsService Pms
+
+<PageTitle>@(_detail?.Cert.Title ?? "Certificate") · Chandlery</PageTitle>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_detail is not { } d)
+{
+    <EmptyState Title="Certificate not found" Message="It may belong to another vessel, or planned maintenance is switched off." />
+}
+else
+{
+    var c = d.Cert;
+    <PageHeader Eyebrow="@d.VesselName" Title="@c.Title" Subtitle="@($"{CertificateLook.Label(c.Kind)} · {c.Code}")">
+        <Badges>
+            <span class="chip" data-tone="@CertificateLook.Tone(d.Status.State)">@CertificateLook.Label(d.Status.State)</span>
+            @if (!c.IsActive) { <span class="chip" data-tone="neutral">no longer in use</span> }
+        </Badges>
+        <Actions>
+            @if (!NodeContext.Current.IsVessel) { <button class="btn btn-secondary" @onclick="ToggleEdit">@(_editing ? "Close" : "Edit")</button> }
+        </Actions>
+    </PageHeader>
+
+    @if (_error is not null) { <div class="mb-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800">@_error</div> }
+
+    <div class="card mb-5 p-5 text-sm">
+        <dl class="grid gap-x-6 gap-y-3 md:grid-cols-4">
+            <div><dt class="text-xs text-muted">@(c.Kind == CertificateKind.Survey ? "Due" : "Expires")</dt><dd class="font-semibold text-ink">@(d.Status.DueDate?.ToString("dd MMM yyyy") ?? "No date yet")</dd></div>
+            <div><dt class="text-xs text-muted">Last day</dt><dd class="font-semibold text-ink">@(d.Status.Deadline?.ToString("dd MMM yyyy") ?? "–") <span class="font-normal text-muted">@CertificateLook.When(d.Status.DaysLeft)</span></dd></div>
+            <div><dt class="text-xs text-muted">Issued by</dt><dd>@(c.IssuedBy == "" ? "–" : c.IssuedBy)</dd></div>
+            <div><dt class="text-xs text-muted">Certificate number</dt><dd>@(c.CertificateNumber == "" ? "–" : c.CertificateNumber)</dd></div>
+            <div><dt class="text-xs text-muted">Issued on</dt><dd>@(c.IssuedOn?.ToString("dd MMM yyyy") ?? "–")</dd></div>
+            @if (c.Kind == CertificateKind.Survey)
+            {
+                <div><dt class="text-xs text-muted">Window</dt><dd>@c.WindowBeforeDays days before to @c.WindowAfterDays days after</dd></div>
+            }
+            <div><dt class="text-xs text-muted">Cycle</dt><dd>@(c.IntervalMonths is { } months ? $"{months} months" : "–")</dd></div>
+            <div><dt class="text-xs text-muted">Equipment</dt><dd>@(MachineryName(c.MachineryItemId))</dd></div>
+        </dl>
+        @if (c.Notes != "") { <p class="mt-3 text-ink-2">@c.Notes</p> }
+        @if (c.DueDate?.Date != d.Status.DueDate)
+        {
+            <p class="mt-3 text-xs text-muted">The date was set to @(c.DueDate?.ToString("dd MMM yyyy") ?? "none") when this was set up; what has been recorded since moved it.</p>
+        }
+    </div>
+
+    @if (_editing && !NodeContext.Current.IsVessel)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">Edit</h2>
+            <div class="grid gap-3 md:grid-cols-4">
+                <label class="md:col-span-2">Title <input class="input mt-1" @bind="_edit.Title" /></label>
+                <label>Certificate number <input class="input mt-1" @bind="_edit.Number" /></label>
+                <label>Issued by <input class="input mt-1" @bind="_edit.IssuedBy" /></label>
+                <label>Issued on <input type="date" class="input mt-1" @bind="_edit.IssuedOn" /></label>
+                <label>@(c.Kind == CertificateKind.Survey ? "Due date (anniversary)" : "Expires on") <input type="date" class="input mt-1" @bind="_edit.DueDate" /></label>
+                @if (c.Kind == CertificateKind.Survey)
+                {
+                    <label>Window opens (days before) <input type="number" min="0" class="input mt-1" @bind="_edit.Before" /></label>
+                    <label>Window closes (days after) <input type="number" min="0" class="input mt-1" @bind="_edit.After" /></label>
+                }
+                <label>Cycle (months) <input type="number" min="1" class="input mt-1" @bind="_edit.Interval" /></label>
+                <label>Equipment
+                    <select class="select mt-1" @bind="_edit.MachineryItemId">
+                        <option value="@Guid.Empty">None</option>
+                        @foreach (var m in _machinery) { <option value="@m.Id">@m.Name</option> }
+                    </select>
+                </label>
+                <label class="flex items-end gap-2 pb-2"><input type="checkbox" @bind="_edit.IsActive" /> In use</label>
+                <label class="md:col-span-4">Notes <input class="input mt-1" @bind="_edit.Notes" /></label>
+            </div>
+            <div class="mt-4 flex gap-2">
+                <button class="btn btn-primary" @onclick="SaveEditAsync">Save</button>
+                <button class="btn btn-ghost" @onclick="ToggleEdit">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (c.IsActive)
+    {
+        <div class="card mb-5 p-5 text-sm">
+            <h2 class="mb-1 font-display text-lg font-extrabold text-ink">Record what happened</h2>
+            <p class="mb-3 text-xs text-muted">Renewals, endorsements, extensions and surveys move the date. Nothing already recorded is ever changed; a mistake is put right with a new entry.</p>
+            <div class="grid gap-3 md:grid-cols-4">
+                <label>What happened
+                    <select class="select mt-1" @bind="_type">
+                        @foreach (var t in Types) { <option value="@t">@CertificateLook.Label(t)</option> }
+                    </select>
+                </label>
+                <label>On <input type="date" class="input mt-1" @bind="_on" /></label>
+                @if (_type is CertificateEventType.Issued or CertificateEventType.Extended or CertificateEventType.SurveyDone or CertificateEventType.Endorsed)
+                {
+                    <label>@NewDateLabel <input type="date" class="input mt-1" @bind="_newDue" /></label>
+                }
+                <label>Surveyor or reference <input class="input mt-1" @bind="_reference" placeholder="@(_type == CertificateEventType.Extended ? "Authority's letter, required" : "")" /></label>
+                <label class="md:col-span-4">Note <input class="input mt-1" @bind="_note" /></label>
+            </div>
+            <div class="mt-3"><button class="btn btn-primary" @onclick="AddEventAsync">Record</button></div>
+        </div>
+    }
+
+    <div class="grid gap-5 lg:grid-cols-2">
+        <section class="card p-5 text-sm">
+            <h2 class="mb-3 font-display text-lg font-extrabold text-ink">History</h2>
+            @if (d.Events.Count == 0) { <p class="text-muted">Nothing has been recorded yet.</p> }
+            <ul class="divide-y divide-line/60">
+                @foreach (var e in d.Events)
+                {
+                    <li class="py-2.5">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="font-semibold text-ink">@CertificateLook.Label(e.Type)</span>
+                            <span class="text-muted">@e.OccurredOn.ToString("dd MMM yyyy")</span>
+                            @if (e.NewDueDate is { } nd) { <span class="chip" data-tone="info">due now @nd.ToString("dd MMM yyyy")</span> }
+                        </div>
+                        @if (e.Reference != "" || e.Note != "")
+                        {
+                            <p class="text-ink-2">@(e.Reference)@(e.Reference != "" && e.Note != "" ? " · " : "")@e.Note</p>
+                        }
+                        <p class="text-xs text-muted">@e.ByName · @e.At.ToString("d MMM yyyy HH:mm")@(e.Files.Count > 0 ? " · " + string.Join(", ", e.Files.Select(f => f.FileName)) : "")</p>
+                    </li>
+                }
+            </ul>
+        </section>
+
+        <RecordFilesPanel Kind="certificate" OwnerId="c.Id" CompanyId="_companyId" Files="d.Files" CanAdd="c.IsActive" Title="Scans and photos" Added="LoadAsync" />
+    </div>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed class Edit
+    {
+        public string Title = "", Number = "", IssuedBy = "", Notes = "";
+        public DateTime? IssuedOn, DueDate;
+        public int Before, After;
+        public int? Interval;
+        public Guid MachineryItemId;
+        public bool IsActive = true;
+    }
+
+    private static readonly CertificateEventType[] Types = [CertificateEventType.Issued, CertificateEventType.Endorsed, CertificateEventType.Extended, CertificateEventType.SurveyDone, CertificateEventType.Note];
+
+    private Guid _companyId;
+    private Actor _actor = Actor.System;
+    private bool _loaded, _editing;
+    private string? _error;
+    private CertificateDetail? _detail;
+    private List<MachineryItem> _machinery = [];
+    private Edit _edit = new();
+    private CertificateEventType _type = CertificateEventType.Endorsed;
+    private DateTime? _on = DateTime.UtcNow.Date, _newDue;
+    private string _reference = "", _note = "";
+
+    private string NewDateLabel => _type switch
+    {
+        CertificateEventType.Issued => "New expiry date",
+        CertificateEventType.Extended => "Extended to",
+        CertificateEventType.SurveyDone => "Next survey due",
+        _ => "New date (if it changes)",
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthStateTask!;
+        _companyId = Guid.Parse(state.User.FindFirst("CompanyId")!.Value);
+        _actor = Actor.From(state.User);
+        await LoadAsync();
+        _loaded = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _detail = await Svc.GetAsync(_companyId, Id);
+        if (_detail is { } d) _machinery = await Pms.ListMachineryAsync(_companyId, d.Cert.VesselId);
+    }
+
+    private string MachineryName(Guid? id) => id is { } m ? _machinery.FirstOrDefault(x => x.Id == m)?.Name ?? "–" : "–";
+
+    private void ToggleEdit()
+    {
+        _error = null;
+        _editing = !_editing;
+        if (_detail?.Cert is { } c)
+            _edit = new Edit { Title = c.Title, Number = c.CertificateNumber, IssuedBy = c.IssuedBy, Notes = c.Notes, IssuedOn = c.IssuedOn, DueDate = c.DueDate, Before = c.WindowBeforeDays, After = c.WindowAfterDays, Interval = c.IntervalMonths, MachineryItemId = c.MachineryItemId ?? Guid.Empty, IsActive = c.IsActive };
+    }
+
+    private async Task SaveEditAsync()
+    {
+        _error = null;
+        try
+        {
+            var e = _edit;
+            await Svc.UpdateAsync(_companyId, Id, new CertificateEdit(e.Title, e.Number, e.IssuedBy, e.IssuedOn, e.DueDate, e.Before, e.After, e.Interval, e.MachineryItemId == Guid.Empty ? null : e.MachineryItemId, e.Notes, e.IsActive), _actor);
+            _editing = false;
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+
+    private async Task AddEventAsync()
+    {
+        _error = null;
+        try
+        {
+            await Svc.AddEventAsync(_companyId, Id, new NewCertificateEvent(_type, _on ?? DateTime.UtcNow.Date, _newDue, _reference, _note), _actor);
+            (_reference, _note, _newDue) = ("", "", null);
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+    }
+}

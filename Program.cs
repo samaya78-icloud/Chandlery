@@ -43,6 +43,7 @@ builder.Services.AddScoped<WorklistService>();
 builder.Services.AddScoped<WorklistReportService>();
 builder.Services.AddScoped<PmsService>();
 builder.Services.AddScoped<PmsReportService>();
+builder.Services.AddScoped<CertificateService>();
 builder.Services.AddScoped<PmsIntegrationService>();
 builder.Services.AddScoped<PmsImportService>();
 builder.Services.AddScoped<TankService>();
@@ -380,6 +381,15 @@ app.MapGet("/worklist/reports/{kind}.csv", async (string kind, HttpContext http,
     if (csv is null) return Results.NotFound();
     var utf8 = new System.Text.UTF8Encoding(true);
     return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"worklist-{kind}-{today:yyyy-MM-dd}.csv");
+}).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
+
+// The register of certificates and surveys as CSV (?vessel= for one vessel), for whoever may see the module: the office, or the vessel for its own.
+app.MapGet("/pms/certificates.csv", async (Guid? vessel, HttpContext http, CertificateService certificates) =>
+{
+    if (!Guid.TryParse(http.User.FindFirst("CompanyId")?.Value, out var companyId)) return Results.Forbid();
+    var utf8 = new System.Text.UTF8Encoding(true);
+    var csv = CertificateReports.Csv(await certificates.ListAsync(companyId, vessel));
+    return Results.File(utf8.GetPreamble().Concat(utf8.GetBytes(csv)).ToArray(), "text/csv", $"certificates-{DateTime.UtcNow:yyyy-MM-dd}.csv");
 }).RequireAuthorization(policy => policy.RequireRole("CompanyAdmin", "CompanyUser"));
 
 // Maintenance reports as CSV (office only): overdue, due (?days=30), done (?from=&to=), hours, fleet.

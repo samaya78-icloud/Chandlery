@@ -41,7 +41,7 @@ One platform used by ship managers and their vessels. The **office (shore)** and
 5. Chandlery onboard (04).
 6. PMS (07), then Tank Inspection (08), Risk Assessment (06), Projects (09).
 
-Tank Inspection follows PMS because inspections are driven by PMS jobs. Classification, surveys and certificates are deliberately **out of scope for now** (later phase of PMS).
+Tank Inspection follows PMS because inspections are driven by PMS jobs. Classification surveys and statutory certificates followed as a part of PMS: [07b](07b-certificates-plan.md).
 
 ## Build status
 - Foundation (GUID keys, reference codes, change tracking): done 2026-11-07.

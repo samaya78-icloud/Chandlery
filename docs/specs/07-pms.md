@@ -1,6 +1,6 @@
 # 07. Planned maintenance system (PMS)
 
-For all vessels. A standard job library owned by shore, applied to each vessel's machinery, plus the option to import a vessel's own plan. Jobs are driven by **running hours, calendar, or both (whichever comes first)**. Classification surveys and certificates are **out of scope for now**.
+For all vessels. A standard job library owned by shore, applied to each vessel's machinery, plus the option to import a vessel's own plan. Jobs are driven by **running hours, calendar, or both (whichever comes first)**. Classification surveys and statutory certificates are tracked in their own part of the module: see [07b](07b-certificates-plan.md).
 
 ## 1. Goals
 - A complete maintenance plan per vessel that works fully offline onboard.
@@ -67,7 +67,7 @@ Which job types a vessel may self-defer and by how many days; whether intervals 
 2. Deferral approval and plan change requests.
 3. Import wizard.
 4. Spares and stock-on-board integration.
-5. Later: classification surveys and certificates.
+5. Classification surveys and certificates (built 2026-11-16, see 07b).
 
 ## 11. Open decisions
 Second sign-off rule, who edits intervals, default grace window (see README).

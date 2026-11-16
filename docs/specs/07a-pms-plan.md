@@ -40,7 +40,7 @@ Lanes: `Transaction` for readings and completions, `Urgent` for a deferral reque
 **P6. Import wizard.** Excel or CSV: map columns (location, system, job code, title, interval, last done date and hours), dry-run preview, suggested template matches, unmatched kept as vessel-own jobs, imported history read-only. Proven on a 3,000-job file.
 **P7. Walkthrough.** One end-to-end test: vessel and office both work while apart (readings, completions, a correction, a deferral decision), and both sides end with the same history, the same next-due dates and the same overdue counts.
 
-Spec phase 1 is P1 to P3, phase 2 is P4, phase 3 is P6. Stock-on-board (spec phase 4) and classification surveys and certificates stay out.
+Spec phase 1 is P1 to P3, phase 2 is P4, phase 3 is P6. Stock-on-board (spec phase 4) stays out. Classification surveys and certificates were added later: [07b](07b-certificates-plan.md).
 
 ## 5. Proposed answers to the three open decisions (approved as proposed)
 1. **Second sign-off:** off by default. A template can mark a job "needs verification"; the vessel's completion then shows "awaiting verification" until a designated rank (the Master or Chief Engineer, set in policy) or the office verifies, the same way Worklist verification works.
@@ -48,7 +48,7 @@ Spec phase 1 is P1 to P3, phase 2 is P4, phase 3 is P6. Stock-on-board (spec pha
 3. **Default grace:** 10% of the interval with a one-day minimum, overridable per template.
 
 ## 6. Left for later
-Classification surveys and certificates, stock-on-board, risk-assessment links on critical deferrals (waits for the Risk Assessment module), tank inspection jobs (spec 08), projects and drydock deferral (spec 09), photos and attachments on completions (waits for file sync), chat on every job (spec 10).
+Stock-on-board, risk-assessment links on critical deferrals (waits for the Risk Assessment module), tank inspection jobs (spec 08), projects and drydock deferral (spec 09), photos and attachments on completions (waits for file sync), chat on every job (spec 10).
 
 ## 7. Risks
 - **Plan size.** 5,000 jobs and their history per vessel: lists and the board must be paged and the schedule projection must be cheap (one pass per machinery item). P1 includes a timing test at that size.

@@ -43,7 +43,8 @@ public enum DocType
     Drill,
     Meeting,
     Permit,
-    Form
+    Form,
+    Certificate
 }
 
 /// <summary>
@@ -127,7 +128,7 @@ public static class VesselRules
         typeof(ProjectNote), typeof(ProjectLink), typeof(ProjectItemRequest),      // the office's Project, its items and status events are received, not written, onboard; budgets and costs stay ashore
         typeof(Rfq), typeof(RfqLine), typeof(Quote), typeof(QuoteLine), typeof(PoApproval), typeof(PurchaseOrder), typeof(PoLine),
         typeof(Incident), typeof(IncidentPerson), typeof(IncidentSupplement), typeof(IncidentFile), typeof(PermitFile), typeof(IncidentEvent), typeof(IncidentExposure),
-        typeof(Drill), typeof(DrillParticipant), typeof(DrillNote), typeof(Meeting), typeof(MeetingAttendee), typeof(MeetingItem), typeof(MeetingNote), typeof(Permit), typeof(PermitAnswer), typeof(PermitPerson), typeof(PermitGasReading), typeof(PermitEntry), typeof(PermitEvent),      // the office's drill types, overrides and comments are received, not written, onboard      // the office's investigations, causes and settings are received, not written, onboard
+        typeof(Drill), typeof(DrillParticipant), typeof(DrillNote), typeof(Meeting), typeof(MeetingAttendee), typeof(MeetingItem), typeof(MeetingNote), typeof(Permit), typeof(PermitAnswer), typeof(PermitPerson), typeof(PermitGasReading), typeof(PermitEntry), typeof(PermitEvent), typeof(CertificateEvent), typeof(CertificateFile),      // the office's drill types, overrides and comments are received, not written, onboard      // the office's investigations, causes and settings are received, not written, onboard
         typeof(ChatMessage), typeof(ChatRead), typeof(FileAttachment),      // conversations: each side writes its own messages; the read marks stay local
         typeof(FormEntry),      // forms: the vessel fills entries; the catalogue and the reviews are received, not written, onboard
         typeof(RestEntry), typeof(RestSignOff), typeof(RestBreachNote), typeof(VesselDayStatus), typeof(WorkArrangementSignOff),      // the office's WorkArrangementTable is received, not written, onboard

@@ -25,7 +25,7 @@ public record AttentionItem(int Count, string Text, string Href, bool Urgent);
 /// <summary>Gathers the per-module numbers for the home page, so the cards and the attention strip read from the same place.</summary>
 public class DashboardModuleService(
     WorklistService worklist, PmsReportService pms, TankTrendService tanks, RiskAssessmentService risk,
-    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, DrillFleetService drillFleet, PermitService permits, ChatService chat, FormService forms)
+    RestFleetService restFleet, RestReviewService restReview, ProjectService projects, IncidentService incidents, DrillFleetService drillFleet, PermitService permits, ChatService chat, FormService forms, CertificateService certificates)
 {
     private static string Hot(int n, string tone, string cold = "success") => n > 0 ? tone : cold;
 
@@ -50,13 +50,20 @@ public class DashboardModuleService(
         if (await pms.CountsAsync(companyId) is { } p)
         {
             var planHref = isVessel ? "/pms" : "/pms/fleet";
-            modules.Add(new("maintenance", "Maintenance", planHref,
-            [
+            var maintenanceStats = new List<ModuleStat>
+            {
                 new("Overdue", p.Overdue.ToString("N0"), planHref, Hot(p.Overdue, "danger"), $"{p.CriticalOverdue} critical", p.Overdue, "maintenance jobs overdue"),
                 new("Due in 7 days", p.DueThisWeek.ToString("N0"), planHref, Hot(p.DueThisWeek, "warning")),
                 new("Awaiting a decision", p.PendingDecisions.ToString("N0"), "/pms/approvals", Hot(p.PendingDecisions, "warning"), "Deferral requests", p.PendingDecisions, "deferral requests to decide"),
                 new("Hours out of date", p.HoursOutOfDate.ToString("N0"), isVessel ? "/pms/hours" : "/pms/reports", Hot(p.HoursOutOfDate, "info"), "No reading for over a week"),
-            ]));
+            };
+            if (await certificates.CountsAsync(companyId) is { Total: > 0 } certs)
+            {
+                var certificatesHref = isVessel ? "/pms/certificates" : "/pms/certificates/fleet";
+                maintenanceStats.Add(new("Certificates due in 90 days", certs.Due90.ToString("N0"), certificatesHref, Hot(certs.Due90, "info"), $"{certs.Due30} within 30 days", certs.Due30, "certificates or surveys due within 30 days"));
+                maintenanceStats.Add(new("Certificates overdue", certs.Overdue.ToString("N0"), certificatesHref, Hot(certs.Overdue, "danger"), "Past their last day", certs.Overdue, "certificates or surveys overdue"));
+            }
+            modules.Add(new("maintenance", "Maintenance", planHref, maintenanceStats));
         }
 
         if (await forms.CountsAsync(companyId, DateOnly.FromDateTime(DateTime.UtcNow)) is { } formCounts)

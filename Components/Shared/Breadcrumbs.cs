@@ -54,6 +54,7 @@ public static class Breadcrumbs
         ("/pms/sister-vessels", "Maintenance", "Sister vessels"),
         ("/pms/reports", "Maintenance", "Reports"),
         ("/pms/apply", "Maintenance", "Apply the library"),
+        ("/pms/certificates", "Maintenance", "Certificates"),
         ("/company/pms-library", "Admin", "Maintenance library"),
 
         ("/tanks", "Tank inspection", "Tanks"),

@@ -1,0 +1,99 @@
+@page "/pms/certificates/fleet"
+@attribute [Authorize(Roles = "CompanyAdmin,CompanyUser")]
+@rendermode InteractiveServer
+@inject CertificateService Svc
+
+<PageTitle>Fleet certificates · Chandlery</PageTitle>
+
+<PageHeader Eyebrow="Fleet" Title="Fleet certificates and surveys" Subtitle="Where every vessel stands on its certificates and surveys: what is overdue and what falls due in the next 30, 60 and 90 days.">
+    <Actions>
+        <a href="/pms/certificates" class="btn btn-secondary">All certificates</a>
+        <a href="/pms/certificates.csv" download class="btn btn-secondary">CSV</a>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <Skeleton Rows="4" />
+}
+else if (_rows.Count == 0)
+{
+    <EmptyState Title="No certificates yet" Message="Planned maintenance has to be on for a vessel, and certificates added to it, before it shows here." />
+}
+else
+{
+    <div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard Label="Overdue" Value="@_fleet.Sum(r => r.Overdue).ToString()" Tone="@(_fleet.Sum(r => r.Overdue) > 0 ? "danger" : "success")" Hint="Past the last day" />
+        <StatCard Label="Due in 30 days" Value="@_fleet.Sum(r => r.Due30).ToString()" Tone="warning" />
+        <StatCard Label="Due in 60 days" Value="@_fleet.Sum(r => r.Due60).ToString()" Tone="warning" />
+        <StatCard Label="No date yet" Value="@_fleet.Sum(r => r.NoDate).ToString()" Tone="info" Hint="Set up, not dated" />
+    </div>
+
+    <h2 class="mb-2 font-display text-base font-extrabold text-ink">By vessel</h2>
+    <div class="card overflow-x-auto">
+        <table class="w-full text-left text-sm">
+            <thead><tr class="border-b border-line text-xs uppercase tracking-wide text-muted">
+                <th class="px-4 py-3 font-medium">Vessel</th><th class="px-4 py-3 text-right font-medium">Kept</th><th class="px-4 py-3 text-right font-medium">Overdue</th>
+                <th class="px-4 py-3 text-right font-medium">30 days</th><th class="px-4 py-3 text-right font-medium">60 days</th><th class="px-4 py-3 text-right font-medium">90 days</th>
+                <th class="px-4 py-3 text-right font-medium">No date</th><th class="px-4 py-3 font-medium">Next last day</th>
+            </tr></thead>
+            <tbody class="divide-y divide-line/60">
+                @foreach (var r in _fleet)
+                {
+                    <tr>
+                        <td class="px-4 py-3"><a href="/pms/certificates?vessel=@r.VesselId" class="link font-medium">@r.Vessel</a></td>
+                        <td class="px-4 py-3 text-right">@r.Total</td>
+                        <td class="px-4 py-3 text-right">@Cell(r.Overdue, "danger")</td>
+                        <td class="px-4 py-3 text-right">@Cell(r.Due30, "warning")</td>
+                        <td class="px-4 py-3 text-right">@Cell(r.Due60, "warning")</td>
+                        <td class="px-4 py-3 text-right">@Cell(r.Due90, "info")</td>
+                        <td class="px-4 py-3 text-right text-muted">@(r.NoDate == 0 ? "–" : r.NoDate.ToString())</td>
+                        <td class="whitespace-nowrap px-4 py-3">@(r.NextDeadline?.ToString("dd MMM yyyy") ?? "–")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (_soonest.Count > 0)
+    {
+        <h2 class="mt-8 mb-2 font-display text-base font-extrabold text-ink">Needing attention now</h2>
+        <div class="card overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <tbody class="divide-y divide-line/60">
+                    @foreach (var r in _soonest)
+                    {
+                        <tr>
+                            <td class="px-4 py-3"><a href="/pms/certificates/@r.Cert.Id" class="link font-medium">@r.Cert.Title</a><div class="text-xs text-muted">@r.VesselName</div></td>
+                            <td class="whitespace-nowrap px-4 py-3">@(r.Status.Deadline?.ToString("dd MMM yyyy") ?? "–")</td>
+                            <td class="px-4 py-3"><span class="chip" data-tone="@CertificateLook.Tone(r.Status.State)">@CertificateLook.Label(r.Status.State)</span> <span class="text-xs text-muted">@CertificateLook.When(r.Status.DaysLeft)</span></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool _loaded;
+    private List<CertificateRow> _rows = [], _soonest = [];
+    private List<CertificateFleetRow> _fleet = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var companyId = Guid.Parse((await AuthStateTask!).User.FindFirst("CompanyId")!.Value);
+        _rows = (await Svc.ListAsync(companyId)).ToList();
+        _fleet = CertificateFleet.Of(_rows);
+        _soonest = _rows.Where(r => r.Status.NeedsAttention).Take(15).ToList();
+        _loaded = true;
+    }
+
+    private static RenderFragment Cell(int n, string tone) => __builder =>
+    {
+        if (n == 0) { <span class="text-muted">–</span> }
+        else { <span class="chip" data-tone="@tone">@n</span> }
+    };
+}
