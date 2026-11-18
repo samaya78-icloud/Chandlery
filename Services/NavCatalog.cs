@@ -262,14 +262,15 @@ public class NavCatalogService(
         List<NavEntry> technical = [.. Under(maintenance, "Maintenance"), .. Under(tankItems, "Tank inspection"), .. Under(projectItems, "Projects")];
         safety = [.. Under(riskItems, "Risk assessment"), .. safety];
 
+        // Menu order: Work, Master data and Forms (the menu stacks these three in its first column), then Technical, Safety, Procurement and Admin.
         var groups = new List<NavGroup> { new(isVessel ? "Onboard" : "Work", isVessel ? onboard : work) };
+        if (!isVessel) groups.Add(new("Master data", master));
+        if (formItems.Count > 0) groups.Add(new("Forms", formItems, "form checklist report inspection"));
         if (technical.Count > 0) groups.Add(new("Technical", technical, "pms planned maintenance tank tanks inspection drydock yard project projects"));
         if (safety.Count > 0) groups.Add(new("Safety", safety, "risk assessment ra hazard hours of rest rest hours incident accident near miss report lessons drill drills fire abandon muster permit"));
-        if (formItems.Count > 0) groups.Add(new("Forms", formItems, "form checklist report inspection"));
         if (!isVessel)
         {
             groups.Add(new("Procurement", procurement));
-            groups.Add(new("Master data", master));
             if (isAdmin) groups.Add(new("Admin", admin));
         }
         return groups;

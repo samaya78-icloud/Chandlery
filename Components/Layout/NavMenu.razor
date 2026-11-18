@@ -1,9 +1,16 @@
 ﻿@inject NavCatalogService Catalog
 
 <nav class="site-nav">
-    @foreach (var group in _groups)
+    @* The first column stacks Work (or Onboard) with Master data and Forms; every other group is a column of its own. *@
+    <div class="nav-col">
+        @foreach (var group in _groups.Where((g, i) => i == 0 || g.Title is "Master data" or "Forms"))
+        {
+            @Group(group.Title, group.Items)
+        }
+    </div>
+    @foreach (var group in _groups.Where((g, i) => i > 0 && g.Title is not ("Master data" or "Forms")))
     {
-        @Group(group.Title, group.Items)
+        <div class="nav-col">@Group(group.Title, group.Items)</div>
     }
 </nav>
 

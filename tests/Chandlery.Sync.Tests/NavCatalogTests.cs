@@ -95,12 +95,12 @@ public class NavCatalogTests : IAsyncLifetime
     public async Task AModuleThatIsOffHasNoPages_AndOnceSwitchedOnEveryOneOfItsPagesIsOffered()
     {
         var admin = Person("CompanyAdmin");
-        Assert.Equal(["Work", "Procurement", "Master data", "Admin"], Titles(await _catalog.GetAsync(admin, isVessel: false)));
+        Assert.Equal(["Work", "Master data", "Procurement", "Admin"], Titles(await _catalog.GetAsync(admin, isVessel: false)));
 
         await SwitchOnAsync(PolicyModules.Worklist, PolicyModules.Pms, PolicyModules.RestHours, PolicyModules.TankInspection, PolicyModules.RiskAssessment, PolicyModules.Projects);
         var groups = await _catalog.GetAsync(admin, isVessel: false);
 
-        Assert.Equal(["Work", "Technical", "Safety", "Procurement", "Master data", "Admin"], Titles(groups));
+        Assert.Equal(["Work", "Master data", "Technical", "Safety", "Procurement", "Admin"], Titles(groups));
         Assert.Contains("Worklist", Pages(groups, "Work"));
         Assert.Contains("Fleet worklist", Pages(groups, "Work"));
         Assert.Equal(["Plan", "Fleet overview", "Running hours", "Machinery", "Import a plan", "Approvals", "Certificates", "Template updates", "Sister vessels", "Reports"], Under(groups, "Technical", "Maintenance"));
