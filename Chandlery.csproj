@@ -21,7 +21,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The help assistant answers from these short user-facing help files, one per module. -->
+    <EmbeddedResource Include="docs\help\**\*.md" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.3.0" />
+    <PackageReference Include="Anthropic" Version="13.8.0" />
     <PackageReference Include="ClosedXML" Version="0.105.1" />
     <PackageReference Include="Marine.Sync.Contracts" Version="0.3.0" />
     <PackageReference Include="Marine.Sync.Core" Version="0.3.0" />

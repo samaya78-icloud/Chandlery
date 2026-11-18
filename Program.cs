@@ -86,6 +86,19 @@ builder.Services.AddHttpClient<FxFeed>(client =>
 builder.Services.AddScoped<FxService>();
 builder.Services.AddHostedService<FxRefreshWorker>();
 
+// The in-app help assistant. The Anthropic key stays in server configuration (user-secrets or the environment) and is never sent to a browser or a vessel.
+var helpOptions = HelpOptions.From(builder.Configuration);
+if (!builder.Environment.IsDevelopment() && helpOptions.IsEcho) helpOptions.Provider = "Claude"; // Echo is a development aid only
+if (!helpOptions.IsEcho && !helpOptions.IsLocal && !helpOptions.HasKey) helpOptions.Provider = "Local"; // no key: answer from the built-in help instead of hiding the assistant
+builder.Services.AddSingleton(helpOptions);
+builder.Services.AddSingleton<HelpContent>(_ => HelpContent.LoadEmbedded());
+builder.Services.AddSingleton<HelpRateLimiter>(_ => new HelpRateLimiter(helpOptions));
+builder.Services.AddSingleton<IHelpModel>(sp => helpOptions.IsEcho ? new EchoHelpModel()
+    : helpOptions.IsLocal ? new LocalHelpModel(sp.GetRequiredService<HelpContent>())
+    : new ClaudeHelpModel(helpOptions, sp.GetRequiredService<ILogger<ClaudeHelpModel>>()));
+builder.Services.AddScoped<HelpService>();
+builder.Services.AddScoped<HelpState>();
+
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthorization(o => o.AddPolicy("CrewAdmin", p => p.RequireClaim("CrewAdmin", "true")));
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -128,7 +141,8 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-if (app.Environment.IsDevelopment())
+// Development always migrates and seeds. A persistent hosted copy (e.g. behind a Cloudflare tunnel) opts in with Database:AutoMigrate=true.
+if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Database:AutoMigrate"))
 {
     using var scope = app.Services.CreateScope();
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<ChandleryDbContext>>();

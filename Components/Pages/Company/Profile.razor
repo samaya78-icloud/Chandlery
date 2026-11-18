@@ -2,6 +2,7 @@
 @attribute [Authorize(Roles = "CompanyAdmin")]
 @rendermode InteractiveServer
 @inject ProcurementService Procurement
+@inject HelpService Help
 
 <PageTitle>Company Profile · Chandlery</PageTitle>
 
@@ -31,6 +32,16 @@ else
             <input @bind="_contactEmail" type="email" class="input" />
         </div>
 
+        <div class="mb-5 rounded-xl border border-line bg-surface-2 p-3">
+            <label class="flex items-start gap-3 text-sm">
+                <input type="checkbox" class="mt-1" @bind="_helpOn" />
+                <span>
+                    <span class="font-medium text-ink">Help assistant</span>
+                    <span class="block text-muted">Lets your office users ask questions about the page they are on. @(Help.UsesAi ? "Only the page name and the question are sent; no company data." : "This server has no AI key, so it answers from the built-in help for each module; nothing is sent anywhere.")</span>
+                </span>
+            </label>
+        </div>
+
         @if (_saved)
         {
             <div class="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Saved.</div>
@@ -52,6 +63,7 @@ else
     private string? _address;
     private string _contactEmail = "";
     private bool _saved;
+    private bool _helpOn = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -65,12 +77,14 @@ else
             _registrationNumber = _company.RegistrationNumber;
             _address = _company.Address;
             _contactEmail = _company.ContactEmail;
+            _helpOn = _company.HelpAssistantEnabled;
         }
     }
 
     private async Task Save()
     {
         await Procurement.UpdateCompanyAsync(_companyId, _name, _registrationNumber, _address, _contactEmail);
+        await Help.SetEnabledAsync(_companyId, _helpOn);
         _saved = true;
     }
 }

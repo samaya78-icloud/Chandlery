@@ -116,6 +116,20 @@ public static class Breadcrumbs
         ("/supplier/profile", "Your work", "Bank Accounts"),
     };
 
+    /// <summary>Every page address the trail knows, so other code (the help assistant's tests) can check its own pages against it.</summary>
+    public static IEnumerable<string> KnownPaths => Lists.Select(l => l.Path);
+
+    /// <summary>The name of the list or page a path belongs to (Requisitions, Running hours...), or null for a page we don't know. Used only for its address, never for record names.</summary>
+    public static string? ListOf(string path)
+    {
+        path = "/" + (path.Split('?', '#')[0].Trim('/')).ToLowerInvariant();
+        return Lists
+            .Where(l => path == l.Path || path.StartsWith(l.Path + "/"))
+            .OrderByDescending(l => l.Path.Length)
+            .Select(l => l.List)
+            .FirstOrDefault();
+    }
+
     /// <summary>The section a page belongs to (Forms, Master data, Hours of rest...), or null for a page we don't know.</summary>
     public static string? SectionOf(string path)
     {

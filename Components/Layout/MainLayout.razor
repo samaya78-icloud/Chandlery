@@ -1,4 +1,4 @@
-@inherits LayoutComponentBase
+﻿@inherits LayoutComponentBase
 
 <div class="app-backdrop"></div>
 <div class="drawer-overlay"></div>
@@ -55,6 +55,13 @@
                 <SyncChip @rendermode="InteractiveServer" />
             }
 
+            @* Help for the page you are on (office company users, and the built-in help on a vessel) *@
+            <AuthorizeView Roles="CompanyAdmin,CompanyUser">
+                <Authorized>
+                    <HelpButton @rendermode="InteractiveServer" />
+                </Authorized>
+            </AuthorizeView>
+
             @* Theme and mode picker *@
             <details class="menu">
                 <summary class="btn btn-secondary btn-sm" title="Appearance">
@@ -109,6 +116,13 @@
             </AuthorizeView>
         </div>
     </header>
+
+    @* The help panel sits outside the top bar: the bar's blur would otherwise make a fixed panel as short as the bar. *@
+    <AuthorizeView Roles="CompanyAdmin,CompanyUser">
+        <Authorized>
+            <HelpDrawer @rendermode="InteractiveServer" />
+        </Authorized>
+    </AuthorizeView>
 
     <main class="app-content rise">
         @Body

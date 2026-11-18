@@ -1,0 +1,19 @@
+@implements IDisposable
+@inject HelpState State
+
+@* The Help button in the top bar. The panel itself is HelpDrawer, placed outside the bar (the bar's blur would otherwise trap it inside the bar's height). *@
+@if (State.Available)
+{
+    <button type="button" class="btn btn-secondary btn-sm" @onclick="State.Toggle" title="Help for this page" aria-haspopup="dialog" aria-expanded="@State.Open.ToString().ToLowerInvariant()">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg>
+        <span class="hidden sm:inline">Help</span>
+    </button>
+}
+
+@code {
+    protected override void OnInitialized() => State.Changed += OnChanged;
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

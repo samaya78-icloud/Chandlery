@@ -1,0 +1,160 @@
+@implements IDisposable
+@inject HelpService Help
+@inject HelpContent Content
+@inject NavigationManager Navigation
+@inject HelpState State
+
+@* The Help button in the top bar and the side panel it opens. The panel knows which module you are on and suggests questions for it. It sends only the
+   page name and your question; where there is no assistant (a vessel, or no key), it shows the module's built-in help instead. *@
+@if (_info is { Availability: HelpStatus.Ok or HelpStatus.NeedsOffice })
+{
+    @if (State.Open)
+    {
+        <aside class="fixed bottom-0 right-0 top-0 z-[70] flex w-full max-w-md flex-col border-l border-line bg-surface shadow-pop print:hidden" role="dialog" aria-label="Help" @onkeydown="OnKey">
+            <div class="flex items-start gap-3 border-b border-line px-4 py-3">
+                <div class="min-w-0 flex-1">
+                    <p class="text-[11px] font-bold uppercase tracking-wider text-accent-600">Help · @_info.ModuleTitle</p>
+                    <p class="truncate text-sm text-muted">You are on: @_info.PageLabel</p>
+                </div>
+                <button type="button" class="btn btn-ghost btn-sm" @onclick="Close" aria-label="Close help">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+            </div>
+
+            <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm text-ink" id="help-scroll">
+                @if (_info.Availability == HelpStatus.NeedsOffice)
+                {
+                    <p class="rounded-xl bg-surface-2 px-3 py-2 text-muted">@HelpService.MessageFor(HelpStatus.NeedsOffice)</p>
+                    <div class="help-body space-y-2">@((MarkupString)Render(_info.BuiltInHelp))</div>
+                }
+                else
+                {
+                    @if (_messages.Count == 0)
+                    {
+                        <p class="text-muted">Ask how something works in @_info.ModuleTitle. Suggestions:</p>
+                        <div class="flex flex-col items-start gap-2">
+                            @foreach (var q in _info.Questions)
+                            {
+                                var question = q;
+                                <button type="button" class="rounded-xl border border-line bg-surface-2 px-3 py-1.5 text-left hover:border-accent-300" @onclick="() => AskAsync(question)">@question</button>
+                            }
+                        </div>
+                    }
+                    @foreach (var message in _messages)
+                    {
+                        @if (message.FromUser)
+                        {
+                            <div class="ml-8 rounded-2xl bg-accent-50 px-3 py-2">@message.Text</div>
+                        }
+                        else
+                        {
+                            <div class="@("mr-4 rounded-2xl border px-3 py-2 help-body space-y-2 " + (message.IsError ? "border-amber-300 bg-amber-50" : "border-line bg-surface-2"))">@((MarkupString)Render(message.Text))</div>
+                        }
+                    }
+                    @if (_busy)
+                    {
+                        <p class="text-muted">Thinking…</p>
+                    }
+                }
+            </div>
+
+            @if (_info.Availability == HelpStatus.Ok)
+            {
+                <form class="border-t border-line px-4 py-3" @onsubmit="() => AskAsync(_draft)">
+                    <div class="flex items-center gap-2">
+                        <input @ref="_input" @bind="_draft" @bind:event="oninput" maxlength="500" placeholder="Ask about this module…" autocomplete="off" disabled="@_busy"
+                               class="input min-w-0 flex-1" />
+                        <button type="submit" class="btn btn-primary btn-sm" disabled="@(_busy || string.IsNullOrWhiteSpace(_draft))">Ask</button>
+                    </div>
+                    <p class="mt-2 text-[11px] text-muted">Answers come from Chandlery's own help and can be wrong. Don't type names, personal details or confidential figures.</p>
+                </form>
+            }
+        </aside>
+    }
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private sealed record Message(bool FromUser, string Text, bool IsError = false);
+
+    private ElementReference _input;
+    private HelpPanelInfo? _info;
+    private readonly List<Message> _messages = new();
+    private System.Security.Claims.ClaimsPrincipal? _user;
+    private string _path = "/";
+    private string _draft = "";
+    private bool _busy;
+    private bool _focusPending;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _user = (await AuthStateTask!).User;
+        _path = "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+        Navigation.LocationChanged += OnLocationChanged;
+        State.Changed += OnStateChanged;
+        _info = await Help.GetPanelAsync(_user, _path);
+        State.Available = _info.Availability is HelpStatus.Ok or HelpStatus.NeedsOffice;
+    }
+
+    private async void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _path = "/" + Navigation.ToBaseRelativePath(e.Location);
+        await InvokeAsync(async () =>
+        {
+            if (_user is not null) _info = await Help.GetPanelAsync(_user, _path);
+            State.Available = _info?.Availability is HelpStatus.Ok or HelpStatus.NeedsOffice;
+            StateHasChanged();
+        });
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusPending && _info?.Availability == HelpStatus.Ok)
+        {
+            _focusPending = false;
+            await _input.FocusAsync();
+        }
+    }
+
+    private void OnStateChanged()
+    {
+        _focusPending = State.Open;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void Close() => State.Close();
+
+    private void OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") State.Close();
+    }
+
+    private string Render(string text) => HelpMarkdown.ToHtml(text, Content.IsKnownPath);
+
+    private async Task AskAsync(string question)
+    {
+        if (_busy || _user is null || string.IsNullOrWhiteSpace(question)) return;
+        _busy = true;
+        _draft = "";
+        var history = _messages.Where(m => !m.IsError).Select(m => new HelpTurn(m.FromUser, m.Text)).ToList();
+        _messages.Add(new Message(true, question.Trim()));
+        StateHasChanged();
+        try
+        {
+            var result = await Help.AskAsync(_user, _path, question, history);
+            _messages.Add(new Message(false, result.Text, result.Status != HelpStatus.Ok));
+        }
+        finally
+        {
+            _busy = false;
+            _focusPending = true;
+        }
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        State.Changed -= OnStateChanged;
+    }
+}
