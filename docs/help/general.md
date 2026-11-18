@@ -28,7 +28,8 @@ A vessel starts from the Dashboard: it receives the office's master data by sync
 ## Modules and policy
 Each module (Procurement, Worklist, Maintenance, Tank inspection, Risk assessment, Projects, Hours of rest, Incident reports, Drills and meetings, Permit to work, Forms, Conversations) is switched on per vessel or per vessel group. A page that is missing from your menu usually means the module is off for that vessel. A Company Admin changes this on [Vessel policy](/company/vessel-policy).
 
-## Master data and admin (office)
+## Master data and setup (office)
+There is no separate Admin menu: a company admin finds each setup page under the module it belongs to, for example the Risk library under Risk assessment, Form types under Forms, and the Approval Matrix under Work. Finance and company pages are under Master data.
 - [Vessels](/company/vessels), [Departments](/company/departments), [Ports](/company/ports), [Units of Measure](/company/uoms), [Suppliers](/company/suppliers), [Catalog](/company/items), [Crew](/company/crew).
 - [Approval Matrix](/company/approval-matrix): who must approve what, by amount.
 - [Company Profile](/company/profile): company details, approval step names, the help assistant switch and module settings.

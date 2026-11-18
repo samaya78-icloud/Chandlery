@@ -82,12 +82,12 @@ public class NavCatalogTests : IAsyncLifetime
     public async Task TheFormsDesignerIsOfferedToTheCompanyAdminOnlyWhereFormsAreOn()
     {
         var admin = Person("CompanyAdmin");
-        Assert.DoesNotContain("Forms", Pages(await _catalog.GetAsync(admin, isVessel: false), "Admin"));
+        Assert.DoesNotContain("Forms", Titles(await _catalog.GetAsync(admin, isVessel: false)));
         await SwitchOnAsync(PolicyModules.Forms);
-        Assert.Contains("Forms", Pages(await _catalog.GetAsync(admin, isVessel: false), "Admin"));
-        Assert.DoesNotContain("Admin", Titles(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync()), isVessel: false)));      // the designer is not for everyone
+        Assert.Contains("Form types", Pages(await _catalog.GetAsync(admin, isVessel: false), "Forms"));
+        Assert.DoesNotContain("Form types", Pages(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync()), isVessel: false), "Forms"));      // the designer is not for everyone
         Assert.DoesNotContain("Forms", Pages(await _catalog.GetAsync(admin, isVessel: true), "Onboard"));
-        Assert.Equal(["Submitted forms", "Forms due", "Forms"], Pages(await _catalog.GetAsync(admin, isVessel: false), "Forms"));                                // the office reviews what was sent, and has the fill screen too
+        Assert.Equal(["Submitted forms", "Forms due", "Forms", "Form types"], Pages(await _catalog.GetAsync(admin, isVessel: false), "Forms"));                  // the office reviews what was sent, has the fill screen too, and the admin the designer
         Assert.Equal(["Forms"], Pages(await _catalog.GetAsync(Person("CompanyUser"), isVessel: true), "Forms"));                                           // the vessel has only the fill screen, and not onboard
     }
 
@@ -95,20 +95,23 @@ public class NavCatalogTests : IAsyncLifetime
     public async Task AModuleThatIsOffHasNoPages_AndOnceSwitchedOnEveryOneOfItsPagesIsOffered()
     {
         var admin = Person("CompanyAdmin");
-        Assert.Equal(["Work", "Master data", "Procurement", "Admin"], Titles(await _catalog.GetAsync(admin, isVessel: false)));
+        Assert.Equal(["Work", "Master data", "Procurement"], Titles(await _catalog.GetAsync(admin, isVessel: false)));
 
         await SwitchOnAsync(PolicyModules.Worklist, PolicyModules.Pms, PolicyModules.RestHours, PolicyModules.TankInspection, PolicyModules.RiskAssessment, PolicyModules.Projects);
         var groups = await _catalog.GetAsync(admin, isVessel: false);
 
-        Assert.Equal(["Work", "Master data", "Technical", "Safety", "Procurement", "Admin"], Titles(groups));
+        Assert.Equal(["Work", "Master data", "Technical", "Safety", "Procurement"], Titles(groups));
         Assert.Contains("Worklist", Pages(groups, "Work"));
         Assert.Contains("Fleet worklist", Pages(groups, "Work"));
-        Assert.Equal(["Plan", "Fleet overview", "Running hours", "Machinery", "Import a plan", "Approvals", "Certificates", "Template updates", "Sister vessels", "Reports"], Under(groups, "Technical", "Maintenance"));
-        Assert.Equal(["Tanks", "Inspections", "Exceptions", "Review queue"], Under(groups, "Technical", "Tank inspection"));
-        Assert.Equal(["Assessments", "New assessment", "Sign-off queue"], Under(groups, "Safety", "Risk assessment"));
+        Assert.Equal(["Plan", "Fleet overview", "Running hours", "Machinery", "Import a plan", "Approvals", "Certificates", "Template updates", "Sister vessels", "Reports", "Maintenance library"], Under(groups, "Technical", "Maintenance"));
+        Assert.Equal(["Tanks", "Inspections", "Exceptions", "Review queue", "Tank checklists"], Under(groups, "Technical", "Tank inspection"));
+        Assert.Equal(["Assessments", "New assessment", "Sign-off queue", "Risk library"], Under(groups, "Safety", "Risk assessment"));
         Assert.Equal(["Fleet compliance", "Working table", "Reports", "Rules"], Under(groups, "Safety", "Hours of rest"));
         Assert.Equal(["Projects", "Fleet view", "Project groups", "New project"], Under(groups, "Technical", "Projects"));
-        Assert.Equal(["Worklist lists", "Maintenance library", "Tank checklists", "Risk library"], Pages(groups, "Admin").Skip(6));          // each module adds its setup page for the admin
+        // The admin's setup pages sit with the module they set up, there is no Admin menu: approvals and worklist lists under Work, finance and company under Master data.
+        Assert.Equal(["Approval Matrix", "Worklist lists"], Pages(groups, "Work").Where(l => l is "Approval Matrix" or "Worklist lists").ToList());
+        Assert.Equal(["Tax Codes", "Currencies", "Exchange Rates"], Under(groups, "Master data", "Finance"));
+        Assert.Equal(["Company Profile", "Team"], Under(groups, "Master data", "Company"));
         Assert.Equal("pms planned maintenance tank tanks inspection drydock yard project projects", groups.Single(g => g.Title == "Technical").Aliases);                                            // what the finder also matches
     }
 
@@ -120,7 +123,10 @@ public class NavCatalogTests : IAsyncLifetime
         var user = await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync()), isVessel: false);
         Assert.Equal(["Projects", "Fleet view", "Project groups"], Under(user, "Technical", "Projects"));                                                                                  // a clerk can read projects but not start one
         Assert.Equal(["Projects", "Fleet view", "Project groups", "New project"], Under(await _catalog.GetAsync(Person("CompanyUser", await AddClerkAsync(projectManager: true)), isVessel: false), "Technical", "Projects"));
-        Assert.DoesNotContain("Admin", Titles(user));                                                                                         // setup pages are for the company admin
+        Assert.DoesNotContain("Maintenance library", Under(user, "Technical", "Maintenance"));                                               // setup pages are for the company admin
+        Assert.DoesNotContain("Risk library", Pages(user, "Safety"));
+        Assert.DoesNotContain("Team", Pages(user, "Master data"));
+        Assert.DoesNotContain("Approval Matrix", Pages(user, "Work"));
         Assert.Contains("Technical", Titles(user));
 
         var onboard = await _catalog.GetAsync(Person("CompanyUser"), isVessel: true);
@@ -145,7 +151,7 @@ public class NavCatalogTests : IAsyncLifetime
         var vessel = (await _catalog.GetAsync(Person("CompanyUser"), isVessel: true)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
         var office = (await _catalog.GetAsync(Person("CompanyAdmin"), isVessel: false)).Single(g => g.Title == "Safety").Items.Where(i => i.Section == "Drills and meetings").Select(i => i.Label).ToList();
         Assert.Equal(["Drill schedule", "Record a drill", "Drill history", "Meetings", "Record a meeting"], vessel);
-        Assert.Equal(["Fleet drill status", "Drill schedule", "Crew participation", "Drill history", "Meetings"], office);                         // drills and meetings are recorded onboard
+        Assert.Equal(["Fleet drill status", "Drill schedule", "Crew participation", "Drill history", "Meetings", "Drill and meeting types"], office);   // drills and meetings are recorded onboard; the admin sets the types
     }
 
     [Fact]
@@ -158,8 +164,7 @@ public class NavCatalogTests : IAsyncLifetime
         var office = await _catalog.GetAsync(Person("CompanyAdmin"), isVessel: false);
         Assert.Equal(["Hours of rest", "Incident reports"], Sections(office));
         Assert.Equal(["Fleet compliance", "Working table", "Reports", "Rules"], In(office, "Hours of rest"));
-        Assert.Equal(["Reports", "Investigation queue", "Report an incident", "Statistics", "Lessons learned"], In(office, "Incident reports"));
-        Assert.Contains("Incident settings", Pages(office, "Admin"));                                                                         // the office sets the rules and the cause list
+        Assert.Equal(["Reports", "Investigation queue", "Report an incident", "Statistics", "Lessons learned", "Incident settings"], In(office, "Incident reports"));   // the admin sets the rules and the cause list here
 
         var vessel = await _catalog.GetAsync(Person("CompanyUser"), isVessel: true);
         Assert.Equal(["Hours of rest", "Incident reports"], Sections(vessel));
@@ -169,5 +174,38 @@ public class NavCatalogTests : IAsyncLifetime
         // Every page of a section sits together: a section never reappears after another one.
         var runs = vessel.Single(g => g.Title == "Safety").Items.Select(i => i.Section).Aggregate(new List<string>(), (list, s) => { if (list.Count == 0 || list[^1] != s) list.Add(s); return list; });
         Assert.Equal(runs.Distinct().Count(), runs.Count);
+    }
+
+    [Fact]
+    public async Task TheBreadcrumbAndTheStripAgreeWithTheMenu_ForEverySetupPage()
+    {
+        await SwitchOnAsync(PolicyModules.Worklist, PolicyModules.Pms, PolicyModules.RestHours, PolicyModules.TankInspection, PolicyModules.RiskAssessment, PolicyModules.Forms, PolicyModules.Incidents, PolicyModules.Drills, PolicyModules.PermitToWork);
+        var admin = Person("CompanyAdmin");
+        var groups = await _catalog.GetAsync(admin, isVessel: false);
+        Assert.DoesNotContain("Admin", Titles(groups));
+
+        // Each setup page: the group it sits in, and the section the breadcrumb names (the same module).
+        (string Path, string Group, string Section)[] expected =
+        [
+            ("/company/approval-matrix", "Work", "Work"), ("/company/worklist-lists", "Work", "Worklist"),
+            ("/company/tax-codes", "Master data", "Master data"), ("/company/currencies", "Master data", "Master data"), ("/company/exchange-rates", "Master data", "Master data"),
+            ("/company/profile", "Master data", "Master data"), ("/company/team", "Master data", "Master data"),
+            ("/company/pms-library", "Technical", "Maintenance"), ("/company/tank-checklists", "Technical", "Tank inspection"),
+            ("/company/risk-library", "Safety", "Risk assessment"), ("/incidents/settings", "Safety", "Incident reports"),
+            ("/permits/types", "Safety", "Permit to work"), ("/drills/types", "Safety", "Drills and meetings"),
+            ("/forms/types", "Forms", "Forms"),
+        ];
+        foreach (var (path, group, section) in expected)
+        {
+            Assert.Contains(groups.Single(g => g.Title == group).Items, i => i.Href == path);
+            Assert.Equal(section, Chandlery.Components.Shared.Breadcrumbs.SectionOf(path));
+            Assert.Equal(section, Chandlery.Components.Shared.Breadcrumbs.Ancestors(path).First(c => c.Href is null).Label);
+            var (strip, current) = await _catalog.NeighboursAsync(admin, false, path);
+            Assert.Equal(path, current);                                                                                                        // the page is marked in its own strip
+            Assert.True(strip.Count > 1, path);
+        }
+        // The strip of a module's page now offers its setup page, and the setup page's strip offers the module's pages.
+        Assert.Contains((await _catalog.NeighboursAsync(admin, false, "/incidents")).Pages, i => i.Href == "/incidents/settings");
+        Assert.Contains((await _catalog.NeighboursAsync(admin, false, "/company/risk-library")).Pages, i => i.Href == "/risk");
     }
 }

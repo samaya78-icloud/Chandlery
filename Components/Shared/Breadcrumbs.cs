@@ -10,7 +10,7 @@ public record Crumb(string Label, string? Href);
 public static class Breadcrumbs
 {
     // Longest matching prefix wins, so a page under a list (detail, "new", edit) gets that list as its parent. Add a page here and it
-    // gets its trail; the section is the module (or Admin / Master data), the list is the page a detail or "new" page belongs to.
+    // gets its trail; the section is the module (or Work / Master data), the list is the page a detail or "new" page belongs to.
     private static readonly (string Path, string Section, string List)[] Lists =
     {
         ("/company/approvals", "Work", "My Approvals"),
@@ -18,18 +18,18 @@ public static class Breadcrumbs
         ("/company/rfqs", "Procurement", "RFQs"),
         ("/company/purchase-orders", "Procurement", "Purchase Orders"),
         ("/company/invoices", "Procurement", "Invoices"),
-        ("/company/tax-codes", "Admin", "Tax Codes"),
-        ("/company/currencies", "Admin", "Currencies"),
-        ("/company/exchange-rates", "Admin", "Exchange Rates"),
+        ("/company/tax-codes", "Master data", "Tax Codes"),
+        ("/company/currencies", "Master data", "Currencies"),
+        ("/company/exchange-rates", "Master data", "Exchange Rates"),
         ("/company/suppliers", "Master data", "Suppliers"),
         ("/company/items", "Master data", "Catalog"),
         ("/company/vessels", "Master data", "Vessels"),
         ("/company/departments", "Master data", "Departments"),
         ("/company/ports", "Master data", "Ports"),
         ("/company/uoms", "Master data", "Units of Measure"),
-        ("/company/approval-matrix", "Admin", "Approval Matrix"),
-        ("/company/profile", "Admin", "Company Profile"),
-        ("/company/team", "Admin", "Team"),
+        ("/company/approval-matrix", "Work", "Approval Matrix"),
+        ("/company/profile", "Master data", "Company Profile"),
+        ("/company/team", "Master data", "Team"),
         ("/company/onboard-orders", "Procurement", "Onboard orders"),
         ("/company/vessel-policy", "Master data", "Vessel policy"),
         ("/company/crew", "Master data", "Crew"),
@@ -41,7 +41,7 @@ public static class Breadcrumbs
         ("/worklist", "Worklist", "Worklist"),
         ("/worklist/fleet", "Worklist", "Fleet worklist"),
         ("/worklist/reports", "Worklist", "Reports"),
-        ("/company/worklist-lists", "Admin", "Worklist lists"),
+        ("/company/worklist-lists", "Worklist", "Worklist lists"),
         ("/conversations", "Conversations", "Conversations"),
 
         ("/pms", "Maintenance", "Plan"),
@@ -55,18 +55,18 @@ public static class Breadcrumbs
         ("/pms/reports", "Maintenance", "Reports"),
         ("/pms/apply", "Maintenance", "Apply the library"),
         ("/pms/certificates", "Maintenance", "Certificates"),
-        ("/company/pms-library", "Admin", "Maintenance library"),
+        ("/company/pms-library", "Maintenance", "Maintenance library"),
 
         ("/tanks", "Tank inspection", "Tanks"),
         ("/tanks/inspections", "Tank inspection", "Inspections"),
         ("/tanks/exceptions", "Tank inspection", "Exceptions"),
         ("/tanks/review", "Tank inspection", "Review queue"),
         ("/tanks/copy", "Tank inspection", "Copy to sister vessels"),
-        ("/company/tank-checklists", "Admin", "Tank checklists"),
+        ("/company/tank-checklists", "Tank inspection", "Tank checklists"),
 
         ("/risk", "Risk assessment", "Assessments"),
         ("/risk/review", "Risk assessment", "Sign-off queue"),
-        ("/company/risk-library", "Admin", "Risk library"),
+        ("/company/risk-library", "Risk assessment", "Risk library"),
 
         ("/rest", "Hours of rest", "My hours"),
         ("/rest/fleet", "Hours of rest", "Fleet compliance"),
@@ -105,7 +105,7 @@ public static class Breadcrumbs
         ("/forms/due", "Forms", "Forms due"),
         ("/forms/year", "Forms", "The year at a glance"),
         ("/forms/convert", "Forms", "Convert a legacy form"),
-        ("/forms/types", "Admin", "Forms"),
+        ("/forms/types", "Forms", "Form types"),
 
         ("/yard", "Yard", "Tenders"),
         ("/yard/profile", "Yard", "Contact details"),

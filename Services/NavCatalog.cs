@@ -129,15 +129,20 @@ public class NavCatalogService(
             new("/company/ports", "Ports", "port"),
             new("/company/uoms", "Units of Measure", "unit"),
         ];
-        List<NavEntry> admin =
-        [
-            new("/company/approval-matrix", "Approval Matrix", "matrix"),
-            new("/company/tax-codes", "Tax Codes", "tax"),
-            new("/company/currencies", "Currencies", "currency"),
-            new("/company/exchange-rates", "Exchange Rates", "rates"),
-            new("/company/profile", "Company Profile", "profile"),
-            new("/company/team", "Team", "team"),
-        ];
+        // The company admin's setup pages sit with the module they set up, not in a menu of their own. "office" is the admin on the office side.
+        var office = isAdmin && !isVessel;
+        if (office)
+        {
+            work.Add(new("/company/approval-matrix", "Approval Matrix", "matrix"));
+            master.AddRange(
+            [
+                new("/company/tax-codes", "Tax Codes", "tax", Section: "Finance"),
+                new("/company/currencies", "Currencies", "currency", Section: "Finance"),
+                new("/company/exchange-rates", "Exchange Rates", "rates", Section: "Finance"),
+                new("/company/profile", "Company Profile", "profile", Section: "Company"),
+                new("/company/team", "Team", "team", Section: "Company"),
+            ]);
+        }
         List<NavEntry> maintenance = [], tankItems = [], riskItems = [], safety = [], projectItems = [];
 
         if (await worklist.IsEnabledForCompanyAsync(companyId))
@@ -145,7 +150,7 @@ public class NavCatalogService(
             work.Insert(1, new("/worklist", "Worklist", "worklist"));
             onboard.Insert(1, new("/worklist", "Worklist", "worklist"));
             work.Insert(2, new("/worklist/fleet", "Fleet worklist", "worklist"));
-            admin.Add(new("/company/worklist-lists", "Worklist lists", "worklist"));
+            if (office) work.Add(new("/company/worklist-lists", "Worklist lists", "worklist"));
         }
 
         if (await chat.IsEnabledForCompanyAsync(companyId))
@@ -170,7 +175,7 @@ public class NavCatalogService(
                 maintenance.AddRange([new("/pms", "Plan", "pms"), new("/pms/fleet", "Fleet overview", "pms"), new("/pms/hours", "Running hours", "pms"),
                     new("/pms/machinery", "Machinery", "pms"), new("/pms/import", "Import a plan", "pms"), new("/pms/approvals", "Approvals", "pms", waiting), new("/pms/certificates", "Certificates", "pms", certificatesDue),
                     new("/pms/template-updates", "Template updates", "pms"), new("/pms/sister-vessels", "Sister vessels", "pms"), new("/pms/reports", "Reports", "pms")]);
-                admin.Add(new("/company/pms-library", "Maintenance library", "pms"));
+                if (isAdmin) maintenance.Add(new("/company/pms-library", "Maintenance library", "pms"));
             }
         }
 
@@ -190,7 +195,7 @@ public class NavCatalogService(
             safety.Add(new("/incidents/new", "Report an incident", "incident", Section: incidentReports));
             if (!isVessel) safety.Add(new("/incidents/statistics", "Statistics", "incident", Section: incidentReports));
             safety.Add(new("/incidents/lessons", "Lessons learned", "incident", Section: incidentReports));
-            if (!isVessel) admin.Add(new("/incidents/settings", "Incident settings", "incident"));
+            if (office) safety.Add(new("/incidents/settings", "Incident settings", "incident", Section: incidentReports));
         }
 
         if (await permits.IsEnabledForCompanyAsync(companyId))
@@ -200,7 +205,7 @@ public class NavCatalogService(
             if (isVessel) safety.Add(new("/permits/new", "New permit", "permit", Section: permitToWork));
             if (!isVessel) safety.Add(new("/permits/fleet", "Fleet permit activity", "permit", await permits.ExpiredCountAsync(companyId, new Actor(userId, "")), permitToWork));
             if (!isVessel) safety.Add(new("/permits/audit", "Permit audit", "permit", Section: permitToWork));
-            if (!isVessel) admin.Add(new("/permits/types", "Permit types and checklists", "permit"));
+            if (office) safety.Add(new("/permits/types", "Permit types and checklists", "permit", Section: permitToWork));
         }
 
         if (await drills.IsEnabledForCompanyAsync(companyId))
@@ -213,7 +218,7 @@ public class NavCatalogService(
             safety.Add(new("/drills/history", "Drill history", "drill", Section: drillsAndMeetings));
             safety.Add(new("/meetings", "Meetings", "drill", Section: drillsAndMeetings));
             if (isVessel) safety.Add(new("/meetings/new", "Record a meeting", "drill", Section: drillsAndMeetings));
-            if (!isVessel) admin.Add(new("/drills/types", "Drill and meeting types", "drill"));
+            if (office) safety.Add(new("/drills/types", "Drill and meeting types", "drill", Section: drillsAndMeetings));
         }
 
         if (await tanks.IsEnabledForCompanyAsync(companyId))
@@ -225,7 +230,7 @@ public class NavCatalogService(
             {
                 tankItems.Add(new("/tanks/review", "Review queue", "tank", (await tankReviews.ReviewWaitingAsync(companyId)).Count));
                 if ((await tanks.EnabledVesselsAsync(companyId)).Count > 1) tankItems.Add(new("/tanks/copy", "Copy to sister vessels", "tank"));
-                admin.Add(new("/company/tank-checklists", "Tank checklists", "tank"));
+                if (isAdmin) tankItems.Add(new("/company/tank-checklists", "Tank checklists", "tank"));
             }
         }
 
@@ -234,7 +239,7 @@ public class NavCatalogService(
             riskItems.Add(new("/risk", "Assessments", "risk", (await risk.CountsAsync(companyId))?.DueForReview ?? 0));
             riskItems.Add(new("/risk/new", "New assessment", "risk"));
             riskItems.Add(new("/risk/review", "Sign-off queue", "risk", (await risk.SignOffQueueAsync(companyId)).Count));
-            if (!isVessel) admin.Add(new("/company/risk-library", "Risk library", "risk"));
+            if (office) riskItems.Add(new("/company/risk-library", "Risk library", "risk"));
         }
 
         if (await projects.IsEnabledForCompanyAsync(companyId))
@@ -254,7 +259,7 @@ public class NavCatalogService(
                 formItems.Add(new("/forms/due", "Forms due", "forms", (await forms.CountsAsync(companyId, DateOnly.FromDateTime(DateTime.UtcNow)))?.Overdue ?? 0));
             }
             formItems.Add(new("/forms", "Forms", "forms", isVessel ? await forms.AttentionAsync(companyId, DateOnly.FromDateTime(DateTime.UtcNow)) : 0));
-            if (!isVessel) admin.Add(new("/forms/types", "Forms", "forms"));
+            if (office) formItems.Add(new("/forms/types", "Form types", "forms"));
         }
 
         // Each module keeps its own sub-heading inside the group it belongs to: Technical (maintenance, tanks, projects) and Safety (risk, rest, incidents, permits, drills).
@@ -262,7 +267,7 @@ public class NavCatalogService(
         List<NavEntry> technical = [.. Under(maintenance, "Maintenance"), .. Under(tankItems, "Tank inspection"), .. Under(projectItems, "Projects")];
         safety = [.. Under(riskItems, "Risk assessment"), .. safety];
 
-        // Menu order: Work, Master data and Forms (the menu stacks these three in its first column), then Technical, Safety, Procurement and Admin.
+        // Menu order: Work, Master data and Forms (the menu stacks these three in its first column), then Technical, Safety and Procurement.
         var groups = new List<NavGroup> { new(isVessel ? "Onboard" : "Work", isVessel ? onboard : work) };
         if (!isVessel) groups.Add(new("Master data", master));
         if (formItems.Count > 0) groups.Add(new("Forms", formItems, "form checklist report inspection"));
@@ -271,7 +276,6 @@ public class NavCatalogService(
         if (!isVessel)
         {
             groups.Add(new("Procurement", procurement));
-            if (isAdmin) groups.Add(new("Admin", admin));
         }
         return groups;
     }
