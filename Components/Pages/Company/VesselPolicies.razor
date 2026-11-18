@@ -185,8 +185,6 @@ else
                 </div>
             }
 
-            <div class="mt-6"><AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.VesselPolicy" EntityId="_targetId" Version="_historyVersion" /></div>
-
             <h3 class="mt-6 mb-2 text-sm font-semibold uppercase tracking-wide text-muted">Modules for this @(IsVessel(_targetId) ? "vessel" : "group")</h3>
             <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                 @foreach (var module in PolicyModules.All)
@@ -210,6 +208,8 @@ else
                     </div>
                 }
             </div>
+
+            <div class="mt-6"><AuditHistory CompanyId="_companyId" EntityType="@AuditEntityTypes.VesselPolicy" EntityId="_targetId" Version="_historyVersion" /></div>
         }
     </div>
 }
