@@ -240,6 +240,18 @@ public class ChatRulesTests
     }
 
     [Fact]
+    public void ClearingTheMarkStopsTheWaiting_AndAnotherMarkSetsItAgain()
+    {
+        var ask = Msg("when can you deliver?", Ana, 0, stage: SyncStages.Office);
+        var mark = Msg("", Ana, 1, kind: ChatKind.NeedsReply, target: ask.Id, stage: SyncStages.Office);
+        var clear = Msg("", Ana, 2, kind: ChatKind.ClearReply, target: ask.Id, stage: SyncStages.Office);
+        var again = Msg("", Ana, 3, kind: ChatKind.NeedsReply, target: ask.Id, stage: SyncStages.Office);
+        Assert.Equal(0, ChatRules.Replay([ask, mark, clear], Office).NeedingReply);
+        Assert.False(ChatRules.Replay([ask, mark, clear], Office).Items[0].NeedsReply);
+        Assert.Equal(1, ChatRules.Replay([ask, mark, clear, again], Office).NeedingReply);
+    }
+
+    [Fact]
     public void ResolvingAThreadEndsTheWaiting_AndReopeningBringsItBack()
     {
         var ask = Msg("when can you deliver?", Ana, 0, stage: SyncStages.Office);

@@ -208,6 +208,14 @@ public class ChatService(IDbContextFactory<ChandleryDbContext> factory)
             if (who.Side == ChatSide.Supplier) throw new InvalidOperationException("This is not open to you.");
         });
 
+    /// <summary>Takes back a "needs a reply" mark (put there by mistake, or no longer needed). The mark can be set again.</summary>
+    public Task<ChatMessage> ClearReplyAsync(Guid companyId, Actor actor, Guid messageId)
+        => ActOnAsync(companyId, actor, messageId, ChatKind.ClearReply, (_, _) => "", (target, who) =>
+        {
+            if (target.Kind != ChatKind.Message) throw new InvalidOperationException("Only a message can wait for a reply.");
+            if (who.Side == ChatSide.Supplier) throw new InvalidOperationException("This is not open to you.");
+        });
+
     /// <summary>Marks a thread resolved, or reopens it. Done internally: an outside party does not see it.</summary>
     public async Task<ChatMessage> SetResolvedAsync(Guid companyId, Actor actor, string moduleType, Guid recordId, string topic, bool resolved)
     {

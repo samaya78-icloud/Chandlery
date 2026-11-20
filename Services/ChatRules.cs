@@ -186,6 +186,9 @@ public static class ChatRules
                 case ChatKind.NeedsReply:
                     waiting.Add(id);
                     break;
+                case ChatKind.ClearReply:
+                    waiting.Remove(id); // a later NeedsReply marks it again
+                    break;
             }
         }
 

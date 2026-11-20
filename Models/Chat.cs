@@ -36,6 +36,9 @@ public enum ChatKind
 
     /// <summary>The message in <see cref="ChatMessage.TargetId"/> is marked as waiting for an answer.</summary>
     NeedsReply,
+
+    /// <summary>Takes back a <see cref="NeedsReply"/> mark on the message in <see cref="ChatMessage.TargetId"/>. Added last, so stored numbers do not move.</summary>
+    ClearReply,
 }
 
 /// <summary>
